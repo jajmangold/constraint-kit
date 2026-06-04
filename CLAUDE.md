@@ -113,6 +113,9 @@ image only when changing `cadkit/Dockerfile` (deps).
 - `POST /synthesize/tolerance {dims,budget_um,grade_min?,grade_max?,method?}` — **[E10/T10.1] SMT** tolerance
   ALLOCATION (Z3, inverse of /tolerance/stackup): loosest ISO 286 IT grades per dim whose stack-up fits the
   budget; honest infeasible (with tightest achievable) when even all-tight busts it
+- `POST /synthesize/gear_train {target_ratio,n_stages?,teeth_min?,teeth_max?,stage_ratio_min?,stage_ratio_max?,ratio_tol?}`
+  — **[E10/T10.3] SMT** multi-stage synthesis (Z3, nonlinear-int): split a ratio across N planetary stages
+  whose ratios multiply to the target, each a valid set (planetary-validated); honest UNSAT
 - `POST /rules/{fastener_engagement,fit,clearance}` — **[E9]** design-rule checks (engagement/fit/min-gap)
 - `POST /rules/beam_bending {material,length_mm,width_mm,height_mm,load_n,safety_factor?}` · `POST /rules/bolt_preload
   {size,prop_class?,applied_load_n?,preload_fraction?}` — **[T4.3]** closed-form strength checks (cantilever

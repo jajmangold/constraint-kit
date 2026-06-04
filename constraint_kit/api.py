@@ -409,6 +409,27 @@ def synthesize_tolerance(req: ToleranceAllocReq) -> dict:
                                                      req.grade_max, req.method)
 
 
+class GearTrainReq(BaseModel):
+    target_ratio: float
+    n_stages: int = 2
+    teeth_min: int = 12
+    teeth_max: int = 40
+    module: float = 1.0
+    width: float = 6.0
+    stage_ratio_min: float = 2.0
+    stage_ratio_max: float = 8.0
+    ratio_tol: float = 0.25
+
+
+@app.post("/synthesize/gear_train")
+def synthesize_gear_train(req: GearTrainReq) -> dict:
+    """E10/T10.3: SMT multi-STAGE gear-train synthesis (Z3) — split a target ratio across N planetary
+    stages whose ratios multiply to the target (within tol), each a valid planetary set; honest UNSAT."""
+    return synthesis.synthesize_gear_train(req.target_ratio, req.n_stages, req.teeth_min, req.teeth_max,
+                                           req.module, req.width, req.stage_ratio_min, req.stage_ratio_max,
+                                           req.ratio_tol)
+
+
 class InterferenceReq(BaseModel):
     defs: dict
     root: str

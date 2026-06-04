@@ -1260,6 +1260,27 @@ def test_synthesize_planetary_unsat_is_honest():
 
 
 @test
+def test_synthesize_gear_train_multistage():
+    """T10.3: SMT splits a large ratio across N planetary stages whose ratios MULTIPLY to the target
+    (within tol); each stage is independently a valid planetary set (analytical cross-check); honest UNSAT
+    when the per-stage bounds can't reach the target."""
+    from constraint_kit import planetary, synthesis
+    r = synthesis.synthesize_gear_train(target_ratio=25.0, n_stages=2, stage_ratio_max=8.0, ratio_tol=0.5)
+    assert r["ok"] and len(r["stages"]) == 2
+    assert abs(r["achieved_ratio"] - 25.0) <= 0.5                  # product of stage ratios hits target
+    prod = 1.0
+    for s in r["stages"]:
+        assert not planetary.validate(s["module"], s["sun_teeth"], s["planet_teeth"], s["n_planets"])  # valid
+        assert 2.0 <= s["stage_ratio"] <= 8.0                      # within per-stage bounds
+        prod *= s["stage_ratio"]
+    approx(prod, r["achieved_ratio"], eps=1e-3)
+    assert len(r["part_specs"]) == 2 and r["part_specs"][0]["type"] == "planetary_gearset"
+    # honest UNSAT: 1000:1 is unreachable in two stages each capped at 8:1 (max 64:1)
+    bad = synthesis.synthesize_gear_train(target_ratio=1000.0, n_stages=2, stage_ratio_max=8.0, ratio_tol=0.1)
+    assert bad["ok"] is False and "UNSAT" in bad["reason"]
+
+
+@test
 def test_synthesize_tolerance_allocation():
     """T10.1: SMT tolerance ALLOCATION (Z3) — allocate the loosest ISO 286 grades whose stack-up fits the
     budget. Must (a) fit the budget, (b) each tolerance == iso286.it_grade exactly, (c) be Pareto-loosest

@@ -131,3 +131,65 @@ def synthesize_tolerance_allocation(dims: list, budget_um: float, grade_min: int
     return {"ok": True, "allocation": alloc, "method": method,
             "stack_um": stack, "budget_um": budget_um, "slack_um": round(budget_um - stack, 4),
             "requirement": requirement, "solver": "z3 SMT (optimize)"}
+
+
+def synthesize_gear_train(target_ratio: float, n_stages: int = 2, teeth_min: int = 12,
+                          teeth_max: int = 40, module: float = 1.0, width: float = 6.0,
+                          stage_ratio_min: float = 2.0, stage_ratio_max: float = 8.0,
+                          ratio_tol: float = 0.25) -> dict:
+    """Multi-STAGE gear-train synthesis (T10.3): split a large `target_ratio` across `n_stages` planetary
+    stages whose ring-fixed ratios MULTIPLY to the target (within `ratio_tol`). Each stage is independently
+    a valid planetary set (assembly condition, non-interference, tooth + per-stage-ratio bounds); Z3 solves
+    the coupled nonlinear-integer problem and minimizes total ring teeth (compact). Returns per-stage configs
+    + ready `part_specs` (one planetary_gearset per stage) + provenance, or an honest UNSAT. Each stage is
+    cross-checked by the independent analytical `planetary.validate`."""
+    from functools import reduce
+    from z3 import If, Ints, Optimize, sat
+
+    n = int(n_stages)
+    requirement = {"target_ratio": target_ratio, "n_stages": n, "teeth_range": [teeth_min, teeth_max],
+                   "stage_ratio_range": [stage_ratio_min, stage_ratio_max], "ratio_tol": ratio_tol}
+    constraints = ["per stage: Zr==Zs+2*Zp, (Zs+Zr)%3==0, tip<spacing, teeth bounds",
+                   f"per-stage ratio in [{stage_ratio_min},{stage_ratio_max}]",
+                   "product of stage ratios within ratio_tol of target", "minimize total ring teeth"]
+
+    opt = Optimize()
+    Zs, Zp, Zr = [], [], []
+    sin3 = int(round(1000 * math.sin(math.pi / 3)))               # 3-planet neighbour-chord coefficient
+    smin = Fraction(stage_ratio_min).limit_denominator(1000)
+    smax = Fraction(stage_ratio_max).limit_denominator(1000)
+    for k in range(n):
+        zs, zp, zr = Ints(f"Zs{k} Zp{k} Zr{k}")
+        opt.add(zr == zs + 2 * zp)
+        opt.add(zs >= teeth_min, zp >= teeth_min, zs <= teeth_max, zp <= teeth_max)
+        opt.add((zs + zr) % 3 == 0)
+        opt.add(1000 * (zp + 2) < sin3 * (zs + zp))
+        opt.add(smin.numerator * zs <= smin.denominator * (zs + zr))   # stage ratio >= min
+        opt.add(smax.numerator * zs >= smax.denominator * (zs + zr))   # stage ratio <= max
+        Zs.append(zs); Zp.append(zp); Zr.append(zr)
+    # product of stage ratios = Π(Zs+Zr) / Π(Zs), bounded to [target-tol, target+tol]
+    top = reduce(lambda a, b: a * b, [Zs[k] + Zr[k] for k in range(n)])
+    bot = reduce(lambda a, b: a * b, Zs)
+    lo = Fraction(target_ratio - ratio_tol).limit_denominator(1000)
+    hi = Fraction(target_ratio + ratio_tol).limit_denominator(1000)
+    opt.add(lo.denominator * top >= lo.numerator * bot)
+    opt.add(hi.denominator * top <= hi.numerator * bot)
+    opt.minimize(reduce(lambda a, b: a + b, Zr))                  # compact: fewest total ring teeth
+
+    if opt.check() != sat:
+        return {"ok": False, "reason": "no multi-stage train satisfies the spec (UNSAT)",
+                "requirement": requirement, "constraints": constraints, "solver": "z3 SMT"}
+    mdl = opt.model()
+    stages, part_specs, achieved = [], [], 1.0
+    for k in range(n):
+        zs, zp, zr = mdl[Zs[k]].as_long(), mdl[Zp[k]].as_long(), mdl[Zr[k]].as_long()
+        sr = 1 + zr / zs
+        achieved *= sr
+        stages.append({"stage": k, "module": module, "sun_teeth": zs, "planet_teeth": zp,
+                       "ring_teeth": zr, "n_planets": 3, "stage_ratio": round(sr, 6)})
+        part_specs.append({"id": f"stage{k}", "type": "planetary_gearset", "material": "steel",
+                           "params": {"module": module, "sun_teeth": zs, "planet_teeth": zp,
+                                      "n_planets": 3, "width": width}})
+    return {"ok": True, "stages": stages, "achieved_ratio": round(achieved, 6),
+            "requirement": requirement, "constraints": constraints, "part_specs": part_specs,
+            "solver": "z3 SMT (optimize, nonlinear-integer)"}
