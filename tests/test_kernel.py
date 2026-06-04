@@ -1244,6 +1244,28 @@ def test_adapter_loft():
     approx(wp.faces("<Z").val().Area(), W * Dd, eps=1.0)                        # square base
 
 
+@test
+def test_build_cache():
+    """T3.1: identical parts hit the content-hash cache, and cached parts still place at DISTINCT
+    locations (no shared-object aliasing — the key correctness risk)."""
+    from constraint_kit import builder, validate
+    builder.clear_cache()
+    spec = {"parts": [
+        {"id": "plate", "type": "plate", "params": {"width": 80, "depth": 80, "thick": 6, "boss_d": 10,
+                                                    "boss_h": 2, "bolt_d": 5, "bolt_circle": 60, "bolt_count": 4}},
+        *[{"id": f"b{i}", "type": "bolt", "params": {"shank_d": 5, "length": 14, "head_d": 9, "head_h": 4}}
+          for i in range(4)],
+    ], "mates": [
+        {"a": "plate", "a_joint": f"bolt{i}", "b": f"b{i}", "b_joint": "seat", "type": "coincident"}
+        for i in range(4)],
+    }
+    assy, _ = builder.build_assembly(spec)
+    assert builder.cache_stats()["hits"] >= 3              # 4 identical bolts -> 1 miss + >=3 hits
+    cen = {n.split("/")[-1]: s.Center() for n, s in validate._world_parts(assy)}
+    bolt_xy = {(round(cen[f"b{i}"].x, 1), round(cen[f"b{i}"].y, 1)) for i in range(4)}
+    assert len(bolt_xy) == 4                                # 4 distinct positions -> no aliasing
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:

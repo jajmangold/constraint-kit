@@ -11,6 +11,8 @@ location of its A part, so chains (A->B->C) compose. This is the deterministic o
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import os
 
@@ -22,6 +24,42 @@ from .parts_bd import PART_GENS_BD
 
 # native cadquery parts + build123d/bd_warehouse catalog parts share one dispatch table.
 ALL_PART_GENS = {**PART_GENS, **PART_GENS_BD}
+
+# Content-hash part-generation cache (T3.1). The cost is part generation (cq_gears, IsoThread); identical
+# (type, params) yields identical geometry, so we memoize it. Caveat: cadquery may mutate an object's .loc
+# on assembly.add, so the cached wp is NEVER handed out directly — every fetch returns an independent COPY
+# (translate by 0 = a fresh transformed shape), keeping the cache pristine and callers isolated.
+_GEN_CACHE: dict[str, tuple] = {}
+_GEN_STATS = {"hits": 0, "misses": 0}
+
+
+def _gen_key(ptype: str, params: dict) -> str:
+    return ptype + ":" + hashlib.sha256(
+        json.dumps(params, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _generate(ptype: str, params: dict):
+    """Generate a part (type, params) through the cache, returning an independent copy each time."""
+    key = _gen_key(ptype, params)
+    cached = _GEN_CACHE.get(key)
+    if cached is None:
+        _GEN_STATS["misses"] += 1
+        cached = ALL_PART_GENS[ptype](**params)
+        _GEN_CACHE[key] = cached
+    else:
+        _GEN_STATS["hits"] += 1
+    wp, anchors = cached
+    return wp.translate((0, 0, 0)), dict(anchors)     # copy -> cache stays pristine, callers isolated
+
+
+def cache_stats() -> dict:
+    """Part-generation cache hit/miss counters (T3.1)."""
+    return {**_GEN_STATS, "entries": len(_GEN_CACHE)}
+
+
+def clear_cache() -> None:
+    _GEN_CACHE.clear()
+    _GEN_STATS.update(hits=0, misses=0)
 
 
 def _shape(wp: cq.Workplane) -> cq.Shape:
@@ -85,7 +123,7 @@ def build_assembly(spec: dict):
         if ptype not in ALL_PART_GENS:
             raise ValueError(f"unknown part type {ptype!r}; known: {sorted(ALL_PART_GENS)}")
         params = ps.get("params", {})
-        wp, anchors = ALL_PART_GENS[ptype](**params)
+        wp, anchors = _generate(ptype, params)             # content-hash cache (T3.1)
         wp, finish = _apply_finish(wp, ps.get("finish"))   # opt-in fillet/chamfer post-op
         parts[_pid(ps)] = {
             "wp": wp, "anchors": anchors, "params": params,
