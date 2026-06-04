@@ -41,6 +41,7 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   parameters.py        # TOP-DOWN design: requirements -> derived params (safe AST eval, provenance) [Phase B]
   massprops.py         # mass properties: exact CG + inertia tensor (OCC GProp, density-weighted) [T4.1]
   bom.py               # BOM document export (Markdown/CSV) from a build-tree roll-up [T7.3]
+  drawing.py           # 2D drawing export [T7.2]: cross-section DXF + orthographic projection SVGs + overall dims
   rules.py             # design-rule + strength checks [E9/T4.3]: engagement/fit/clearance, beam-bending, bolt-preload
   validate.py          # interference/clash check: bbox prefilter + exact OCC boolean (world solids) [Phase C]
   synthesis.py         # SMT design synthesis (Z3): discrete/mixed-int constraint solving -> design to a spec
@@ -101,6 +102,8 @@ image only when changing `cadkit/Dockerfile` (deps).
 - `POST /assembly/interference {defs,root,tol_volume?}` — **[Phase C]** clash check (bbox prefilter + exact OCC)
 - `POST /assembly/explode {defs,root,factor?,axis?,name?}` — **[E7/T7.1]** exploded view for docs: rank world
   parts along `axis` (default +Z), offset each by rank·factor → one STEP+GLB of the separated assembly
+- `POST /assembly/drawing {defs,root,plane?,height?,views?,name?}` — **[E7/T7.2]** 2D drawing set: cross-section
+  DXF (cut on plane) + orthographic projection SVGs + overall dims (exact OCC geometry; no GD&T frames)
 - `POST /synthesize/planetary {target_ratio,n_planets?,teeth_min?,teeth_max?,module?,ratio_tol?,objective?,build?}`
   — **SMT** design synthesis (Z3): solve a gearset to a ratio spec → optionally build the exact CAD; honest UNSAT
 - `POST /rules/{fastener_engagement,fit,clearance}` — **[E9]** design-rule checks (engagement/fit/min-gap)

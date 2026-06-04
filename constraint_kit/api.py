@@ -17,8 +17,8 @@ import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from . import (assembly, bom, builder, layout, library, linkage, planner, planetary, rules, spec_compiler,
-               spec_db, spec_sources, store, synthesis, tolerance)
+from . import (assembly, bom, builder, drawing, layout, library, linkage, planner, planetary, rules,
+               spec_compiler, spec_db, spec_sources, store, synthesis, tolerance)
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/srv/nvme-data/containers/constraint-kit/cadkit/output")
 
@@ -256,6 +256,15 @@ class ExplodeReq(BaseModel):
     axis: tuple[float, float, float] = (0.0, 0.0, 1.0)
 
 
+class DrawingReq(BaseModel):
+    defs: dict
+    root: str
+    name: str | None = None
+    plane: str = "XZ"
+    height: float = 0.0
+    views: list[str] = ["front", "top", "right"]
+
+
 class EngageReq(BaseModel):
     nominal_d: float
     engagement_len: float
@@ -439,6 +448,20 @@ def assembly_explode(req: ExplodeReq) -> dict:
             req.root, req.defs, os.path.join(OUTPUT_DIR, name), req.factor, tuple(req.axis))}
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"explode failed: {exc}") from exc
+
+
+@app.post("/assembly/drawing")
+def assembly_drawing(req: DrawingReq) -> dict:
+    """E7/T7.2: a 2D drawing set for an assembly — a cross-section DXF (cut on `plane`) + orthographic
+    projection SVGs (`views`) + overall dimensions. Section/projection geometry is exact (OCC); GD&T
+    tolerance frames are not generated."""
+    name = req.name or req.root
+    try:
+        asm = assembly.build_tree(req.root, req.defs)["cq_assembly"]
+        return {"ok": True, **drawing.drawing(asm, os.path.join(OUTPUT_DIR, name),
+                                              req.plane, req.height, tuple(req.views))}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"drawing failed: {exc}") from exc
 
 
 @app.post("/rules/fastener_engagement")

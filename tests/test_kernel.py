@@ -1425,6 +1425,32 @@ def test_explode_separates_stack_by_factor():
 
 
 @test
+def test_drawing_section_and_projection():
+    """T7.2: a drawing set — the cross-section area matches the exact cut (geometry is truth), the DXF is
+    ezdxf-valid, projection SVGs render, and overall dimensions match the bbox."""
+    import os
+    import tempfile
+    import ezdxf
+    from constraint_kit import assembly, drawing
+    # a 40 x 20 x 12 panel: XZ mid-section area = 40*12 = 480; overall dims = the box extents
+    defs = {"blk": {"parts": [{"id": "p", "type": "panel",
+                              "params": {"width": 40, "depth": 20, "height": 12}}]}}
+    asm = assembly.build_tree("blk", defs)["cq_assembly"]
+    dims = drawing.overall_dimensions(asm)
+    approx(dims["width_x"], 40.0); approx(dims["depth_y"], 20.0); approx(dims["height_z"], 12.0)
+    with tempfile.TemporaryDirectory() as d:
+        sec = drawing.section_dxf(asm, os.path.join(d, "s.dxf"), plane="XZ", height=0.0)
+        approx(sec["section_area_mm2"], 40.0 * 12.0, eps=1e-2)   # exact cut area
+        assert os.path.getsize(sec["path"]) > 0
+        assert len(ezdxf.readfile(sec["path"]).audit().errors) == 0   # valid DXF
+        full = drawing.drawing(asm, os.path.join(d, "draw"), plane="XZ", views=("front", "top"))
+        assert len(full["projections"]) == 2
+        for pj in full["projections"]:
+            assert os.path.getsize(pj["path"]) > 0              # each projection SVG rendered
+        assert "GD&T" in full["scope"]                          # honest scope note present
+
+
+@test
 def test_bom_document():
     """T7.3: BOM doc (md + csv) has correct per-type quantities and a total mass matching the roll-up."""
     import csv as _csv
