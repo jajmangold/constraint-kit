@@ -48,9 +48,11 @@ def derive_ports(wp) -> dict:
     absent): 'top'/'bottom' (extreme planar faces, +Z/−Z), 'center' (bbox centre), 'bore_axis' (the
     smallest-radius cylindrical face = the bore, frame on its true OCC axis).
 
-    NOTE: these are SELECTOR-derived from the current solid — a snapshot. Making the *names* stable across
-    parameter changes (so a derived port survives regen like an authored joint does) is the deeper problem,
-    tracked as research R2.a; this gives the snapshot capability that intent-mating (T2.2) builds on."""
+    NOTE: these are SELECTOR-derived from the current solid. T2.3 proves (test_derived_ports_survive_param_
+    changes) that across TOPOLOGY-PRESERVING parameter changes the named set + each port's axis are stable
+    and origins track the params by closed form — the regime intent-mating (T2.2) builds on. The R2.a
+    boundary remains: a feature appearing/disappearing changes the derivable set (an authored joint would
+    keep the name; a derived port cannot fabricate an absent feature)."""
     ports: dict = {}
     try:
         c = wp.faces(">Z").val().Center(); ports["top"] = frame((c.x, c.y, c.z), (0, 0, 1))

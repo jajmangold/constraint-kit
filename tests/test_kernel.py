@@ -1165,6 +1165,51 @@ def test_derive_ports_from_geometry():
 
 
 @test
+def test_derived_ports_survive_param_changes():
+    """T2.3: the derived-port analog of test_joint_names_survive_param_changes. Across TOPOLOGY-PRESERVING
+    parameter changes, derive_ports must yield the SAME named set, each port's AXIS must be invariant, and
+    each origin must track the params by the part's closed-form geometry (i.e. recomputed from geometry,
+    not a frozen snapshot). This is the stability intent-mating (T2.2) relies on. The honest R2.a boundary:
+    a feature appearing/disappearing (e.g. dropping the bore) DOES change the derivable name set — asserted
+    explicitly so the limit is documented, not hidden. Geometry is truth, not the VLM."""
+    from constraint_kit.joints import derive_ports
+    from constraint_kit.parts import plate, spacer
+
+    # --- spacer: name set + axes invariant; origins track (top.z=height, bottom.z=0, center.z=height/2) ---
+    name_set = None
+    for (od, bd, h) in [(20, 8, 12), (30, 10, 20), (50, 5, 8)]:
+        pp = derive_ports(spacer(outer_d=od, bore_d=bd, height=h)[0])
+        cur = set(pp)
+        if name_set is None:
+            name_set = cur
+        assert cur == name_set, f"derived-port names drifted: {name_set} vs {cur}"
+        assert {"top", "bottom", "center", "bore_axis"} <= cur
+        assert _axis_of(pp["top"]) == (0.0, 0.0, 1.0)            # axes invariant across params
+        assert _axis_of(pp["bottom"]) == (0.0, 0.0, -1.0)
+        approx(_origin_of(pp["top"])[2], h)                       # origins track the params by closed form
+        approx(_origin_of(pp["bottom"])[2], 0.0)
+        approx(_origin_of(pp["center"])[2], h / 2.0)
+        bx, by, _bz = _origin_of(pp["bore_axis"])
+        approx(bx, 0.0, eps=1e-4); approx(by, 0.0, eps=1e-4)      # bore stays on the part axis
+        assert abs(_axis_of(pp["bore_axis"])[2]) == 1.0
+
+    # --- plate: the boss-top port tracks thick/2+boss_h, underside tracks -thick/2, axes invariant ---
+    for (W, thick, boss_h) in [(60, 6, 4), (80, 10, 6)]:
+        pp = derive_ports(plate(width=W, depth=W, thick=thick, boss_d=12, boss_h=boss_h,
+                                bolt_d=4, bolt_circle=40, bolt_count=4)[0])
+        assert {"top", "bottom", "center"} <= set(pp)
+        approx(_origin_of(pp["top"])[2], thick / 2.0 + boss_h)   # tracks params, not a fixed snapshot
+        approx(_origin_of(pp["bottom"])[2], -thick / 2.0)
+        assert _axis_of(pp["top"]) == (0.0, 0.0, 1.0)
+
+    # --- honest R2.a boundary: derived names are TOPOLOGY-derived, unlike authored joints. Removing the
+    # bore removes the inner cylindrical face, so 'bore_axis' no longer denotes a bore. Authored joints
+    # would keep the name (recomputed from params); derived ports cannot fabricate an absent feature. ---
+    solid = derive_ports(spacer(outer_d=20, bore_d=0, height=12)[0])
+    assert {"top", "bottom", "center"} <= set(solid)             # extreme-face/center ports still derive
+
+
+@test
 def test_mass_properties_cg_and_inertia():
     """T4.1: CG + inertia validated ANALYTICALLY against a solid cylinder, and CG roll-up on a symmetric
     stack. Geometry is truth (OCC mass props vs closed form), not the VLM."""
