@@ -1079,6 +1079,28 @@ def test_synthesize_planetary_unsat_is_honest():
     assert r["ok"] is False and "UNSAT" in r["reason"]
 
 
+@test
+def test_interference_grid_equivalence_and_pruning():
+    """T3.2: the spatial-grid prefilter must give IDENTICAL clashes to a brute-force O(n^2) sweep, and
+    must prune far below n*(n-1)/2 candidate pairs for a spread-out assembly."""
+    from constraint_kit import assembly, validate
+    # 6 shafts spread 50mm apart along X (via hierarchy ports) -> no overlaps; brute force = 15 pairs
+    defs = {"shaft1": {"parts": [{"id": "s", "type": "shaft", "params": {"diameter": 8, "length": 20}}],
+                       "ports": {"p": {"origin": [0, 0, 0]}}},
+            "row": {"children": [{"instance": f"s{i}", "ref": "shaft1",
+                                  "place": {"port": "p", "at": [i * 50, 0, 0]}} for i in range(6)]}}
+    asm = assembly.build_tree("row", defs)["cq_assembly"]
+    res = validate.interference(asm)
+    # brute-force reference over the same world parts
+    wp = validate._world_parts(asm)
+    bb = [s.BoundingBox() for _, s in wp]
+    brute = sum(1 for i in range(len(wp)) for j in range(i + 1, len(wp))
+                if validate._bbox_overlap(bb[i], bb[j]))
+    assert res["ok"] and res["clashes"] == []            # 50mm apart -> no clashes
+    assert res["pairs_candidate"] < res["pairs_total"]    # grid pruned (15 total -> few candidates)
+    assert res["pairs_exact_checked"] == brute            # same exact-check set as brute force
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:
