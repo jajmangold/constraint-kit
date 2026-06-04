@@ -38,6 +38,7 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   builder.py           # 3D LEAF assembly: ordered mate solve -> cadquery.Assembly -> STEP+GLB + mass
   assembly.py          # HIERARCHY: recursive subassemblies + ports + BOM/mass + build_design + interference
   parameters.py        # TOP-DOWN design: requirements -> derived params (safe AST eval, provenance) [Phase B]
+  massprops.py         # mass properties: exact CG + inertia tensor (OCC GProp, density-weighted) [T4.1]
   validate.py          # interference/clash check: bbox prefilter + exact OCC boolean (world solids) [Phase C]
   synthesis.py         # SMT design synthesis (Z3): discrete/mixed-int constraint solving -> design to a spec
   planner.py           # qwen27b, schema-enforced specs: plan() [3D] + plan_layout() [2D]
@@ -285,7 +286,7 @@ size, DXF validity (ezdxf audit), and the atlas round-trip (or fail-soft when th
 tests/run.sh            # docker exec into cadkit; exit 0 = all pass (gates changes)
 ```
 
-73 tests, all passing. Add a test alongside any new part/mate (assert the invariant, not just "it runs").
+74 tests, all passing. Add a test alongside any new part/mate (assert the invariant, not just "it runs").
 Lesson baked into the suite: verify with **geometry** (anchor/bbox math), not the VLM — qwen27b is a
 categorical second opinion that misreads counts/angles (it called a bolted plate "no gear" from a `hero`
 angle, then "2 bolts, yes gear" from `three_quarter`); the deterministic tests are ground truth.

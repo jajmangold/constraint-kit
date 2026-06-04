@@ -261,10 +261,12 @@ def record_assembly_tree(res: dict) -> bool:
         s.run(
             """MERGE (a:CkAssemblyTree {name:$name})
                SET a.project=$project, a.mass_g=$mass, a.part_count=$pc, a.depth=$depth,
-                   a.bom=$bom, a.step=$step, a.glb=$glb, a.created=timestamp()""",
+                   a.bom=$bom, a.step=$step, a.glb=$glb, a.cg=$cg, a.principal_moments=$pm,
+                   a.created=timestamp()""",
             name=res.get("name", "tree"), project=_PROJECT, mass=res.get("mass_g"),
             pc=res.get("part_count"), depth=res.get("depth"),
-            bom=json.dumps(res.get("bom", {})), step=res.get("step"), glb=res.get("glb"))
+            bom=json.dumps(res.get("bom", {})), step=res.get("step"), glb=res.get("glb"),
+            cg=json.dumps(res.get("cg")), pm=json.dumps(res.get("principal_moments")))
     return True
 
 

@@ -22,8 +22,9 @@ from collections import Counter
 
 import cadquery as cq
 
-from . import builder, mates, parameters
+from . import builder, massprops, mates, parameters
 from .joints import frame
+from .parts import DENSITY_G_MM3
 
 
 def _port_frames(node: dict) -> dict:
@@ -47,6 +48,7 @@ def build_tree(root: str, defs: dict, _stack: tuple = ()) -> dict:
     mass = 0.0
     leaf_count = 0
     depth = 1
+    densities: dict = {}              # world-leaf name -> density g/mm3, for mass_properties (T4.1)
 
     # this node's own leaf parts (via the existing deterministic builder)
     if node.get("parts"):
@@ -56,6 +58,8 @@ def build_tree(root: str, defs: dict, _stack: tuple = ()) -> dict:
             bom[rp["type"]] += 1
             mass += rp.get("mass_g", 0.0) or 0.0
             leaf_count += 1
+            densities[f"{root}__parts/{rp['id']}"] = DENSITY_G_MM3.get(
+                rp["material"].lower(), DENSITY_G_MM3["steel"])
 
     # child sub-assemblies (each an instance; same ref may appear many times)
     for child in node.get("children", []):
@@ -66,15 +70,21 @@ def build_tree(root: str, defs: dict, _stack: tuple = ()) -> dict:
             port_local = cres["ports"][place["port"]]
             target = frame(place.get("at", [0, 0, 0]), place.get("axis", [0, 0, 1]), place.get("x_axis"))
             loc = mates.coincident(target, port_local)
-        assy.add(cres["cq_assembly"], name=child.get("instance", child["ref"]), loc=loc)
+        instance = child.get("instance", child["ref"])
+        assy.add(cres["cq_assembly"], name=instance, loc=loc)
         bom.update(cres["bom"])           # recursive roll-up
         mass += cres["mass_g"]
         leaf_count += cres["leaf_count"]
         depth = max(depth, cres["depth"] + 1)
+        for k, v in cres["densities"].items():     # re-prefix child density keys into this node's frame
+            densities[f"{instance}/{k}"] = v
 
+    mp = massprops.mass_properties(assy, densities)   # exact CG + inertia about CG (density-weighted)
     return {"name": root, "cq_assembly": assy, "ports": _port_frames(node),
             "bom": bom, "mass_g": round(mass, 2), "part_count": sum(bom.values()),
-            "leaf_count": leaf_count, "depth": depth}
+            "leaf_count": leaf_count, "depth": depth, "densities": densities,
+            "cg": mp["cg"], "principal_moments": mp["principal_moments"],
+            "inertia_about_cg": mp["inertia_about_cg"]}
 
 
 def report(result: dict) -> dict:
@@ -83,6 +93,7 @@ def report(result: dict) -> dict:
         "name": result["name"], "mass_g": result["mass_g"], "part_count": result["part_count"],
         "depth": result["depth"], "ports": sorted(result["ports"]),
         "bom": dict(sorted(result["bom"].items())),
+        "cg": result.get("cg"), "principal_moments": result.get("principal_moments"),
     }
 
 

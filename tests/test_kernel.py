@@ -1140,6 +1140,28 @@ def test_derive_ports_from_geometry():
     assert abs(az[2]) == 1.0 and az[0] == 0.0 and az[1] == 0.0   # axis along Z (sign-agnostic)
 
 
+@test
+def test_mass_properties_cg_and_inertia():
+    """T4.1: CG + inertia validated ANALYTICALLY against a solid cylinder, and CG roll-up on a symmetric
+    stack. Geometry is truth (OCC mass props vs closed form), not the VLM."""
+    from constraint_kit import assembly
+    R, H = 20.0, 30.0
+    cyl = {"parts": [{"id": "c", "type": "spacer", "material": "aluminum",
+                      "params": {"outer_d": 2 * R, "bore_d": 0, "height": H}}]}
+    res = assembly.build_tree("cyl", {"cyl": cyl})
+    cg, pm, m = res["cg"], res["principal_moments"], res["mass_g"]
+    approx(cg[0], 0.0, eps=1e-3); approx(cg[1], 0.0, eps=1e-3); approx(cg[2], H / 2, eps=1e-3)
+    approx(pm[2] / m, 0.5 * R * R, eps=0.5)               # Izz/M = R^2/2  (about cylinder axis)
+    approx(pm[0] / m, 0.25 * R * R + H * H / 12, eps=0.5)  # Ixx/M = R^2/4 + H^2/12
+    # symmetric stack of two identical cylinders (0..H and H..2H) -> CG at z=H
+    defs = {"cyl": {"parts": [{"id": "c", "type": "spacer",
+                              "params": {"outer_d": 2 * R, "bore_d": 0, "height": H}}],
+                    "ports": {"bot": {"origin": [0, 0, 0]}}},
+            "stack": {"children": [{"instance": "a", "ref": "cyl", "place": {"port": "bot", "at": [0, 0, 0]}},
+                                   {"instance": "b", "ref": "cyl", "place": {"port": "bot", "at": [0, 0, H]}}]}}
+    approx(assembly.build_tree("stack", defs)["cg"][2], H, eps=1e-2)
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:
