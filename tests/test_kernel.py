@@ -1209,6 +1209,83 @@ def test_derived_ports_survive_param_changes():
     assert {"top", "bottom", "center"} <= set(solid)             # extreme-face/center ports still derive
 
 
+def _mkparts(specs):
+    """Build a minimal builder-style parts map {id: {wp, anchors, type}} from (id, type, params) tuples."""
+    from constraint_kit.builder import ALL_PART_GENS
+    parts = {}
+    for pid, ptype, params in specs:
+        wp, anchors = ALL_PART_GENS[ptype](**params)
+        parts[pid] = {"wp": wp, "anchors": dict(anchors), "type": ptype}
+    return parts
+
+
+@test
+def test_mate_intent_resolves_canonical_seat():
+    """T2.2: 'seat gear on plate boss' resolves DETERMINISTICALLY to the same frames+type a human would
+    author (plate.mount <- gear.bore_base, coincident). No LLM in the resolver."""
+    from constraint_kit import mate_intent
+    parts = _mkparts([("plate", "plate", {}),
+                      ("gear", "spur_gear", {"module": 1, "teeth": 20, "width": 6, "bore_d": 12})])
+    r = mate_intent.resolve_intent(parts, {"a": "plate", "b": "gear", "intent": "seat_on"})
+    assert r["a_joint"] == "mount" and r["b_joint"] == "bore_base" and r["type"] == "coincident"
+    assert r["resolved_from_intent"] == "seat_on"
+    # synonyms normalize to the same canonical intent
+    assert mate_intent.canonical_intent("stack") == "seat_on"
+    assert mate_intent.canonical_intent("Place On") == "seat_on"
+
+
+@test
+def test_mate_intent_equivalent_to_explicit():
+    """An intent build must produce IDENTICAL geometry to the hand-authored explicit-frame build —
+    intent is sugar over the same deterministic kernel, verified by the gear's world placement."""
+    from constraint_kit import builder
+    base = [{"id": "plate", "type": "plate", "params": {}},
+            {"id": "gear", "type": "spur_gear", "params": {"module": 1, "teeth": 20, "width": 6, "bore_d": 12}}]
+    explicit = {"parts": base, "mates": [{"a": "plate", "a_joint": "mount", "b": "gear",
+                                          "b_joint": "bore_base", "type": "coincident"}]}
+    intent = {"parts": base, "mates": [{"a": "plate", "b": "gear", "intent": "seat_on"}]}
+    ae, _ = builder.build_assembly(explicit)
+    ai, _ = builder.build_assembly(intent)
+    (xe, ye, ze), _ = next(c for c in ae.children if c.name == "gear").loc.toTuple()
+    (xi, yi, zi), _ = next(c for c in ai.children if c.name == "gear").loc.toTuple()
+    approx(xi, xe); approx(yi, ye); approx(zi, ze)               # same placement, both routes
+
+
+@test
+def test_mate_intent_uses_derived_port_when_unauthored():
+    """The T2.3->T2.2 link: 'insert a shaft into a spacer' has no AUTHORED bore frame on the spacer, so the
+    resolver falls back to the geometry-DERIVED 'bore_axis' (proven stable in T2.3) and injects it into the
+    part's anchors for the frame-based solver. Also: 'insert' allows a revolute type override (a spinning
+    shaft)."""
+    from constraint_kit import mate_intent
+    parts = _mkparts([("sp", "spacer", {"outer_d": 20, "bore_d": 8, "height": 12}),
+                      ("sh", "shaft", {"diameter": 8, "length": 30})])
+    assert "bore_axis" not in parts["sp"]["anchors"]             # spacer authors only bottom/top
+    r = mate_intent.resolve_intent(parts, {"a": "sp", "b": "sh", "intent": "insert"})
+    assert r["a_joint"] == "bore_axis" and r["b_joint"] == "base" and r["type"] == "rigid"
+    assert "bore_axis" in parts["sp"]["anchors"]                 # derived frame injected for the solver
+    r2 = mate_intent.resolve_intent(parts, {"a": "sp", "b": "sh", "intent": "insert",
+                                            "type": "revolute", "angle_deg": 30})
+    assert r2["type"] == "revolute" and r2["angle_deg"] == 30
+
+
+@test
+def test_mate_intent_honest_failures():
+    """The resolver is honest: an unknown intent, a disallowed type override, and an unsatisfiable role all
+    RAISE (never a silently-wrong mate)."""
+    from constraint_kit import mate_intent
+    parts = _mkparts([("plate", "plate", {}),
+                      ("gear", "spur_gear", {"module": 1, "teeth": 20, "width": 6, "bore_d": 12})])
+    for bad in ({"a": "plate", "b": "gear", "intent": "frobnicate"},          # unknown intent
+                {"a": "plate", "b": "gear", "intent": "seat_on", "type": "mesh"},  # type not allowed for seat_on
+                {"a": "plate", "b": "gear", "intent": "mesh"}):               # plate has no bore_base to mesh
+        try:
+            mate_intent.resolve_intent(parts, bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"expected ValueError for {bad}")
+
+
 @test
 def test_mass_properties_cg_and_inertia():
     """T4.1: CG + inertia validated ANALYTICALLY against a solid cylinder, and CG roll-up on a symmetric

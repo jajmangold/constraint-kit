@@ -38,12 +38,16 @@ SPEC_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object", "additionalProperties": False,
-                "required": ["a", "a_joint", "b", "b_joint", "type"],
+                "required": ["a", "b"],
                 "properties": {
                     "a": {"type": "string"}, "b": {"type": "string"},
                     "a_joint": {"type": "string"}, "b_joint": {"type": "string"},
                     "type": {"enum": ["coincident", "rigid", "contact", "mesh",
                                       "revolute", "cylindrical"]},
+                    # mate-by-intent (T2.2): name HOW the parts connect and the resolver derives the frames
+                    # + mate type deterministically. Either give an "intent" OR explicit a_joint/b_joint+type.
+                    "intent": {"enum": ["seat_on", "insert", "fasten", "mesh"]},
+                    "hole_index": {"type": "integer"},
                     "angle_deg": {"type": "number"},
                     "slide": {"type": "number"},
                 },
@@ -115,11 +119,20 @@ Mate types:
     (auto-computed from module+teeth), coplanar, at "angle_deg" around A's axis (default 0). The two
     gears MUST share the same module to mesh. Use a_joint="bore_base", b_joint="bore_base".
 
+Mate-by-INTENT (preferred when you know HOW parts connect but not the exact frame names): instead of
+a_joint/b_joint/type, give an "intent" and the resolver derives the frames + mate type deterministically:
+- "seat_on": B sits on top of A (gear on a plate boss, a stacked spacer). a="plate" b="gear" intent="seat_on".
+- "insert": B's axis drops into A's bore (a shaft journalled in a block/bearing bore). Add angle_deg + set
+    type="revolute" if B should SPIN. a="block" b="shaft" intent="insert".
+- "fasten": fastener B seats in A's bolt hole (optionally hole_index=N). a="plate" b="bolt" intent="fasten".
+- "mesh": two spur_gears mesh. a="gear1" b="gear2" intent="mesh" angle_deg=…
+Use intent OR explicit a_joint/b_joint+type, not both unless overriding one frame.
+
 Rules: the FIRST part is fixed at origin. Mates are applied in order, and B is placed relative to A's
 CURRENT position, so chains compose (plate->spacer->gear). To seat a gear on a plate boss:
-a="plate" a_joint="mount" b="gear" b_joint="bore_base". To stack via a spacer: plate.mount->spacer.bottom,
-then spacer.top->gear.bore_base. Match mating diameters (plate boss_d == spacer bore_d/gear bore_d).
-Choose sensible engineering values. Respond with ONLY the JSON spec."""
+a="plate" a_joint="mount" b="gear" b_joint="bore_base" (or simply intent="seat_on"). To stack via a spacer:
+plate.mount->spacer.bottom, then spacer.top->gear.bore_base. Match mating diameters (plate boss_d ==
+spacer bore_d/gear bore_d). Choose sensible engineering values. Respond with ONLY the JSON spec."""
 
 
 LAYOUT_SCHEMA = {

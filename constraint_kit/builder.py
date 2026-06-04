@@ -18,7 +18,7 @@ import os
 
 import cadquery as cq
 
-from . import mates
+from . import mate_intent, mates
 from .parts import DENSITY_G_MM3, PART_GENS
 from .parts_bd import PART_GENS_BD
 
@@ -131,6 +131,10 @@ def build_assembly(spec: dict):
             "fallback": "_fallback" in anchors, "finish": finish,
         }
 
+    # mate-by-intent (T2.2): resolve any intent-carrying mate to a concrete {a_joint,b_joint,type} against
+    # the just-generated parts' authored + derived (T2.3) frames, BEFORE placement. Explicit mates pass through.
+    resolved_mates = mate_intent.normalize_mates(parts, spec.get("mates", []))
+
     # deterministic ordered placement: part 0 at origin, then apply mates in order. A mate whose target
     # B is ALREADY positioned closes a loop — the tree solver cannot honor it (B can't be in two places).
     # We skip such mates here and surface them; a DOF solver is needed to close them (see find_loops).
@@ -138,7 +142,7 @@ def build_assembly(spec: dict):
     positioned = {_pid(spec["parts"][0])}
     placed = set(positioned)
     loop_constraints: list[dict] = []
-    for m in spec.get("mates", []):
+    for m in resolved_mates:
         if m["b"] in positioned:
             loop_constraints.append(m)        # loop-closing constraint -> needs the DOF solver
             continue

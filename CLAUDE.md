@@ -31,6 +31,7 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   parts_bd.py          # build123d/bd_warehouse catalog parts (extrusion/bearing/screw) + PART_GENS_BD
   parts2d.py           # 2D footprint generators (entities+anchors+bbox) + PART2D_GENS   [Phase 1]
   joints.py            # first-class ORIENTED mate frames: frame() + joints_from_b123d() (build123d)
+  mate_intent.py       # MATE-BY-INTENT resolver [T2.2]: semantic intent -> concrete frames+mate type (deterministic)
   planetary.py         # GEAR-loop: epicyclic math compute()/validate()/mobility() (analytical, no deps)
   linkage.py           # GEOMETRIC-loop: 4-bar/slider-crank DOF via python-solvespace (constraint solver)
   mates.py             # deterministic 3D mate kernel: coincident/rigid (frame->frame), contact, mesh
@@ -238,7 +239,9 @@ not just the points. This is the fix for grounding mate intent to durable refere
 
 Any part spec may carry opt-in composable `"finish"` post-ops applied shell→chamfer→fillet (`builder._apply_finish`, fail-soft per op): `{"shell"?: t, "open_face"?: sel, "chamfer"?: r, "fillet"?: r, "edges"?: sel}` — `shell` hollows to wall thickness t (sealed; `open_face` removes a face), fillet/chamfer default to ALL edges. Stable *named* edge selection across regen is still research (R1.a).
 
-`joints.derive_ports(wp)` DERIVES oriented ports from a *built* solid (top/bottom/center/bore_axis, via face queries + OCC cylinder-axis) — geometry-grounded interfaces interchangeable with authored joints. It's a snapshot; making derived ports regen-stable like authored joint names is research (R2.a).
+`joints.derive_ports(wp)` DERIVES oriented ports from a *built* solid (top/bottom/center/bore_axis, via face queries + OCC cylinder-axis) — geometry-grounded interfaces interchangeable with authored joints. **T2.3 proves** (`test_derived_ports_survive_param_changes`) that across *topology-preserving* parameter changes the derived name set + each port's axis are stable and origins track the params by closed form — the regime intent-mating relies on. The R2.a boundary remains: a feature appearing/disappearing changes the derivable set (authored joints keep the name; a derived port can't fabricate an absent feature).
+
+**Mate-by-intent (`mate_intent.py`, T2.2):** the bridge from semantic intent to the deterministic kernel. A mate may say HOW parts connect (`{"a","b","intent"}`) instead of naming frames; `resolve_intent` DETERMINISTICALLY (no LLM) maps a small vocabulary — `seat_on` (coincident, B base→A top/mount), `insert` (rigid, B axis→A bore; revolute/cylindrical override for a spinning shaft), `fasten` (rigid, fastener seat→A bolt hole, opt `hole_index`), `mesh` (two gears) — onto the parts' AUTHORED anchors first, falling back to the T2.3 derived ports (a chosen derived frame is injected into the part's anchors for the frame-based solver). Honest: an unknown intent, a disallowed type override, or an unsatisfiable role RAISE (never a silently-wrong mate). `builder.normalize_mates` resolves intents before placement, so an intent build is geometrically IDENTICAL to the hand-authored explicit-frame build (`test_mate_intent_equivalent_to_explicit`). Planner emits `intent` (schema enum + SYSTEM prompt); explicit a_joint/b_joint still work and override the auto-pick.
 
 Mates (`mates.py` + builder dispatch): `coincident`/`rigid` (lands B's frame exactly on A's — `rigid`
 signals an oriented joint mate and aligns axes), `contact` (drops B so its bbox bottom rests on A's plane —
