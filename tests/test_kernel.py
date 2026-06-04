@@ -1566,14 +1566,20 @@ def test_capstone_gearbox_full_stack():
          "params": {"width": 90, "depth": 90, "thick": 8, "boss_d": 24, "boss_h": 3,
                     "bolt_d": 5, "bolt_circle": 74, "bolt_count": 4}},
         pg,
+        {"id": "brg", "type": "bearing", "material": "steel",
+         "params": {"outer_d": 24, "bore_d": 12, "width": 6}},
         *[{"id": f"screw{i}", "type": "bolt", "material": "steel",
            "params": {"shank_d": 5, "length": 14, "head_d": 9, "head_h": 4}} for i in range(4)]],
-        "mates": [{"a": "plate", "a_joint": "mount", "b": "planetary", "b_joint": "base",
+        # planetary seats on the plate boss (intent picks the authored 'base', T2.4); the bearing stacks
+        # on the gearset top (T2.5 — works once authored anchors win); screws drop into the bolt holes.
+        "mates": [{"a": "plate", "b": "planetary", "intent": "seat_on"},
+                  {"a": "planetary", "a_joint": "top", "b": "brg", "b_joint": "bore_base",
                    "type": "coincident"},
                   *[{"a": "plate", "a_joint": f"bolt{i}", "b": f"screw{i}", "b_joint": "seat",
                      "type": "coincident"} for i in range(4)]]}}
     res = assembly.build_tree("gearbox", defs, prewarm=True)
-    assert res["bom"]["planetary_gearset"] == 1 and res["bom"]["bolt"] == 4 and res["mass_g"] > 0
+    assert res["bom"]["planetary_gearset"] == 1 and res["bom"]["bolt"] == 4 and res["bom"]["bearing"] == 1
+    assert res["mass_g"] > 0
     assert res["cg"] is not None and res["principal_moments"] is not None
     # 4. validation: no clashes (the gear mesh is intended internal contact, not a clash)
     assert validate.interference(res["cq_assembly"])["ok"]
