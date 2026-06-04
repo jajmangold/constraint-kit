@@ -1107,17 +1107,41 @@ def test_finish_fillet_chamfer_failsoft():
     (part kept unchanged, finish.ok=False) — never breaks the build."""
     from constraint_kit import builder
     cyl = {"outer_d": 40, "bore_d": 0, "height": 20}
+
+    def build(finish=None):
+        ps = {"id": "p", "type": "spacer", "params": cyl}
+        if finish:
+            ps["finish"] = finish
+        return builder.build_assembly({"parts": [ps], "mates": []})[1][0]
+
+    v0 = build()["volume_mm3"]
+    fil = build({"fillet": 3})
+    assert fil["finish"]["ok"] and fil["volume_mm3"] < v0               # rounded edges remove material
+    cha = build({"chamfer": 3})
+    assert cha["finish"]["applied"][0]["op"] == "chamfer" and cha["volume_mm3"] < v0
+    big = build({"fillet": 100})
+    assert big["finish"]["ok"] is False and big["volume_mm3"] == v0      # fail-soft: part unchanged
+
+
+@test
+def test_finish_shell_and_compose():
+    """T1.2: shell hollows a part (volume drops), and shell+fillet compose (both ops applied, ordered)."""
+    from constraint_kit import builder
+    cyl = {"outer_d": 40, "bore_d": 0, "height": 20}
+
+    def build(finish):
+        return builder.build_assembly({"parts": [{"id": "p", "type": "spacer", "params": cyl,
+                                                  "finish": finish}], "mates": []})[1][0]
+
     v0 = builder.build_assembly({"parts": [{"id": "p", "type": "spacer", "params": cyl}],
                                  "mates": []})[1][0]["volume_mm3"]
-    _, fil = builder.build_assembly({"parts": [{"id": "p", "type": "spacer", "params": cyl,
-                                                "finish": {"fillet": 3}}], "mates": []})
-    assert fil[0]["finish"]["ok"] and fil[0]["volume_mm3"] < v0          # rounded edges remove material
-    _, cha = builder.build_assembly({"parts": [{"id": "p", "type": "spacer", "params": cyl,
-                                                "finish": {"chamfer": 3}}], "mates": []})
-    assert cha[0]["finish"]["op"] == "chamfer" and cha[0]["volume_mm3"] < v0
-    _, big = builder.build_assembly({"parts": [{"id": "p", "type": "spacer", "params": cyl,
-                                                "finish": {"fillet": 100}}], "mates": []})
-    assert big[0]["finish"]["ok"] is False and big[0]["volume_mm3"] == v0  # fail-soft: part unchanged
+    sh = build({"shell": 3})
+    assert sh["finish"]["ok"] and sh["volume_mm3"] < v0                 # hollowed -> less material
+    combo = build({"shell": 3, "fillet": 1})
+    ops = [a["op"] for a in combo["finish"]["applied"]]
+    assert ops == ["shell", "fillet"] and combo["finish"]["ok"]          # ordered shell then fillet
+    bad = build({"shell": 100})
+    assert bad["finish"]["ok"] is False and bad["volume_mm3"] == v0      # fail-soft
 
 
 @test

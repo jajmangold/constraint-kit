@@ -37,24 +37,38 @@ def _pid(ps: dict) -> str:
 
 
 def _apply_finish(wp, finish: dict | None):
-    """OPT-IN fillet/chamfer post-op (T1.1). `finish` = {"fillet"|"chamfer": radius, "edges"?: selector}.
-    Default selects ALL edges (deterministic — no selector ambiguity); an optional cadquery selector is
-    supported but fragile across param changes (see research R1.a). FAIL-SOFT: a fillet that can't be
-    made (radius too large, complex topology like gears/threads) keeps the original part + an ok:false
-    note — never breaks the build. Returns (wp, status|None)."""
+    """OPT-IN composable post-ops (T1.1 fillet/chamfer + T1.2 shell), applied in a fixed order
+    shell → chamfer → fillet so a housing can do `{"shell": 2, "fillet": 1}`. Schema:
+    `{"shell"?: t, "open_face"?: selector, "chamfer"?: r, "fillet"?: r, "edges"?: selector}`.
+    `shell` hollows to wall thickness t (sealed); `open_face` removes a face for an open shell.
+    fillet/chamfer default to ALL edges (deterministic); an optional `edges` selector is fragile across
+    param changes (research R1.a). FAIL-SOFT per op: an impossible op is skipped (keeps the prior solid)
+    with an ok:false entry — never breaks the build. Returns (wp, {ok, applied:[...]} | None)."""
     if not finish:
         return wp, None
-    op = "fillet" if "fillet" in finish else "chamfer" if "chamfer" in finish else None
-    if op is None:
-        return wp, {"ok": False, "error": "finish needs 'fillet' or 'chamfer'"}
+    applied: list[dict] = []
+    if "shell" in finish:
+        try:
+            t = float(finish["shell"])
+            of = finish.get("open_face")
+            wp = wp.faces(of).shell(-t) if of else wp.shell(-t)
+            applied.append({"op": "shell", "ok": True, "thickness": t, "open_face": of or "none"})
+        except Exception as exc:  # noqa: BLE001
+            applied.append({"op": "shell", "ok": False, "error": f"{type(exc).__name__}: {exc}"})
     sel = finish.get("edges")
-    try:
-        r = float(finish[op])
-        edges = wp.edges(sel) if sel else wp.edges()
-        out = edges.fillet(r) if op == "fillet" else edges.chamfer(r)
-        return out, {"ok": True, "op": op, "radius": r, "edges": sel or "all"}
-    except Exception as exc:  # noqa: BLE001 -- finish is best-effort; keep the unfinished part
-        return wp, {"ok": False, "op": op, "error": f"{type(exc).__name__}: {exc}"}
+    for op in ("chamfer", "fillet"):
+        if op not in finish:
+            continue
+        try:
+            r = float(finish[op])
+            edges = wp.edges(sel) if sel else wp.edges()
+            wp = edges.chamfer(r) if op == "chamfer" else edges.fillet(r)
+            applied.append({"op": op, "ok": True, "radius": r, "edges": sel or "all"})
+        except Exception as exc:  # noqa: BLE001 -- best-effort; keep the prior solid
+            applied.append({"op": op, "ok": False, "error": f"{type(exc).__name__}: {exc}"})
+    if not applied:
+        return wp, {"ok": False, "applied": [], "error": "finish needs shell/chamfer/fillet"}
+    return wp, {"ok": all(a["ok"] for a in applied), "applied": applied}
 
 
 def build_assembly(spec: dict):
