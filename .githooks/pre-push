@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Version-controlled pre-push hook: gate pushes on the test suite. Enable once with:
+#   git config core.hooksPath .githooks
+# Bypass in an emergency with:  git push --no-verify
+exec "$(git rev-parse --show-toplevel)/tools/ci.sh"
