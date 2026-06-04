@@ -220,9 +220,42 @@ def bearing(outer_d: float = 22.0, bore_d: float = 8.0, width: float = 7.0):
     return wp, {"bore_base": _loc(0, 0, 0), "bore_top": _loc(0, 0, width)}
 
 
+def housing(width: float = 60.0, depth: float = 60.0, height: float = 40.0, wall: float = 3.0,
+            bore_d: float = 20.0, bolt_d: float = 4.0, bolt_circle: float = 0.0, bolt_count: int = 4,
+            fillet: float = 2.0):
+    """An open-top rectangular ENCLOSURE — the first 'rich' native part (T1.5): a filleted box shelled to
+    `wall` thickness, with a central bore through the floor (for a shaft/bearing) and an optional bolt
+    circle of mounting holes. Box spans z in [0, height], centered in XY.
+
+    Anchors: 'base' (floor bottom center), 'top' (rim opening center), 'bore_axis' (floor bore, +Z),
+    'bolt0..N' (mount holes on the inner floor, matching the polar array)."""
+    bolt_count = int(bolt_count)
+    wp = cq.Workplane("XY").box(width, depth, height, centered=(True, True, False))   # z in [0, height]
+    if fillet > 0:
+        try:
+            wp = wp.edges("|Z").fillet(fillet)        # round the four vertical edges first
+        except Exception:  # noqa: BLE001 -- impossible fillet: keep square (fail-soft)
+            pass
+    wp = wp.faces(">Z").shell(-wall)                  # hollow it, open top
+    if bore_d > 0:
+        wp = wp.faces("<Z").workplane().hole(bore_d)  # central bore through the floor
+    if bolt_count > 0 and bolt_d > 0 and bolt_circle > 0:
+        holes = (cq.Workplane("XY").polarArray(bolt_circle / 2.0, 0, 360, bolt_count)
+                 .circle(bolt_d / 2.0).extrude(wall * 3.0))   # through the floor
+        wp = wp.cut(holes)
+    anchors = {"base": _loc(0, 0, 0), "top": _loc(0, 0, height), "bore_axis": _loc(0, 0, 0)}
+    if bolt_count > 0 and bolt_circle > 0:
+        r = bolt_circle / 2.0
+        for i in range(bolt_count):
+            th = math.radians(i * 360.0 / bolt_count)
+            anchors[f"bolt{i}"] = _loc(r * math.cos(th), r * math.sin(th), wall)
+    return wp, anchors
+
+
 # registry the planner/builder dispatch on; extend here as parts are added.
 PART_GENS = {
     "plate": plate,
+    "housing": housing,
     "spur_gear": spur_gear,
     "ring_gear": ring_gear,
     "planetary_gearset": planetary_gearset,

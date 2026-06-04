@@ -1208,6 +1208,24 @@ def test_bom_document():
     approx(float(spacer[2]), res["mass_by_type"]["spacer"], eps=1e-3)   # per-type mass matches roll-up
 
 
+@test
+def test_housing_part():
+    """T1.5: the housing is a hollow shell (volume << solid box), has its floor bore, and exposes
+    base/top/bore_axis/bolt anchors — a rich part built from shell+fillet+bore+bolts."""
+    from constraint_kit import builder
+    from constraint_kit.joints import _cylinder_axis
+    from constraint_kit.parts import housing
+    W, D, H, wall = 60.0, 60.0, 40.0, 3.0
+    _, rep = builder.build_assembly({"parts": [{"id": "h", "type": "housing", "material": "aluminum",
+        "params": {"width": W, "depth": D, "height": H, "wall": wall, "bore_d": 20,
+                   "bolt_circle": 48, "bolt_count": 4, "fillet": 2}}], "mates": []})
+    assert rep[0]["volume_mm3"] < W * D * H * 0.5            # hollow: far less than a solid box
+    wp, anchors = housing(width=W, depth=D, height=H, wall=wall, bore_d=20, bolt_circle=48, bolt_count=4)
+    assert {"base", "top", "bore_axis", "bolt0", "bolt3"} <= set(anchors)
+    radii = [ax[1] for f in wp.faces("%Cylinder").vals() if (ax := _cylinder_axis(f))]
+    assert any(abs(r - 10.0) < 0.5 for r in radii)           # the 20mm floor bore is present
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:
