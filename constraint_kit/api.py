@@ -17,7 +17,7 @@ import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from . import (assembly, bom, builder, layout, linkage, planner, planetary, spec_compiler, spec_db,
+from . import (assembly, bom, builder, layout, linkage, planner, planetary, rules, spec_compiler, spec_db,
                spec_sources, store, synthesis)
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/srv/nvme-data/containers/constraint-kit/cadkit/output")
@@ -248,6 +248,23 @@ class BomReq(BaseModel):
     fmt: str = "md"
 
 
+class EngageReq(BaseModel):
+    nominal_d: float
+    engagement_len: float
+    mating_material: str = "steel"
+
+
+class FitRuleReq(BaseModel):
+    application: str
+    fit_class: str
+
+
+class ClearanceReq(BaseModel):
+    defs: dict
+    root: str
+    required: float = 0.5
+
+
 class DesignReq(BaseModel):
     requirements: dict
     relations: list[dict] | None = None
@@ -345,6 +362,28 @@ def assembly_bom(req: BomReq) -> dict:
         fh.write(doc)
     return {"ok": True, "fmt": fmt, "path": path, "document": doc,
             "bom": dict(result["bom"]), "mass_g": result["mass_g"]}
+
+
+@app.post("/rules/fastener_engagement")
+def rule_engagement(req: EngageReq) -> dict:
+    """E9/T9.1: is the thread engagement length sufficient for the mating material?"""
+    return rules.fastener_engagement(req.nominal_d, req.engagement_len, req.mating_material)
+
+
+@app.post("/rules/fit")
+def rule_fit(req: FitRuleReq) -> dict:
+    """E9/T9.2: is the ISO 286 fit class appropriate for the application?"""
+    return rules.fit_appropriateness(req.application, req.fit_class)
+
+
+@app.post("/rules/clearance")
+def rule_clearance(req: ClearanceReq) -> dict:
+    """E9/T9.3: minimum gap between parts (exact OCC distance); flag pairs closer than `required` mm."""
+    try:
+        asm = assembly.build_tree(req.root, req.defs)["cq_assembly"]
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"clearance build failed: {exc}") from exc
+    return rules.min_clearance(asm, req.required)
 
 
 @app.get("/catalog")

@@ -1283,6 +1283,27 @@ def test_scale_grid_interference():
     assert inter["ok"] and inter["pairs_candidate"] < inter["pairs_total"]   # spread grid -> pruned
 
 
+@test
+def test_design_rules():
+    """T9.1/T9.2/T9.3: engagement threshold by material, fit recommendation, exact clearance gap."""
+    from constraint_kit import assembly, rules
+    assert rules.fastener_engagement(6, 6, "steel")["ok"] is True       # req 6mm (1xD)
+    assert rules.fastener_engagement(6, 6, "aluminum")["ok"] is False   # req 12mm (2xD)
+    assert rules.fit_appropriateness("running_clearance", "H7/g6")["ok"] is True
+    assert rules.fit_appropriateness("running_clearance", "H7/p6")["ok"] is False
+    assert rules.fit_appropriateness("bogus", "H7/g6")["ok"] is None    # honest unknown, not a fake pass
+    defs = {"cell": {"parts": [{"id": "s", "type": "spacer",
+                               "params": {"outer_d": 20, "bore_d": 0, "height": 10}}],
+                     "ports": {"p": {"origin": [0, 0, 0]}}},
+            "pair": {"children": [{"instance": "a", "ref": "cell", "place": {"port": "p", "at": [0, 0, 0]}},
+                                  {"instance": "b", "ref": "cell", "place": {"port": "p", "at": [25, 0, 0]}}]}}
+    asm = assembly.build_tree("pair", defs)["cq_assembly"]
+    assert rules.min_clearance(asm, 3.0)["ok"]                           # gap 25-20=5 > 3 -> ok (pruned)
+    c10 = rules.min_clearance(asm, 10.0)
+    assert not c10["ok"] and len(c10["violations"]) == 1                 # 5 < 10 -> one violation
+    assert abs(c10["min_gap_mm"] - 5.0) < 0.1                            # exact OCC gap = 5mm
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:
