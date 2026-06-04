@@ -103,7 +103,9 @@ leaf geometry via the builder), `children` (sub-assembly *instances*, the same `
 `ports` (named frames it exposes upward). A parent places a whole child as a unit by mating the child's
 **port** to a frame in the parent's space — the SAME `mates.coincident` used for leaf joints, so ports are
 just assembly-level joints. Each node builds in its own local frame and is relocated by its parent, so
-composition is clean. **Roll-ups** (BOM = recursive part counts, mass) accumulate bottom-up; one combined
+composition is clean. **Roll-ups** (BOM = recursive part counts, mass, and **CG + inertia tensor** via
+`massprops` — exact OCC GProp, density-weighted, about the CoM, validated analytically) accumulate
+bottom-up; one combined
 STEP/GLB via `builder.export`. Cyclic/unknown refs raise. Proven: `wheel`(rim+hub) reused 2× in
 `axle`(+shaft) → BOM `{shaft:1, spacer:4}`, mass rolls up, depth 2 — the car-in-miniature.
 
