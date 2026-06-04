@@ -1,0 +1,17 @@
+# generated CAD artifacts + spec store (regenerated at runtime under OUTPUT_DIR / SPEC_DB_PATH)
+cadkit/output/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# sqlite spec stores (anywhere)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# os / editor cruft
+.DS_Store
+*.swp
