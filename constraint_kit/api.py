@@ -392,6 +392,23 @@ def synthesize_planetary(req: SynthPlanetaryReq) -> dict:
     return res
 
 
+class ToleranceAllocReq(BaseModel):
+    dims: list[dict]
+    budget_um: float
+    grade_min: int = 5
+    grade_max: int = 12
+    method: str = "worst_case"
+
+
+@app.post("/synthesize/tolerance")
+def synthesize_tolerance(req: ToleranceAllocReq) -> dict:
+    """E10/T10.1: SMT tolerance ALLOCATION (Z3) — the inverse of /tolerance/stackup. Allocate the loosest
+    (cheapest) ISO 286 IT grade per dimension whose stack-up still fits `budget_um`; honest infeasible
+    (with the tightest achievable total) when even all-tight exceeds the budget."""
+    return synthesis.synthesize_tolerance_allocation(req.dims, req.budget_um, req.grade_min,
+                                                     req.grade_max, req.method)
+
+
 class InterferenceReq(BaseModel):
     defs: dict
     root: str

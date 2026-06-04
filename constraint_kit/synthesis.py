@@ -14,6 +14,8 @@ from __future__ import annotations
 import math
 from fractions import Fraction
 
+from . import iso286
+
 
 def synthesize_planetary(target_ratio: float, n_planets: int = 3, teeth_min: int = 12,
                          teeth_max: int = 40, module: float = 1.0, width: float = 6.0,
@@ -68,3 +70,64 @@ def synthesize_planetary(target_ratio: float, n_planets: int = 3, teeth_min: int
                                  "n_planets": n, "width": width}},
         "solver": "z3 SMT (optimize)",
     }
+
+
+def synthesize_tolerance_allocation(dims: list, budget_um: float, grade_min: int = 5,
+                                    grade_max: int = 12, method: str = "worst_case") -> dict:
+    """SMT tolerance ALLOCATION (T10.1) — the inverse of `tolerance.stackup`. Given a chain of toleranced
+    dimensions [{name, nominal}] and a stack-up `budget_um`, allocate the LOOSEST (cheapest to make) ISO 286
+    IT grade per dimension whose combined tolerance still fits the budget. Z3 picks discrete grades over a
+    precomputed IT-value table (it_grade is non-linear, so it's tabulated then selected) and MAXIMIZES the
+    total grade (looser = larger IT = cheaper). `method`: 'worst_case' (Σ IT ≤ budget, guaranteed) or 'rss'
+    (Σ IT² ≤ budget², statistical). Returns the allocation + slack, or an honest infeasible result with the
+    tightest achievable total when even all-`grade_min` exceeds the budget. The right solver for a discrete
+    selection/optimization problem — never touches geometry."""
+    from z3 import If, Int, Optimize, Sum, sat
+
+    grades = list(range(int(grade_min), int(grade_max) + 1))
+    # tabulate IT value (µm) per (dim, grade) — it_grade is non-linear in size+grade
+    table = []
+    for d in dims:
+        nominal = float(d["nominal"])
+        row = {g: iso286.it_grade(g, nominal) for g in grades}
+        if any(v is None for v in row.values()):
+            return {"ok": False, "reason": f"dimension {d.get('name')!r}: nominal {nominal}mm outside "
+                    f"ISO 286 range (3<D<=500) or grade unsupported", "solver": "z3 SMT"}
+        table.append(row)
+
+    opt = Optimize()
+    gvars = [Int(f"g{i}") for i in range(len(dims))]
+    tols = []
+    for i, gv in enumerate(gvars):
+        opt.add(gv >= grade_min, gv <= grade_max)
+        tol = table[i][grade_max]                       # build an If-chain: grade -> tabulated IT value
+        for g in grades[:-1]:
+            tol = If(gv == g, table[i][g], tol)
+        tols.append(tol)
+    if method == "rss":
+        opt.add(Sum([t * t for t in tols]) <= int(round(budget_um ** 2)))
+    else:
+        opt.add(Sum(tols) <= int(round(budget_um)))
+    opt.maximize(Sum(gvars))                            # loosest (cheapest) grades that still fit
+
+    requirement = {"budget_um": budget_um, "method": method, "grade_range": [grade_min, grade_max],
+                   "n_dims": len(dims)}
+    if opt.check() != sat:
+        tight = sum(table[i][grade_min] for i in range(len(dims)))
+        tight_rss = math.sqrt(sum(table[i][grade_min] ** 2 for i in range(len(dims))))
+        return {"ok": False, "reason": "infeasible: even the tightest grades exceed the budget",
+                "requirement": requirement, "solver": "z3 SMT",
+                "min_achievable_um": round(tight_rss if method == "rss" else float(tight), 4)}
+    mdl = opt.model()
+    alloc, total, sq = [], 0.0, 0.0
+    for i, d in enumerate(dims):
+        g = mdl[gvars[i]].as_long()
+        it = table[i][g]
+        alloc.append({"name": d.get("name", f"dim{i}"), "nominal_mm": float(d["nominal"]),
+                      "grade": f"IT{g}", "tolerance_um": it})
+        total += it
+        sq += it * it
+    stack = round(math.sqrt(sq), 4) if method == "rss" else float(total)
+    return {"ok": True, "allocation": alloc, "method": method,
+            "stack_um": stack, "budget_um": budget_um, "slack_um": round(budget_um - stack, 4),
+            "requirement": requirement, "solver": "z3 SMT (optimize)"}

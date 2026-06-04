@@ -1260,6 +1260,27 @@ def test_synthesize_planetary_unsat_is_honest():
 
 
 @test
+def test_synthesize_tolerance_allocation():
+    """T10.1: SMT tolerance ALLOCATION (Z3) — allocate the loosest ISO 286 grades whose stack-up fits the
+    budget. Must (a) fit the budget, (b) each tolerance == iso286.it_grade exactly, (c) be Pareto-loosest
+    (no single dim can loosen one grade without busting the budget), (d) honest infeasible when too tight."""
+    from constraint_kit import iso286, synthesis
+    dims = [{"name": "a", "nominal": 50}, {"name": "b", "nominal": 30}, {"name": "c", "nominal": 20}]
+    res = synthesis.synthesize_tolerance_allocation(dims, budget_um=120, method="worst_case")
+    assert res["ok"] and res["stack_um"] <= 120 and res["slack_um"] >= 0
+    for d, al in zip(dims, res["allocation"]):
+        g = int(al["grade"][2:])
+        assert al["tolerance_um"] == iso286.it_grade(g, d["nominal"])         # matches ISO 286 exactly
+        # Pareto-loosest: loosening THIS dim one grade (others fixed) would exceed the budget, unless maxed
+        if g < 12:
+            bumped = res["stack_um"] - al["tolerance_um"] + iso286.it_grade(g + 1, d["nominal"])
+            assert bumped > 120
+    # honest infeasibility: an impossibly tight budget -> ok:false + tightest achievable reported
+    bad = synthesis.synthesize_tolerance_allocation(dims, budget_um=10, method="worst_case")
+    assert bad["ok"] is False and bad["min_achievable_um"] > 10
+
+
+@test
 def test_interference_grid_equivalence_and_pruning():
     """T3.2: the spatial-grid prefilter must give IDENTICAL clashes to a brute-force O(n^2) sweep, and
     must prune far below n*(n-1)/2 candidate pairs for a spread-out assembly."""
