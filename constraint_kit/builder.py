@@ -36,6 +36,27 @@ def _pid(ps: dict) -> str:
     return pid
 
 
+def _apply_finish(wp, finish: dict | None):
+    """OPT-IN fillet/chamfer post-op (T1.1). `finish` = {"fillet"|"chamfer": radius, "edges"?: selector}.
+    Default selects ALL edges (deterministic — no selector ambiguity); an optional cadquery selector is
+    supported but fragile across param changes (see research R1.a). FAIL-SOFT: a fillet that can't be
+    made (radius too large, complex topology like gears/threads) keeps the original part + an ok:false
+    note — never breaks the build. Returns (wp, status|None)."""
+    if not finish:
+        return wp, None
+    op = "fillet" if "fillet" in finish else "chamfer" if "chamfer" in finish else None
+    if op is None:
+        return wp, {"ok": False, "error": "finish needs 'fillet' or 'chamfer'"}
+    sel = finish.get("edges")
+    try:
+        r = float(finish[op])
+        edges = wp.edges(sel) if sel else wp.edges()
+        out = edges.fillet(r) if op == "fillet" else edges.chamfer(r)
+        return out, {"ok": True, "op": op, "radius": r, "edges": sel or "all"}
+    except Exception as exc:  # noqa: BLE001 -- finish is best-effort; keep the unfinished part
+        return wp, {"ok": False, "op": op, "error": f"{type(exc).__name__}: {exc}"}
+
+
 def build_assembly(spec: dict):
     if not spec.get("parts"):
         raise ValueError("spec has no parts")
@@ -51,10 +72,11 @@ def build_assembly(spec: dict):
             raise ValueError(f"unknown part type {ptype!r}; known: {sorted(ALL_PART_GENS)}")
         params = ps.get("params", {})
         wp, anchors = ALL_PART_GENS[ptype](**params)
+        wp, finish = _apply_finish(wp, ps.get("finish"))   # opt-in fillet/chamfer post-op
         parts[_pid(ps)] = {
             "wp": wp, "anchors": anchors, "params": params,
             "material": ps.get("material", "steel"), "type": ptype,
-            "fallback": "_fallback" in anchors,
+            "fallback": "_fallback" in anchors, "finish": finish,
         }
 
     # deterministic ordered placement: part 0 at origin, then apply mates in order. A mate whose target
@@ -79,11 +101,14 @@ def build_assembly(spec: dict):
         assy.add(p["wp"], name=pid, loc=locs[pid])
         vol = _shape(p["wp"]).Volume()
         density = DENSITY_G_MM3.get(p["material"].lower(), DENSITY_G_MM3["steel"])
-        report_parts.append({
+        entry = {
             "id": pid, "type": p["type"], "material": p["material"],
             "volume_mm3": round(vol, 2), "mass_g": round(vol * density, 2),
             "placed": pid in placed, "gear_fallback": p["fallback"],
-        })
+        }
+        if p.get("finish") is not None:
+            entry["finish"] = p["finish"]
+        report_parts.append(entry)
     # OPT-IN provenance: attach the pre-resolved spec summary (computed BEFORE part-gen, see prepass) to
     # each part report. Default OFF -> existing builds unchanged.
     for rp in report_parts:

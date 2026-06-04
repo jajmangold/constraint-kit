@@ -1101,6 +1101,25 @@ def test_interference_grid_equivalence_and_pruning():
     assert res["pairs_exact_checked"] == brute            # same exact-check set as brute force
 
 
+@test
+def test_finish_fillet_chamfer_failsoft():
+    """T1.1: opt-in fillet/chamfer removes material (deterministic), and an impossible radius fails soft
+    (part kept unchanged, finish.ok=False) — never breaks the build."""
+    from constraint_kit import builder
+    cyl = {"outer_d": 40, "bore_d": 0, "height": 20}
+    v0 = builder.build_assembly({"parts": [{"id": "p", "type": "spacer", "params": cyl}],
+                                 "mates": []})[1][0]["volume_mm3"]
+    _, fil = builder.build_assembly({"parts": [{"id": "p", "type": "spacer", "params": cyl,
+                                                "finish": {"fillet": 3}}], "mates": []})
+    assert fil[0]["finish"]["ok"] and fil[0]["volume_mm3"] < v0          # rounded edges remove material
+    _, cha = builder.build_assembly({"parts": [{"id": "p", "type": "spacer", "params": cyl,
+                                                "finish": {"chamfer": 3}}], "mates": []})
+    assert cha[0]["finish"]["op"] == "chamfer" and cha[0]["volume_mm3"] < v0
+    _, big = builder.build_assembly({"parts": [{"id": "p", "type": "spacer", "params": cyl,
+                                                "finish": {"fillet": 100}}], "mates": []})
+    assert big[0]["finish"]["ok"] is False and big[0]["volume_mm3"] == v0  # fail-soft: part unchanged
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:

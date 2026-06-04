@@ -227,6 +227,8 @@ not just the points. This is the fix for grounding mate intent to durable refere
 `test_joint_names_survive_param_changes` and `test_target_assembly_*` (screw fastens a bearing block to a
 2020 extrusion: block→slot, bearing→bore, screw→bolt hole, all axes aligned, all gaps exact).
 
+Any part spec may carry an opt-in `"finish": {"fillet"|"chamfer": r, "edges"?: selector}` post-op (`builder._apply_finish`, default ALL edges, fail-soft — keeps the part if the radius is impossible). Stable *named* edge selection across regen is still research (R1.a).
+
 Mates (`mates.py` + builder dispatch): `coincident`/`rigid` (lands B's frame exactly on A's — `rigid`
 signals an oriented joint mate and aligns axes), `contact` (drops B so its bbox bottom rests on A's plane —
 the placement floor/crown-seat, generalized), `mesh` (two
@@ -281,7 +283,7 @@ size, DXF validity (ezdxf audit), and the atlas round-trip (or fail-soft when th
 tests/run.sh            # docker exec into cadkit; exit 0 = all pass (gates changes)
 ```
 
-70 tests, all passing. Add a test alongside any new part/mate (assert the invariant, not just "it runs").
+72 tests, all passing. Add a test alongside any new part/mate (assert the invariant, not just "it runs").
 Lesson baked into the suite: verify with **geometry** (anchor/bbox math), not the VLM — qwen27b is a
 categorical second opinion that misreads counts/angles (it called a bolted plate "no gear" from a `hero`
 angle, then "2 bolts, yes gear" from `three_quarter`); the deterministic tests are ground truth.
