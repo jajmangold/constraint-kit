@@ -61,6 +61,10 @@ drivers/phase0.py      # 3D orchestrator: plan -> build -> Blender render -> QA 
 drivers/phase1.py      # 2D orchestrator: plan_layout -> solve+DXF+PNG -> QA -> persist (no Blender)
 drivers/showcase.py    # FULL-STACK demo: SMT-synthesize a planetary gearbox -> hierarchy + fasteners +
                        #   frame -> BOM/mass -> interference -> thread provenance -> render -> qwen27b QA
+drivers/capstone_gearbox.py  # CAPSTONE: the whole stack with solvers CROSS-VALIDATING — SMT designs the
+                       #   ratio, Willis independently confirms it; build (parallel prewarm) -> interference
+                       #   -> BOM/mass/CG -> exploded + 2D drawing + BOM doc -> render+QA (fail-soft). Hermetic
+                       #   proof: tests/test_kernel.py::test_capstone_gearbox_full_stack
 ```
 
 ## Run

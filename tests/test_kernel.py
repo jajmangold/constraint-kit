@@ -1536,6 +1536,50 @@ def test_drawing_section_and_projection():
 
 
 @test
+def test_capstone_gearbox_full_stack():
+    """CAPSTONE: a synthesized planetary gearbox composed end-to-end through the whole stack, with the
+    SOLVERS CROSS-VALIDATING each other — SMT (Z3) designs the ratio, the independent analytical Willis
+    solver confirms it. Then: hierarchy + parallel prewarm build -> interference-clean -> rolled-up
+    BOM/mass/CG -> manufacturing outputs (exploded + section drawing + BOM doc). Geometry is truth."""
+    from constraint_kit import assembly, bom as bommod, drawing, planetary, synthesis, validate
+    # 1. SMT synthesis (Z3): design a 5:1 planetary set
+    syn = synthesis.synthesize_planetary(target_ratio=5.0, n_planets=3, module=1.0, width=8,
+                                         objective="compact")
+    assert syn["ok"] and abs(syn["achieved_ratio"] - 5.0) < 1e-6
+    cfg, pg = syn["config"], dict(syn["part_spec"])
+    # 2. CROSS-VALIDATION: the analytical Willis solver must independently agree with the SMT design
+    dof = planetary.mobility(1.0, cfg["sun_teeth"], cfg["planet_teeth"], cfg["n_planets"])
+    assert dof["loop_consistent"] and dof["gear_dof"] == 1
+    approx(dof["ratio_sun_to_carrier_ring_fixed"], syn["achieved_ratio"], eps=1e-6)   # SMT == Willis
+    # 3. hierarchical gearbox def (planetary on a bolted plate), built with the parallel prewarm (T3.3)
+    defs = {"gearbox": {"parts": [
+        {"id": "plate", "type": "plate", "material": "aluminum",
+         "params": {"width": 90, "depth": 90, "thick": 8, "boss_d": 24, "boss_h": 3,
+                    "bolt_d": 5, "bolt_circle": 74, "bolt_count": 4}},
+        pg,
+        *[{"id": f"screw{i}", "type": "bolt", "material": "steel",
+           "params": {"shank_d": 5, "length": 14, "head_d": 9, "head_h": 4}} for i in range(4)]],
+        "mates": [{"a": "plate", "a_joint": "mount", "b": "planetary", "b_joint": "base",
+                   "type": "coincident"},
+                  *[{"a": "plate", "a_joint": f"bolt{i}", "b": f"screw{i}", "b_joint": "seat",
+                     "type": "coincident"} for i in range(4)]]}}
+    res = assembly.build_tree("gearbox", defs, prewarm=True)
+    assert res["bom"]["planetary_gearset"] == 1 and res["bom"]["bolt"] == 4 and res["mass_g"] > 0
+    assert res["cg"] is not None and res["principal_moments"] is not None
+    # 4. validation: no clashes (the gear mesh is intended internal contact, not a clash)
+    assert validate.interference(res["cq_assembly"])["ok"]
+    # 5. manufacturing outputs (E7): exploded view, section drawing, BOM document
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        ex = assembly.explode(res["cq_assembly"], factor=15)
+        assert len(validate._world_parts(ex)) == res["leaf_count"]            # explode preserves parts
+        sec = drawing.section_dxf(res["cq_assembly"], os.path.join(d, "gb.dxf"), plane="XZ")
+        assert sec["section_area_mm2"] > 0 and os.path.getsize(sec["path"]) > 0
+    assert "TOTAL" in bommod.bom_document(res, "md")
+
+
+@test
 def test_prewarm_parallel_tree_matches_serial():
     """T3.3: prewarming the tree's part generation in a PROCESS pool must yield a build IDENTICAL to the
     serial build — same BOM, mass, CG, inertia, bbox (the recursive build + density-weighted mass-props
