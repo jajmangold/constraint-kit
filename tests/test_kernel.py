@@ -1601,6 +1601,23 @@ def test_scale_grid_interference():
 
 
 @test
+def test_parallel_build_matches_serial():
+    """T3.3: the process-pool batch build returns geometry identical to the serial build (parallelism must
+    never change the result), and the serial fallback path works. Geometry is truth."""
+    from constraint_kit import builder
+    specs = [{"parts": [{"id": "g", "type": "spur_gear", "material": "steel",
+                         "params": {"module": 1, "teeth": 18 + i, "width": 6, "bore_d": 10}}], "mates": []}
+             for i in range(4)]
+    serial = builder.build_assemblies_parallel(specs, max_workers=1)     # fallback path
+    par = builder.build_assemblies_parallel(specs, max_workers=4)        # process pool
+    assert len(serial) == len(par) == 4
+    for (ss, sr), (ps, pr) in zip(serial, par):
+        approx(ss.Volume(), ps.Volume(), eps=1.0)                        # same geometry, both paths
+        assert sr[0]["type"] == pr[0]["type"] == "spur_gear"
+        assert pr[0]["mass_g"] > 0
+
+
+@test
 def test_design_rules():
     """T9.1/T9.2/T9.3: engagement threshold by material, fit recommendation, exact clearance gap."""
     from constraint_kit import assembly, rules

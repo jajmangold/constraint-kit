@@ -315,6 +315,7 @@ parameter values (idempotent; a parametric edit creates a new linked version). `
 - **`cadkit` needs `network_mode: host`** — the planner/VLM and comfy services bind `127.0.0.1`, unreachable via port-mapping; host netns also reaches `rtx0` over tailscale.
 - **`OUTPUT_DIR` is the shared host path** mounted identically in the container, so returned glb/step paths are valid on the host for the Blender render step (no path translation).
 - **cadquery `Assembly.save` is deprecated** (FutureWarning) but works; GLB export falls back to STL→trimesh→GLB if native GLTF fails.
+- **Parallel builds use PROCESSES, not threads** (T3.3, `builder.build_assemblies_parallel`): cq_gears' involute math is Python-heavy and OCC holds the GIL, so a thread pool gives NO speedup (measured ~slower); a process pool does (geometry crosses the boundary as BREP bytes, serial fallback on any failure). Recursive-tree integration is open (density-weighted massprops needs per-leaf shapes — R-T3.3).
 - Verify placement with **geometric ground truth** (anchor z == seat z), not just the VLM — the VLM is a categorical second opinion (it called a spacer-stack "seated on the boss"; true seating is confirmed by the bbox/anchor math).
 
 ## Tests

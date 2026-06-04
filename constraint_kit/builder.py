@@ -62,6 +62,50 @@ def clear_cache() -> None:
     _GEN_STATS.update(hits=0, misses=0)
 
 
+def _parallel_build_worker(spec: dict):
+    """Process-pool worker (module-level so it's picklable): build a flat spec, return its compound as BREP
+    bytes + the part report. BREP crosses the process boundary; live cq objects do not."""
+    import io
+
+    from . import builder as _b
+    assy, report = _b.build_assembly(spec)
+    bio = io.BytesIO()
+    assy.toCompound().exportBrep(bio)
+    return bio.getvalue(), report
+
+
+def build_assemblies_parallel(specs: list[dict], max_workers: int | None = None) -> list[tuple]:
+    """T3.3: build a batch of INDEPENDENT flat assembly specs across a PROCESS pool — real parallelism for
+    the CPU-bound OCC/cq_gears generation (threads don't help: the GIL + Python-heavy involute math give no
+    speedup, measured). Each worker returns its compound as BREP bytes + report; the caller reimports the
+    geometry. SERIAL fallback on max_workers<=1, a single spec, or any pool failure (fail-soft). Returns
+    [(cq.Shape, report)] aligned to `specs`.
+
+    SCOPE: this parallelizes flat leaf builds. Wiring it into the recursive density-weighted mass-properties
+    roll-up of assembly.build_tree is open — massprops needs per-leaf shapes, which are lost when a subtree
+    crosses the process boundary as one compound (research R-T3.3)."""
+    import io
+    if max_workers is None:
+        max_workers = max(1, (os.cpu_count() or 2) - 1)
+
+    def _serial():
+        out = []
+        for s in specs:
+            assy, rep = build_assembly(s)
+            out.append((assy.toCompound(), rep))
+        return out
+
+    if max_workers <= 1 or len(specs) <= 1:
+        return _serial()
+    try:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(max_workers=max_workers) as ex:
+            pairs = list(ex.map(_parallel_build_worker, specs))
+        return [(cq.Shape.importBrep(io.BytesIO(b)), rep) for b, rep in pairs]
+    except Exception:  # noqa: BLE001 -- any pool/pickle/spawn failure -> deterministic serial result
+        return _serial()
+
+
 def _shape(wp: cq.Workplane) -> cq.Shape:
     return wp.val() if isinstance(wp, cq.Workplane) else wp
 
