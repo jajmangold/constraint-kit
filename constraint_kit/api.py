@@ -17,7 +17,7 @@ import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from . import (assembly, builder, layout, linkage, planner, planetary, spec_compiler, spec_db,
+from . import (assembly, bom, builder, layout, linkage, planner, planetary, spec_compiler, spec_db,
                spec_sources, store, synthesis)
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/srv/nvme-data/containers/constraint-kit/cadkit/output")
@@ -241,6 +241,13 @@ class AssemblyTreeReq(BaseModel):
     name: str | None = None
 
 
+class BomReq(BaseModel):
+    defs: dict
+    root: str
+    name: str | None = None
+    fmt: str = "md"
+
+
 class DesignReq(BaseModel):
     requirements: dict
     relations: list[dict] | None = None
@@ -321,6 +328,23 @@ def assembly_tree(req: AssemblyTreeReq) -> dict:
         raise HTTPException(400, f"assembly tree failed: {exc}") from exc
     res["stored"] = store.record_assembly_tree(res)   # fail-soft
     return {"ok": True, **res}
+
+
+@app.post("/assembly/bom")
+def assembly_bom(req: BomReq) -> dict:
+    """Export a Bill of Materials (Markdown or CSV) for a hierarchical assembly — qty + mass per part
+    type + totals + CG. Writes the document under OUTPUT_DIR and returns its text."""
+    try:
+        result = assembly.build_tree(req.root, req.defs)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"bom build failed: {exc}") from exc
+    fmt = req.fmt if req.fmt in ("md", "csv") else "md"
+    doc = bom.bom_document(result, fmt)
+    path = os.path.join(OUTPUT_DIR, f"{req.name or req.root}_bom.{fmt}")
+    with open(path, "w") as fh:
+        fh.write(doc)
+    return {"ok": True, "fmt": fmt, "path": path, "document": doc,
+            "bom": dict(result["bom"]), "mass_g": result["mass_g"]}
 
 
 @app.get("/catalog")

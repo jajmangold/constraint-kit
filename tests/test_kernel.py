@@ -1162,6 +1162,28 @@ def test_mass_properties_cg_and_inertia():
     approx(assembly.build_tree("stack", defs)["cg"][2], H, eps=1e-2)
 
 
+@test
+def test_bom_document():
+    """T7.3: BOM doc (md + csv) has correct per-type quantities and a total mass matching the roll-up."""
+    import csv as _csv
+    import io
+    from constraint_kit import assembly
+    from constraint_kit import bom as bommod
+    defs = {"wheel": {"parts": [{"id": "rim", "type": "spacer", "material": "steel",
+                                 "params": {"outer_d": 40, "bore_d": 20, "height": 10}}],
+                      "ports": {"c": {"origin": [0, 0, 0]}}},
+            "axle": {"children": [{"instance": "w0", "ref": "wheel", "place": {"port": "c", "at": [0, 0, 0]}},
+                                  {"instance": "w1", "ref": "wheel", "place": {"port": "c", "at": [0, 0, 50]}}]}}
+    res = assembly.build_tree("axle", defs)
+    md = bommod.bom_document(res, "md")
+    assert "| spacer | 2 |" in md and "TOTAL" in md           # 2 spacers rolled up
+    rows = list(_csv.reader(io.StringIO(bommod.bom_document(res, "csv"))))
+    assert rows[0] == ["part_type", "qty", "total_mass_g", "unit_mass_g"]
+    spacer = next(r for r in rows if r and r[0] == "spacer")
+    assert spacer[1] == "2"
+    approx(float(spacer[2]), res["mass_by_type"]["spacer"], eps=1e-3)   # per-type mass matches roll-up
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:

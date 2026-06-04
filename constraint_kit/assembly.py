@@ -45,6 +45,7 @@ def build_tree(root: str, defs: dict, _stack: tuple = ()) -> dict:
     node = defs[root]
     assy = cq.Assembly()
     bom: Counter = Counter()
+    mass_by_type: Counter = Counter()   # type -> total mass g, for the BOM document (T7.3)
     mass = 0.0
     leaf_count = 0
     depth = 1
@@ -56,6 +57,7 @@ def build_tree(root: str, defs: dict, _stack: tuple = ()) -> dict:
         assy.add(leaf_assy, name=f"{root}__parts")
         for rp in report:
             bom[rp["type"]] += 1
+            mass_by_type[rp["type"]] += rp.get("mass_g", 0.0) or 0.0
             mass += rp.get("mass_g", 0.0) or 0.0
             leaf_count += 1
             densities[f"{root}__parts/{rp['id']}"] = DENSITY_G_MM3.get(
@@ -73,6 +75,7 @@ def build_tree(root: str, defs: dict, _stack: tuple = ()) -> dict:
         instance = child.get("instance", child["ref"])
         assy.add(cres["cq_assembly"], name=instance, loc=loc)
         bom.update(cres["bom"])           # recursive roll-up
+        mass_by_type.update(cres["mass_by_type"])
         mass += cres["mass_g"]
         leaf_count += cres["leaf_count"]
         depth = max(depth, cres["depth"] + 1)
@@ -81,9 +84,9 @@ def build_tree(root: str, defs: dict, _stack: tuple = ()) -> dict:
 
     mp = massprops.mass_properties(assy, densities)   # exact CG + inertia about CG (density-weighted)
     return {"name": root, "cq_assembly": assy, "ports": _port_frames(node),
-            "bom": bom, "mass_g": round(mass, 2), "part_count": sum(bom.values()),
-            "leaf_count": leaf_count, "depth": depth, "densities": densities,
-            "cg": mp["cg"], "principal_moments": mp["principal_moments"],
+            "bom": bom, "mass_by_type": mass_by_type, "mass_g": round(mass, 2),
+            "part_count": sum(bom.values()), "leaf_count": leaf_count, "depth": depth,
+            "densities": densities, "cg": mp["cg"], "principal_moments": mp["principal_moments"],
             "inertia_about_cg": mp["inertia_about_cg"]}
 
 
