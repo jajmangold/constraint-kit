@@ -1304,6 +1304,23 @@ def test_design_rules():
     assert abs(c10["min_gap_mm"] - 5.0) < 0.1                            # exact OCC gap = 5mm
 
 
+@test
+def test_tolerance_stackup():
+    """T4.2: a hole H7 − shaft g6 stack at 20mm reproduces the ISO 286 fit clearance exactly, and RSS is
+    narrower than worst-case."""
+    from constraint_kit import tolerance
+    res = tolerance.stackup([{"name": "hole", "nominal": 20, "hole": "H7", "dir": 1},
+                             {"name": "shaft", "nominal": 20, "shaft": "g6", "dir": -1}], as_clearance=True)
+    approx(res["worst_case"]["min"], 0.007, eps=1e-3)        # ISO 286 H7/g6@20 min clearance
+    approx(res["worst_case"]["max"], 0.041, eps=1e-3)        # max clearance
+    assert res["ok_worstcase"]                                # min clearance > 0 -> no interference
+    assert (res["rss"]["min"] > res["worst_case"]["min"]
+            and res["rss"]["max"] < res["worst_case"]["max"])  # RSS is narrower than worst-case
+    # explicit-deviation stack: 3 blocks of 10 ±0.05 -> 30 nominal, worst-case ±0.15
+    blocks = tolerance.stackup([{"nominal": 10, "upper": 0.05, "lower": -0.05} for _ in range(3)])
+    approx(blocks["nominal"], 30.0); approx(blocks["worst_case"]["max"], 30.15, eps=1e-6)
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:

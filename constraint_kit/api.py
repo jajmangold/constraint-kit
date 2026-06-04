@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from . import (assembly, bom, builder, layout, linkage, planner, planetary, rules, spec_compiler, spec_db,
-               spec_sources, store, synthesis)
+               spec_sources, store, synthesis, tolerance)
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/srv/nvme-data/containers/constraint-kit/cadkit/output")
 
@@ -265,6 +265,11 @@ class ClearanceReq(BaseModel):
     required: float = 0.5
 
 
+class ToleranceReq(BaseModel):
+    dims: list
+    as_clearance: bool = False
+
+
 class DesignReq(BaseModel):
     requirements: dict
     relations: list[dict] | None = None
@@ -384,6 +389,12 @@ def rule_clearance(req: ClearanceReq) -> dict:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"clearance build failed: {exc}") from exc
     return rules.min_clearance(asm, req.required)
+
+
+@app.post("/tolerance/stackup")
+def tolerance_stackup(req: ToleranceReq) -> dict:
+    """E4/T4.2: chain toleranced dims -> worst-case + RSS bounds (fits sourced from ISO 286)."""
+    return tolerance.stackup(req.dims, req.as_clearance)
 
 
 @app.get("/catalog")
