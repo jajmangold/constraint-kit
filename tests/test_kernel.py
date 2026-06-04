@@ -1187,6 +1187,27 @@ def test_mass_properties_cg_and_inertia():
 
 
 @test
+def test_explode_separates_stack_by_factor():
+    """T7.1: exploded view separates stacked parts along +Z by exactly `factor` per rank, preserves the
+    part count, and leaves the lowest part in place (geometry is truth, not the VLM)."""
+    from constraint_kit import assembly, validate
+    H, F = 10.0, 20.0
+    # three identical cylinders stacked along +Z: original world centers at H/2, 3H/2, 5H/2 (sep = H)
+    cyl = {"parts": [{"id": "c", "type": "spacer", "params": {"outer_d": 30, "bore_d": 0, "height": H}}],
+           "ports": {"bot": {"origin": [0, 0, 0]}}}
+    defs = {"cyl": cyl,
+            "stack": {"children": [{"instance": f"s{k}", "ref": "cyl",
+                                    "place": {"port": "bot", "at": [0, 0, k * H]}} for k in range(3)]}}
+    asm = assembly.build_tree("stack", defs)["cq_assembly"]
+    exploded = assembly.explode(asm, factor=F, axis=(0, 0, 1))
+    centers = sorted(p[1].Center().z for p in validate._world_parts(exploded))
+    assert len(centers) == 3                                   # part count preserved
+    approx(centers[0], H / 2, eps=1e-3)                        # lowest (rank 0) stays put
+    approx(centers[1] - centers[0], H + F, eps=1e-3)           # each rank pushed +F further apart
+    approx(centers[2] - centers[1], H + F, eps=1e-3)
+
+
+@test
 def test_bom_document():
     """T7.3: BOM doc (md + csv) has correct per-type quantities and a total mass matching the roll-up."""
     import csv as _csv

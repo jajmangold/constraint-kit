@@ -248,6 +248,14 @@ class BomReq(BaseModel):
     fmt: str = "md"
 
 
+class ExplodeReq(BaseModel):
+    defs: dict
+    root: str
+    name: str | None = None
+    factor: float = 20.0
+    axis: tuple[float, float, float] = (0.0, 0.0, 1.0)
+
+
 class EngageReq(BaseModel):
     nominal_d: float
     engagement_len: float
@@ -373,6 +381,18 @@ def assembly_bom(req: BomReq) -> dict:
         fh.write(doc)
     return {"ok": True, "fmt": fmt, "path": path, "document": doc,
             "bom": dict(result["bom"]), "mass_g": result["mass_g"]}
+
+
+@app.post("/assembly/explode")
+def assembly_explode(req: ExplodeReq) -> dict:
+    """E7/T7.1: exploded view for assembly docs — separate stacked parts along `axis` (default +Z) by
+    `factor` per rank, export one STEP+GLB of the exploded view."""
+    name = req.name or f"{req.root}_exploded"
+    try:
+        return {"ok": True, **assembly.explode_and_export(
+            req.root, req.defs, os.path.join(OUTPUT_DIR, name), req.factor, tuple(req.axis))}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"explode failed: {exc}") from exc
 
 
 @app.post("/rules/fastener_engagement")

@@ -94,6 +94,8 @@ image only when changing `cadkit/Dockerfile` (deps).
   design: requirements → derived params (provenance) → substituted into defs → build; returns the param table
 - `POST /assembly/bom {defs,root,fmt?,name?}` — export a Bill of Materials (md/csv): qty + mass per type + totals + CG
 - `POST /assembly/interference {defs,root,tol_volume?}` — **[Phase C]** clash check (bbox prefilter + exact OCC)
+- `POST /assembly/explode {defs,root,factor?,axis?,name?}` — **[E7/T7.1]** exploded view for docs: rank world
+  parts along `axis` (default +Z), offset each by rank·factor → one STEP+GLB of the separated assembly
 - `POST /synthesize/planetary {target_ratio,n_planets?,teeth_min?,teeth_max?,module?,ratio_tol?,objective?,build?}`
   — **SMT** design synthesis (Z3): solve a gearset to a ratio spec → optionally build the exact CAD; honest UNSAT
 

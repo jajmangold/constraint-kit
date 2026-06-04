@@ -113,6 +113,38 @@ def check_interference(root: str, defs: dict, tol_volume: float = 0.01) -> dict:
     return validate.interference(build_tree(root, defs)["cq_assembly"], tol_volume)
 
 
+def explode(cq_assembly, factor: float = 20.0, axis: tuple = (0, 0, 1)):
+    """Exploded view (T7.1) for assembly docs: flatten to world parts, rank them along `axis`, and offset
+    each by rank*factor along it (separating stacked parts) into a new cq.Assembly. Returns the assembly."""
+    import numpy as np
+
+    from .validate import _world_parts
+    ax = np.array(axis, float)
+    ax = ax / (np.linalg.norm(ax) or 1.0)
+    leaves = _world_parts(cq_assembly)
+    order = sorted(range(len(leaves)),
+                   key=lambda i: float(np.dot([leaves[i][1].Center().x, leaves[i][1].Center().y,
+                                               leaves[i][1].Center().z], ax)))
+    out = cq.Assembly()
+    for rank, i in enumerate(order):
+        name, shape = leaves[i]
+        off = ax * factor * rank
+        # _world_parts re-applies a node's loc with .located() (absolute, NOT composed), so baking the
+        # offset into the shape would be partly dropped on re-flatten. Instead strip the shape to its
+        # local geometry and carry the full transform (original world placement, then the explode offset
+        # in world coords) in the child's loc.
+        new_loc = cq.Location(cq.Vector(float(off[0]), float(off[1]), float(off[2]))) * shape.location()
+        out.add(shape.located(cq.Location()), name=name.replace("/", "_") or f"p{i}", loc=new_loc)
+    return out
+
+
+def explode_and_export(root: str, defs: dict, out_base: str, factor: float = 20.0,
+                       axis: tuple = (0, 0, 1)) -> dict:
+    """Build a tree, explode it, export one STEP+GLB of the exploded view."""
+    exploded = explode(build_tree(root, defs)["cq_assembly"], factor, axis)
+    return {"factor": factor, "axis": list(axis), **builder.export(exploded, out_base)}
+
+
 def build_design(requirements: dict, relations: list[dict] | None, defs: dict, root: str,
                  asserts: list[dict] | None = None) -> dict:
     """TOP-DOWN design (Phase B): resolve requirements + relations into parameters (with provenance),
