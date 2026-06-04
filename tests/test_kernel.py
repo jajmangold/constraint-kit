@@ -614,6 +614,32 @@ def test_spec_resolve_thread_m6():
 
 
 @test
+def test_spec_resolve_structural_section():
+    """T5.2: structural-section kind — IPE/UPN/L designations resolve OFFLINE to standard dims + mass/length,
+    each value carries provenance, and an unknown size is honestly unresolved (not fabricated)."""
+    _isolate_spec_db()
+    from constraint_kit import spec_compiler
+    r = spec_compiler.resolve_section("IPE 200", allow_live=False)
+    assert r["ok"] and r["kind"] == "section"
+    f = r["facts"][0]
+    assert f["designation"] == "IPE 200" and f["system"] == "EN IPE I-beam"
+    assert f["values"]["depth"]["value"] == 200.0 and f["values"]["width"]["value"] == 100.0
+    assert f["values"]["mass_per_length"]["value"] == 22.4
+    assert f["values"]["mass_per_length"]["unit"] == "kg/m"
+    for v in f["values"].values():                       # provenance on every value
+        assert v["source_ref"] and v["confidence"] is not None
+    # equal-leg angle
+    a = spec_compiler.resolve_section("L 40x40x4", allow_live=False)
+    assert a["ok"] and a["facts"][0]["values"]["leg_length"]["value"] == 40.0
+    assert a["facts"][0]["values"]["thickness"]["value"] == 4.0
+    # auto-detect (kind unknown) routes a channel query to the section parser
+    c = spec_compiler.resolve("UPN 100", kind="unknown", allow_live=False)
+    assert c["ok"] and c["kind"] == "section" and c["facts"][0]["designation"] == "UPN 100"
+    # honest: an unknown size is NOT fabricated
+    assert spec_compiler.resolve_section("IPE 999", allow_live=False)["ok"] is False
+
+
+@test
 def test_spec_every_value_has_provenance():
     _isolate_spec_db()
     from constraint_kit import spec_compiler

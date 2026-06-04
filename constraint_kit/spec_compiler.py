@@ -98,6 +98,28 @@ PRESEED_FITS = {  # ISO 286 hole-basis fit -> class
     "h7/g6": "clearance", "h7/h6": "clearance", "h7/f7": "clearance",
     "h7/k6": "transition", "h7/n6": "transition", "h7/p6": "interference", "h7/s6": "interference",
 }
+PRESEED_SECTIONS = {  # metric structural sections (EN), dims mm, mass kg/m — standard handbook values
+    # European IPE I-beams (S235): depth h, flange width b, web tw, flange tf
+    "IPE 80":  {"shape": "i_beam",  "h": 80,  "b": 46,  "tw": 3.8, "tf": 5.2,  "mass_per_m": 6.0},
+    "IPE 100": {"shape": "i_beam",  "h": 100, "b": 55,  "tw": 4.1, "tf": 5.7,  "mass_per_m": 8.1},
+    "IPE 120": {"shape": "i_beam",  "h": 120, "b": 64,  "tw": 4.4, "tf": 6.3,  "mass_per_m": 10.4},
+    "IPE 160": {"shape": "i_beam",  "h": 160, "b": 82,  "tw": 5.0, "tf": 7.4,  "mass_per_m": 15.8},
+    "IPE 200": {"shape": "i_beam",  "h": 200, "b": 100, "tw": 5.6, "tf": 8.5,  "mass_per_m": 22.4},
+    "IPE 240": {"shape": "i_beam",  "h": 240, "b": 120, "tw": 6.2, "tf": 9.8,  "mass_per_m": 30.7},
+    "IPE 300": {"shape": "i_beam",  "h": 300, "b": 150, "tw": 7.1, "tf": 10.7, "mass_per_m": 42.2},
+    # European UPN channels
+    "UPN 80":  {"shape": "channel", "h": 80,  "b": 45,  "tw": 6.0, "tf": 8.0,  "mass_per_m": 8.64},
+    "UPN 100": {"shape": "channel", "h": 100, "b": 50,  "tw": 6.0, "tf": 8.5,  "mass_per_m": 10.6},
+    "UPN 120": {"shape": "channel", "h": 120, "b": 55,  "tw": 7.0, "tf": 9.0,  "mass_per_m": 13.4},
+    "UPN 160": {"shape": "channel", "h": 160, "b": 65,  "tw": 7.5, "tf": 10.5, "mass_per_m": 18.8},
+    "UPN 200": {"shape": "channel", "h": 200, "b": 75,  "tw": 8.5, "tf": 11.5, "mass_per_m": 25.3},
+    # EN 10056 equal-leg angles L a×a×t
+    "L 20x20x3": {"shape": "angle", "leg": 20, "t": 3, "mass_per_m": 0.88},
+    "L 30x30x3": {"shape": "angle", "leg": 30, "t": 3, "mass_per_m": 1.36},
+    "L 40x40x4": {"shape": "angle", "leg": 40, "t": 4, "mass_per_m": 2.42},
+    "L 50x50x5": {"shape": "angle", "leg": 50, "t": 5, "mass_per_m": 3.77},
+    "L 60x60x6": {"shape": "angle", "leg": 60, "t": 6, "mass_per_m": 5.42},
+}
 
 
 def _thread_parse(query: str):
@@ -173,8 +195,41 @@ def _fit_parse(query: str):
                 "fit_class": {"value": cls, "unit": "category", "quantity": "fit_class"}}}
 
 
+def _section_parse(query: str):
+    """Parse a metric structural-section designation (T5.2): 'IPE 200'/'UPN 100' (I-beam/channel) or
+    'L 40x40x4' (equal-leg angle). Returns dims + mass/length from the preseed, or None if not recognized
+    (an unknown family/size is NOT fabricated)."""
+    q = " ".join(query.upper().split())
+    ma = re.search(r"\bL\s*(\d+)\s*[X×]\s*(\d+)\s*[X×]\s*(\d+)\b", q)
+    if ma:
+        a, b, t = int(ma.group(1)), int(ma.group(2)), int(ma.group(3))
+        ent = PRESEED_SECTIONS.get(f"L {a}x{b}x{t}")
+        if not ent:
+            return None
+        return {"designation": f"L {a}x{b}x{t}", "system": "EN 10056 equal-leg angle", "values": {
+            "leg_length": {"value": float(ent["leg"]), "unit": "mm", "quantity": "angle_leg_length"},
+            "thickness": {"value": float(ent["t"]), "unit": "mm", "quantity": "angle_thickness"},
+            "mass_per_length": {"value": float(ent["mass_per_m"]), "unit": "kg/m",
+                                "quantity": "mass_per_length"}}}
+    mb = re.search(r"\b(IPE|UPN)\s*0*(\d+)\b", q)
+    if mb:
+        fam, num = mb.group(1), int(mb.group(2))
+        ent = PRESEED_SECTIONS.get(f"{fam} {num}")
+        if not ent:
+            return None
+        system = "EN IPE I-beam" if fam == "IPE" else "EN UPN channel"
+        return {"designation": f"{fam} {num}", "system": system, "values": {
+            "depth": {"value": float(ent["h"]), "unit": "mm", "quantity": "section_depth"},
+            "width": {"value": float(ent["b"]), "unit": "mm", "quantity": "flange_width"},
+            "web_thickness": {"value": float(ent["tw"]), "unit": "mm", "quantity": "web_thickness"},
+            "flange_thickness": {"value": float(ent["tf"]), "unit": "mm", "quantity": "flange_thickness"},
+            "mass_per_length": {"value": float(ent["mass_per_m"]), "unit": "kg/m",
+                                "quantity": "mass_per_length"}}}
+    return None
+
+
 PARSERS = {"thread": _thread_parse, "bearing": _bearing_parse, "material": _material_parse,
-           "fit": _fit_parse}
+           "fit": _fit_parse, "section": _section_parse}
 
 
 def parse_for_kind(query: str, kind: str):
@@ -249,3 +304,8 @@ def resolve_material(name: str, prefer_cache: bool = True, allow_live: bool = Tr
 
 def resolve_fit(fit: str, prefer_cache: bool = True, allow_live: bool = True) -> dict:
     return resolve(fit, kind="fit", prefer_cache=prefer_cache, allow_live=allow_live)
+
+
+def resolve_section(designation: str, prefer_cache: bool = True, allow_live: bool = False) -> dict:
+    """Resolve a structural-section designation (IPE/UPN/L) — offline preseed by default (T5.2)."""
+    return resolve(designation, kind="section", prefer_cache=prefer_cache, allow_live=allow_live)

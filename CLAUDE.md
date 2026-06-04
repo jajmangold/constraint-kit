@@ -176,7 +176,9 @@ need fact -> check SQLite cache -> (miss) SearXNG discovery -> rank -> fetch sou
 - **Preseed** is small bootstrap data, explicitly `source_type:"preseed"` — never pretends to be an
   official standard. **Kinds** (each a tiny preseed + parser in `spec_compiler.PARSERS`, generic
   `build_fact`): `thread` (M3–M10, designation encodes nominal+pitch → resolves **offline**), `bearing`
-  (608/6000/…→ bore/OD/width), `material` (→ density g/cm³), `fit` (ISO 286). `resolve_thread/_bearing/_material/_fit`; `kind:"unknown"`
+  (608/6000/…→ bore/OD/width), `material` (→ density g/cm³), `fit` (ISO 286), `section` [T5.2] (metric
+  structural sections — IPE/UPN I-beam/channel → depth/width/web/flange/mass-per-m, EN 10056 `L a×a×t`
+  angles → leg/thickness/mass; offline preseed). `resolve_thread/_bearing/_material/_fit/_section`; `kind:"unknown"`
   **auto-detects**. Each value carries full provenance; live sources add confirmation.
 - **Fits are REAL when a nominal size is given** (`iso286.py`): `resolve_fit("H7/g6 at 20mm")` computes
   IT grades + fundamental deviations from the ISO 286 formulas (`i=0.45·∛D+0.001·D`, validated vs ISO
