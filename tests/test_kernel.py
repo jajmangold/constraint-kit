@@ -1536,6 +1536,44 @@ def test_drawing_section_and_projection():
 
 
 @test
+def test_prewarm_parallel_tree_matches_serial():
+    """T3.3: prewarming the tree's part generation in a PROCESS pool must yield a build IDENTICAL to the
+    serial build — same BOM, mass, CG, inertia, bbox (the recursive build + density-weighted mass-props
+    path is untouched; only the part-gen cache is pre-populated)."""
+    from constraint_kit import assembly, builder
+    defs = {
+        "unit": {"parts": [{"id": "g", "type": "spur_gear", "material": "steel",
+                            "params": {"module": 1, "teeth": 24, "width": 6, "bore_d": 10}}],
+                 "ports": {"c": {"origin": [0, 0, 0]}}},
+        "rig": {"parts": [{"id": "p", "type": "plate", "material": "aluminum", "params": {}},
+                          {"id": "s", "type": "spacer", "material": "brass",
+                           "params": {"outer_d": 30, "bore_d": 0, "height": 8}}],
+                "children": [{"instance": "u0", "ref": "unit", "place": {"port": "c", "at": [0, 0, 40]}},
+                             {"instance": "u1", "ref": "unit", "place": {"port": "c", "at": [30, 0, 40]}}]},
+    }
+    builder.clear_cache()
+    serial = assembly.build_tree("rig", defs)                    # serial, cold cache
+    builder.clear_cache()
+    n = builder.prewarm_cache(assembly.collect_leaf_specs("rig", defs), max_workers=4)
+    assert n >= 3                                                # plate, spacer, gear generated in parallel
+    par = assembly.build_tree("rig", defs)                       # build now hits the prewarmed cache
+    assert builder.cache_stats()["misses"] == 0                  # every part was a cache hit (prewarmed)
+    assert dict(serial["bom"]) == dict(par["bom"])
+    approx(serial["mass_g"], par["mass_g"], eps=1e-3)
+    for a, b in zip(serial["cg"], par["cg"]):
+        approx(a, b, eps=1e-3)
+    for a, b in zip(serial["principal_moments"], par["principal_moments"]):
+        approx(a, b, eps=1e-2)                                   # mass-props identical: same geometry
+    bs = serial["cq_assembly"].toCompound().BoundingBox()
+    bp = par["cq_assembly"].toCompound().BoundingBox()
+    approx(bs.xlen, bp.xlen, eps=1e-3); approx(bs.zlen, bp.zlen, eps=1e-3)
+    # the prewarm flag on build_tree produces the same result end-to-end
+    builder.clear_cache()
+    flagged = assembly.build_tree("rig", defs, prewarm=True)
+    approx(flagged["mass_g"], serial["mass_g"], eps=1e-3)
+
+
+@test
 def test_bom_document():
     """T7.3: BOM doc (md + csv) has correct per-type quantities and a total mass matching the roll-up."""
     import csv as _csv

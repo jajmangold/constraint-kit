@@ -52,6 +52,54 @@ def _generate(ptype: str, params: dict):
     return wp.translate((0, 0, 0)), dict(anchors)     # copy -> cache stays pristine, callers isolated
 
 
+def _gen_worker(spec: tuple):
+    """Process-pool worker: generate one (type, params) part and return (cache_key, wp, anchors). cadquery
+    Workplane + anchor Locations pickle cleanly, so the cache entry crosses the process boundary intact."""
+    ptype, params = spec
+    from . import builder as _b
+    wp, anchors = _b.ALL_PART_GENS[ptype](**params)
+    return _b._gen_key(ptype, params), wp, anchors
+
+
+def prewarm_cache(specs: list[tuple], max_workers: int | None = None) -> int:
+    """T3.3: generate the DISTINCT (type, params) parts in `specs` across a PROCESS pool and populate the
+    T3.1 cache, so a subsequent (serial, unchanged) build hits the cache for every part — parallelizing the
+    expensive cq_gears/IsoThread generation WITHOUT touching the deterministic build or the validated
+    density-weighted mass-properties roll-up (those need per-leaf shapes; this sidesteps that entirely).
+    Already-cached specs are skipped. Serial fallback on <=1 worker / a single part / any pool failure.
+    Returns the number of parts generated."""
+    distinct = {}
+    for ptype, params in specs:
+        key = _gen_key(ptype, params)
+        if key not in _GEN_CACHE:
+            distinct.setdefault(key, (ptype, params))
+    todo = list(distinct.values())
+    if not todo:
+        return 0
+    if max_workers is None:
+        max_workers = max(1, (os.cpu_count() or 2) - 1)
+
+    def _serial():
+        for ptype, params in todo:
+            _GEN_CACHE[_gen_key(ptype, params)] = ALL_PART_GENS[ptype](**params)
+
+    if max_workers <= 1 or len(todo) == 1:
+        _serial()
+        return len(todo)
+    try:
+        import multiprocessing as _mp
+        from concurrent.futures import ProcessPoolExecutor
+        # 'spawn' (fresh interpreter), NOT the Linux default 'fork': the caller has already loaded
+        # cadquery/OCC (which run threads), and fork-after-threads deadlocks the workers. Spawn is slower
+        # (re-imports per worker) but safe; the heavy cq_gears/IsoThread generation still parallelizes.
+        with ProcessPoolExecutor(max_workers=max_workers, mp_context=_mp.get_context("spawn")) as ex:
+            for key, wp, anchors in ex.map(_gen_worker, todo):
+                _GEN_CACHE[key] = (wp, anchors)
+    except Exception:  # noqa: BLE001 -- pool/pickle/spawn failure -> identical serial result
+        _serial()
+    return len(todo)
+
+
 def cache_stats() -> dict:
     """Part-generation cache hit/miss counters (T3.1)."""
     return {**_GEN_STATS, "entries": len(_GEN_CACHE)}
@@ -98,8 +146,10 @@ def build_assemblies_parallel(specs: list[dict], max_workers: int | None = None)
     if max_workers <= 1 or len(specs) <= 1:
         return _serial()
     try:
+        import multiprocessing as _mp
         from concurrent.futures import ProcessPoolExecutor
-        with ProcessPoolExecutor(max_workers=max_workers) as ex:
+        # 'spawn', not 'fork': forking after cadquery/OCC has loaded threads deadlocks the workers.
+        with ProcessPoolExecutor(max_workers=max_workers, mp_context=_mp.get_context("spawn")) as ex:
             pairs = list(ex.map(_parallel_build_worker, specs))
         return [(cq.Shape.importBrep(io.BytesIO(b)), rep) for b, rep in pairs]
     except Exception:  # noqa: BLE001 -- any pool/pickle/spawn failure -> deterministic serial result

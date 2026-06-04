@@ -34,14 +34,30 @@ def _port_frames(node: dict) -> dict:
     return out
 
 
-def build_tree(root: str, defs: dict, _stack: tuple = ()) -> dict:
+def collect_leaf_specs(root: str, defs: dict, _stack: tuple = ()) -> list[tuple]:
+    """Every (part_type, params) leaf spec in the tree rooted at `root` (recursive, cycle/unknown-guarded).
+    Used to pre-warm the part-generation cache in parallel (T3.3)."""
+    if root not in defs or root in _stack:
+        return []
+    node = defs[root]
+    out = [(ps["type"], ps.get("params", {})) for ps in node.get("parts", [])]
+    for child in node.get("children", []):
+        out += collect_leaf_specs(child["ref"], defs, (*_stack, root))
+    return out
+
+
+def build_tree(root: str, defs: dict, _stack: tuple = (), prewarm: bool = False) -> dict:
     """Recursively build assembly `root` from the `defs` registry. Returns:
        {name, cq_assembly, ports{name:Location}, bom Counter, mass_g, part_count, leaf_count, depth}.
-    Raises on unknown ref or a cyclic definition."""
+    Raises on unknown ref or a cyclic definition. `prewarm=True` (root call only) generates the tree's
+    distinct parts in a PROCESS pool first (T3.3), so the recursive build below — and its exact
+    mass-properties roll-up — run UNCHANGED against a warm cache."""
     if root not in defs:
         raise ValueError(f"unknown assembly ref {root!r}; known: {sorted(defs)}")
     if root in _stack:
         raise ValueError(f"cyclic assembly definition: {' -> '.join((*_stack, root))}")
+    if prewarm and not _stack:
+        builder.prewarm_cache(collect_leaf_specs(root, defs))
     node = defs[root]
     assy = cq.Assembly()
     bom: Counter = Counter()
@@ -100,9 +116,10 @@ def report(result: dict) -> dict:
     }
 
 
-def build_and_export(root: str, defs: dict, out_base: str) -> dict:
-    """Build the tree, export one combined STEP+GLB, and return the report + artifact paths + bbox."""
-    result = build_tree(root, defs)
+def build_and_export(root: str, defs: dict, out_base: str, prewarm: bool = False) -> dict:
+    """Build the tree, export one combined STEP+GLB, and return the report + artifact paths + bbox.
+    `prewarm=True` parallelizes the tree's part generation first (T3.3)."""
+    result = build_tree(root, defs, prewarm=prewarm)
     exported = builder.export(result["cq_assembly"], out_base)
     return {**report(result), **exported}
 
