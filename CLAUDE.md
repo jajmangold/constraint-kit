@@ -283,7 +283,7 @@ size, DXF validity (ezdxf audit), and the atlas round-trip (or fail-soft when th
 tests/run.sh            # docker exec into cadkit; exit 0 = all pass (gates changes)
 ```
 
-72 tests, all passing. Add a test alongside any new part/mate (assert the invariant, not just "it runs").
+73 tests, all passing. Add a test alongside any new part/mate (assert the invariant, not just "it runs").
 Lesson baked into the suite: verify with **geometry** (anchor/bbox math), not the VLM — qwen27b is a
 categorical second opinion that misreads counts/angles (it called a bolted plate "no gear" from a `hero`
 angle, then "2 bolts, yes gear" from `three_quarter`); the deterministic tests are ground truth.

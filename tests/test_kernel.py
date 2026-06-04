@@ -1120,6 +1120,26 @@ def test_finish_fillet_chamfer_failsoft():
     assert big[0]["finish"]["ok"] is False and big[0]["volume_mm3"] == v0  # fail-soft: part unchanged
 
 
+@test
+def test_derive_ports_from_geometry():
+    """T2.1: derive named oriented ports from a built solid by geometric query (snapshot)."""
+    from constraint_kit.joints import derive_ports
+    from constraint_kit.parts import plate, spacer
+    pp = derive_ports(plate(width=60, depth=60, thick=6, boss_d=12, boss_h=4,
+                            bolt_d=4, bolt_circle=40, bolt_count=4)[0])
+    assert {"top", "bottom", "center"} <= set(pp)
+    approx(_origin_of(pp["top"])[2], 7.0)        # boss top: thick/2 + boss_h
+    approx(_origin_of(pp["bottom"])[2], -3.0)     # plate underside
+    assert _axis_of(pp["top"]) == (0.0, 0.0, 1.0)
+    # bore axis derived from the smaller (inner) cylindrical face, on the part axis
+    sp = derive_ports(spacer(outer_d=20, bore_d=8, height=12)[0])
+    assert "bore_axis" in sp
+    bx, by, _bz = _origin_of(sp["bore_axis"])
+    approx(bx, 0.0, eps=1e-4); approx(by, 0.0, eps=1e-4)
+    az = _axis_of(sp["bore_axis"])
+    assert abs(az[2]) == 1.0 and az[0] == 0.0 and az[1] == 0.0   # axis along Z (sign-agnostic)
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:
