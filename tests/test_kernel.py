@@ -775,6 +775,35 @@ def test_spec_vlm_only_accepted_when_it_matches():
 
 
 @test
+def test_spec_extract_hardening():
+    """T5.3: hardened deterministic extraction — robust quantity parsing, numeric TOKEN confirmation (no
+    substring false-positives), and colspan/whitespace-tolerant HTML tables. All offline, no VLM/network."""
+    from constraint_kit import spec_extract as sx
+    assert sx.parse_quantity("8 mm") == (8.0, "mm")
+    assert sx.parse_quantity("Ø22")[0] == 22.0
+    assert sx.parse_quantity("0.75 in") == (0.75, "in")
+    assert sx.parse_quantity("1,25")[0] == 1.25                  # comma decimal
+    assert sx.parse_quantity("n/a") is None
+    # numbers_in tokenizes FULL numbers: 6 is not found inside 16 / 0.6
+    toks = sx.numbers_in("M16 x 2.0, area 0.6")
+    assert {16.0, 2.0, 0.6} <= toks and 6.0 not in toks
+    # confirmation gate: real evidence confirms; a misleading-substring source does NOT
+    parsed6 = {"values": {"nd": {"value": 6.0}, "p": {"value": 1.0}}}
+    assert sx.value_confirmed("Thread M6 x 1.0 coarse", parsed6) is True
+    assert sx.value_confirmed("Thread M16 x 2.0", parsed6) is False   # the substring-'6' false positive, killed
+    assert sx.value_confirmed("no numbers", {"values": {}}) is False  # can't confirm nothing
+    # hardened HTML: colspan expands, whitespace collapses, empty rows dropped, malformed input fail-soft
+    html = ('<table><tr><th colspan="2">Thread</th><th>Pitch</th></tr>'
+            '<tr><td>  M6 </td><td>6.0</td><td>1.0</td></tr><tr></tr></table>'
+            '<table><tr><td>loose</td></table>')
+    ext = sx.extract_text_tables(html)
+    assert ext["ok"] and ext["truncated"] is False
+    assert ext["tables"][0][0] == ["Thread", "Thread", "Pitch"]  # colspan=2 expanded -> aligned columns
+    assert ext["tables"][0][1] == ["M6", "6.0", "1.0"]           # whitespace collapsed
+    assert all(any(c for c in row) for row in ext["tables"][0])  # no empty rows survive
+
+
+@test
 def test_spec_atlas_breadcrumb_no_crash():
     """The atlas WORK-breadcrumb (not spec data) must write cleanly or no-op — never raise. (Regression:
     neo4j Session.run reserves the kwarg 'query', which silently broke this under fail-soft.)"""

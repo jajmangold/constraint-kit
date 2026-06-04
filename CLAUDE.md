@@ -53,7 +53,7 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   spec_graph.py        # LangGraph orchestration of the spec-compilation flow (13 nodes)
   spec_db.py           # SQLite durable spec store (resolutions/facts/sources/links/cache) — NOT atlas
   spec_sources.py      # SearXNG discovery + rule-based source ranking (snippets are NOT facts)
-  spec_extract.py      # fetch + deterministic HTML/PDF extraction + qwen27b VLM (visual tables only)
+  spec_extract.py      # fetch + deterministic HTML/PDF extraction + qwen27b VLM (visual tables only); hardened parse/confirm [T5.3]
   spec_cache.py        # optional JSON artifact dump (debug/export) under SPEC_CACHE_DIR
   api.py               # FastAPI (port 8195)
 cadkit/                # Dockerfile + docker-compose.yaml + README + output/
@@ -181,6 +181,11 @@ need fact -> check SQLite cache -> (miss) SearXNG discovery -> rank -> fetch sou
 - **VLM/LLM are NOT ground truth.** qwen27b assists visual-table extraction only; its output is accepted
   only after schema + unit + value-match + provenance checks (a VLM value that doesn't match the
   deterministic designation is discarded).
+- **Hardened extraction/confirmation (T5.3):** `spec_extract.value_confirmed` gates "a source confirms this
+  fact" on every numeric value appearing as a standalone numeric TOKEN (`numbers_in` tokenizes full numbers,
+  so `6` no longer confirms against `16`/`0.6` — substring false-positives eliminated); `parse_quantity`
+  pulls `(value, unit)` robustly; `extract_text_tables` expands colspan, collapses whitespace, drops empty
+  rows, caps pathological size (`truncated` flag). All deterministic + offline-tested.
 - **Preseed** is small bootstrap data, explicitly `source_type:"preseed"` — never pretends to be an
   official standard. **Kinds** (each a tiny preseed + parser in `spec_compiler.PARSERS`, generic
   `build_fact`): `thread` (M3–M10, designation encodes nominal+pitch → resolves **offline**), `bearing`

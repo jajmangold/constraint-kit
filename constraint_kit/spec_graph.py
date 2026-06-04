@@ -103,12 +103,11 @@ def fetch_source(state: SpecState) -> dict:
     return {"fetched": fetched}
 
 
-def _value_confirmed(text_or_tables: str, parsed: dict) -> bool:
-    """Cheap check that fetched content actually states ALL of this fact's numeric values (so it's real
-    confirmation, not a snippet guess)."""
-    blob = str(text_or_tables)
-    nums = [v["value"] for v in parsed.get("values", {}).values() if isinstance(v["value"], (int, float))]
-    return bool(nums) and all(f"{n:g}" in blob for n in nums)
+def _value_confirmed(text_or_tables, parsed: dict) -> bool:
+    """A source confirms a fact only if it states ALL of its numeric values as standalone numeric TOKENS
+    (T5.3 hardening: `spec_extract.value_confirmed` tokenizes numbers, so 6 no longer 'confirms' against
+    16/0.6 — eliminating substring false-positives)."""
+    return spec_extract.value_confirmed(text_or_tables, parsed)
 
 
 def extract_text_tables(state: SpecState) -> dict:
