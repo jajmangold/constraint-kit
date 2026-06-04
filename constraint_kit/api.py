@@ -17,8 +17,8 @@ import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from . import (assembly, bom, builder, layout, linkage, planner, planetary, rules, spec_compiler, spec_db,
-               spec_sources, store, synthesis, tolerance)
+from . import (assembly, bom, builder, layout, library, linkage, planner, planetary, rules, spec_compiler,
+               spec_db, spec_sources, store, synthesis, tolerance)
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/srv/nvme-data/containers/constraint-kit/cadkit/output")
 
@@ -270,6 +270,12 @@ class ToleranceReq(BaseModel):
     as_clearance: bool = False
 
 
+class FromLibraryReq(BaseModel):
+    library: str
+    root: str
+    name: str | None = None
+
+
 class DesignReq(BaseModel):
     requirements: dict
     relations: list[dict] | None = None
@@ -395,6 +401,24 @@ def rule_clearance(req: ClearanceReq) -> dict:
 def tolerance_stackup(req: ToleranceReq) -> dict:
     """E4/T4.2: chain toleranced dims -> worst-case + RSS bounds (fits sourced from ISO 286)."""
     return tolerance.stackup(req.dims, req.as_clearance)
+
+
+@app.get("/libraries")
+def get_libraries() -> dict:
+    """E6/T6.1: list domain libraries + their roots."""
+    return {"libraries": [library.library_meta(n) for n in library.list_libraries()]}
+
+
+@app.post("/assembly/from_library")
+def assembly_from_library(req: FromLibraryReq) -> dict:
+    """E6: build a root from a domain library's defs (compose, don't model from scratch)."""
+    try:
+        defs = library.load_library(req.library)
+        res = assembly.build_and_export(req.root, defs, os.path.join(OUTPUT_DIR, req.name or req.root))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"library build failed: {exc}") from exc
+    res["stored"] = store.record_assembly_tree(res)
+    return {"ok": True, **res}
 
 
 @app.get("/catalog")

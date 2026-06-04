@@ -1321,6 +1321,18 @@ def test_tolerance_stackup():
     approx(blocks["nominal"], 30.0); approx(blocks["worst_case"]["max"], 30.15, eps=1e-6)
 
 
+@test
+def test_library_loader():
+    """T6.1/T6.2: the automotive library loads and its defs build through the kernel."""
+    from constraint_kit import assembly, library
+    assert "automotive" in library.list_libraries()
+    defs = library.load_library("automotive")
+    assert {"wheel", "axle", "gearbox_housing"} <= set(defs)
+    res = assembly.build_tree("axle", defs)
+    assert res["part_count"] >= 4 and res["mass_g"] > 0     # 2 wheels x (rim+hub)
+    assert library.library_meta("automotive")["version"] == "0.1"
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:

@@ -1,0 +1,30 @@
+{
+  "version": "0.1",
+  "description": "Automotive starter defs (T6.2) — reusable subassemblies composed from constraint-kit parts.",
+  "defs": {
+    "wheel": {
+      "parts": [
+        {"id": "rim", "type": "spacer", "material": "steel", "params": {"outer_d": 60, "bore_d": 30, "height": 20}},
+        {"id": "hub", "type": "spacer", "material": "steel", "params": {"outer_d": 30, "bore_d": 12, "height": 24}}
+      ],
+      "mates": [
+        {"a": "rim", "a_joint": "bottom", "b": "hub", "b_joint": "bottom", "type": "coincident"}
+      ],
+      "ports": {"center": {"origin": [0, 0, 0]}}
+    },
+    "axle": {
+      "children": [
+        {"instance": "wheel_l", "ref": "wheel", "place": {"port": "center", "at": [0, 0, 0]}},
+        {"instance": "wheel_r", "ref": "wheel", "place": {"port": "center", "at": [0, 0, 120]}}
+      ]
+    },
+    "gearbox_housing": {
+      "parts": [
+        {"id": "case", "type": "housing", "material": "aluminum",
+         "params": {"width": 90, "depth": 90, "height": 50, "wall": 4, "bore_d": 24,
+                    "bolt_d": 5, "bolt_circle": 74, "bolt_count": 4, "fillet": 3}}
+      ],
+      "ports": {"base": {"origin": [0, 0, 0]}}
+    }
+  }
+}
