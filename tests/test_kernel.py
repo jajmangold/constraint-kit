@@ -804,6 +804,30 @@ def test_spec_extract_hardening():
 
 
 @test
+def test_pdf_oxide_extraction_path():
+    """The durable deterministic PDF path: spec_extract.extract_pdf recovers numeric tokens from a PDF
+    (pdf_oxide layout, pypdf fallback) so value_confirmed works, and it's fail-soft on bad input."""
+    import os
+    import tempfile
+    from constraint_kit import spec_extract as sx
+    assert sx.extract_pdf("/nonexistent/x.pdf")["ok"] is False          # fail-soft, no raise
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "t.pdf")
+        fig = plt.figure(figsize=(4, 2))
+        fig.text(0.1, 0.6, "thread M6 pitch 1.0"); fig.text(0.1, 0.3, "deviation 22 size 50")
+        fig.savefig(path); plt.close(fig)
+        ext = sx.extract_pdf(path)
+        assert ext["ok"] and ext["extractor"] in ("pdf_oxide", "pypdf")
+        toks = sx.numbers_in(ext["text"])
+        assert {6.0, 1.0, 22.0, 50.0} <= toks                           # numeric tokens recovered
+        assert sx.value_confirmed(ext["text"], {"values": {"a": {"value": 22}, "b": {"value": 6}}})
+        assert not sx.value_confirmed(ext["text"], {"values": {"a": {"value": 999}}})
+
+
+@test
 def test_spec_atlas_breadcrumb_no_crash():
     """The atlas WORK-breadcrumb (not spec data) must write cleanly or no-op — never raise. (Regression:
     neo4j Session.run reserves the kwarg 'query', which silently broke this under fail-soft.)"""
@@ -938,25 +962,32 @@ def test_spec_fit_exact_with_nominal():
 
 
 @test
-def test_iso286_interference_prs_from_table():
-    """T5.1: interference letters p/r/s now resolve to REAL deviations from the ISO 286-2 table (extracted
+def test_iso286_interference_from_table():
+    """T5.1: interference letters p/r/s/t/u/v resolve to REAL deviations from the ISO 286-2 table (extracted
     via pdf_oxide, cross-validated). Values must match known published fit anchors EXACTLY, the fundamental
-    deviation is grade-independent, and an unsupported letter stays honestly class-only."""
+    deviation is grade-independent, t is correctly undefined <=24mm, and a not-yet-extracted letter (x)
+    stays honestly class-only."""
     from constraint_kit import iso286, spec_compiler
-    # published ISO anchors: p6@20=+35/+22, r6@20=+41/+28, s6@20=+48/+35, s6@60=+72/+53 (50-65 fine range)
+    # published ISO anchors (es, ei): p6@20=+35/+22, r6@20=+41/+28, s6@20=+48/+35, s6@60=+72/+53 (fine step)
     assert iso286.shaft_deviation("p", 6, 20) == (35, 22)
     assert iso286.shaft_deviation("r", 6, 20) == (41, 28)
     assert iso286.shaft_deviation("s", 6, 20) == (48, 35)
-    assert iso286.shaft_deviation("s", 6, 60) == (72, 53)        # finer size step than the IT grades
+    assert iso286.shaft_deviation("s", 6, 60) == (72, 53)
+    # t/u/v (heavy press), incl. the 18-24/24-30 fine subdivisions u/v use
+    assert iso286.shaft_deviation("t", 6, 26) == (54, 41)        # t6@24-30
+    assert iso286.shaft_deviation("u", 6, 20) == (54, 41)        # u6@18-24
+    assert iso286.shaft_deviation("u", 6, 60) == (106, 87)       # u6@50-65
+    assert iso286.shaft_deviation("v", 6, 26) == (68, 55)        # v6@24-30
+    assert iso286.shaft_deviation("t", 6, 20) is None            # t undefined <=24mm -> class-only
     # ei is grade-independent (fundamental deviation); es = ei + IT(grade)
     assert iso286.shaft_deviation("s", 7, 20)[1] == 35 and iso286.shaft_deviation("s", 6, 20)[1] == 35
-    # full fit: H7/s6@20 is an interference fit
-    f = iso286.fit("H", 7, "s", 6, 20)
+    # full fit: H7/u6@26 is a heavy interference fit
+    f = iso286.fit("H", 7, "u", 6, 26)
     assert f["fit_class"] == "interference" and f["max_clearance_um"] < 0
-    # honest boundary: t/u not yet extracted -> class-only (None), never fabricated
-    assert iso286.shaft_deviation("u", 6, 20) is None
+    # honest boundary: x not yet extracted -> class-only (None), never fabricated
+    assert iso286.shaft_deviation("x", 6, 20) is None
     # via the spec compiler (provenance on every value)
-    r = spec_compiler.resolve_fit("H7/p6 at 50mm", allow_live=False)
+    r = spec_compiler.resolve_fit("H7/u6 at 50mm", allow_live=False)
     v = r["facts"][0]["values"]
     assert v["fit_class"]["value"] == "interference" and all(val.get("source_ref") for val in v.values())
 
@@ -983,10 +1014,10 @@ def test_spec_fit_classonly_fallbacks():
     f = nofit["facts"][0]
     assert f["values"]["fit_class"]["value"] == "clearance" and "min_clearance" not in f["values"]
     assert f["warnings"]                                                      # warns to give a size
-    u = spec_compiler.resolve_fit("H7/u6 at 20mm", allow_live=False)          # not-yet-extracted letter
-    uf = u["facts"][0]
-    assert uf["values"]["fit_class"]["value"] == "interference"
-    assert "min_clearance" not in uf["values"] and uf["warnings"]             # exact not fabricated
+    x = spec_compiler.resolve_fit("H7/x6 at 20mm", allow_live=False)          # not-yet-extracted letter
+    xf = x["facts"][0]
+    assert xf["values"]["fit_class"]["value"] == "interference"
+    assert "min_clearance" not in xf["values"] and xf["warnings"]             # exact not fabricated
 
 
 @test

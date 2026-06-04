@@ -97,7 +97,8 @@ PRESEED_MATERIALS = {  # density g/cm^3 (common engineering materials)
 PRESEED_FITS = {  # ISO 286 hole-basis fit -> class
     "h7/g6": "clearance", "h7/h6": "clearance", "h7/f7": "clearance",
     "h7/k6": "transition", "h7/n6": "transition", "h7/p6": "interference", "h7/r6": "interference",
-    "h7/s6": "interference", "h7/t6": "interference", "h7/u6": "interference",
+    "h7/s6": "interference", "h7/t6": "interference", "h7/u6": "interference", "h7/v6": "interference",
+    "h7/x6": "interference",
 }
 PRESEED_SECTIONS = {  # metric structural sections (EN), dims mm, mass kg/m — standard handbook values
     # European IPE I-beams (S235): depth h, flange width b, web tw, flange tf

@@ -27,6 +27,7 @@ RUN pip install --no-cache-dir \
         langgraph \
         beautifulsoup4 \
         pypdf \
+        pdf_oxide \
         z3-solver
 
 # python-solvespace = the geometric closed-loop DOF solver (planar mechanisms: 4-bar, slider-crank).

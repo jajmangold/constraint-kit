@@ -127,6 +127,61 @@ def extract_pdf_text(pdf_path: str) -> dict:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "text": ""}
 
 
+def extract_pdf(pdf_path: str) -> dict:
+    """Layout-aware PDF text extraction — the DURABLE deterministic PDF path. Uses pdf_oxide (Rust,
+    layout-aware) which recovers per-cell text from dense tabular PDFs that flat pypdf scrambles (the
+    ISO 286 lesson, T5.1); falls back to pypdf, then to a structured error. Returns {ok, text, n_pages,
+    extractor}. Fail-soft: never raises. This is deterministic-first — the VLM stays a last resort."""
+    try:
+        import pdf_oxide
+        doc = pdf_oxide.PdfDocument(pdf_path)
+        n = doc.page_count()
+        # join layout-extracted words per page (preserves numeric tokens that pypdf flattens away)
+        def page_words(p):
+            try:
+                ws = doc.extract_words(p)
+                return " ".join((w["text"] if isinstance(w, dict) else getattr(w, "text", "")) for w in ws)
+            except Exception:  # noqa: BLE001
+                return doc.extract_page_text(p) or ""
+        text = "\n".join(page_words(p) for p in range(n))
+        return {"ok": True, "text": text, "n_pages": n, "extractor": "pdf_oxide"}
+    except Exception as exc:  # noqa: BLE001 -- pdf_oxide missing/errors -> deterministic pypdf fallback
+        fb = extract_pdf_text(pdf_path)
+        if fb.get("ok"):
+            return {**fb, "extractor": "pypdf", "pdf_oxide_error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "error": f"pdf_oxide+pypdf failed: {exc}", "text": "", "extractor": "none"}
+
+
+def extract_pdf_tables(pdf_path: str, page: int | None = None) -> dict:
+    """Reconstruct PDF tables as rows of cell text via pdf_oxide layout (bbox row/column clustering) — the
+    reusable, general engineering-table reader (generalized from the ISO 286-2 extraction, T5.1). `page`
+    limits to one page (else all). Returns {ok, tables:[{page,rows:[[cell,...]]}], extractor}. Fail-soft."""
+    try:
+        import pdf_oxide
+        doc = pdf_oxide.PdfDocument(pdf_path)
+        pages = [page] if page is not None else range(doc.page_count())
+        out = []
+        for p in pages:
+            ws = doc.extract_words(p)
+            cells = sorted(((round((w["bbox"] if isinstance(w, dict) else w.bbox)[1], 1),
+                             (w["bbox"] if isinstance(w, dict) else w.bbox)[0],
+                             (w["text"] if isinstance(w, dict) else w.text)) for w in ws))
+            rows, cur, ly = [], [], None
+            for y, x, t in cells:
+                if ly is None or abs(y - ly) <= 2.5:
+                    cur.append(t)
+                else:
+                    rows.append(cur); cur = [t]
+                ly = y
+            if cur:
+                rows.append(cur)
+            if rows:
+                out.append({"page": p, "rows": rows})
+        return {"ok": True, "tables": out, "extractor": "pdf_oxide"}
+    except Exception as exc:  # noqa: BLE001 -- pdf_oxide missing/errors
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "tables": []}
+
+
 def extract_with_qwen_vlm(image_or_page_path: str, schema: dict, prompt: str,
                           base_url: str | None = None, model: str | None = None,
                           timeout: float = 120.0) -> dict:

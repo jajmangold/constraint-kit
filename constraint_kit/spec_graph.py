@@ -128,8 +128,22 @@ def extract_text_tables(state: SpecState) -> dict:
                 unit_stated=True, has_edition_date=False)
             return {"need_vlm": False, "live_confirmed": True, "confirm_source": cs}
         return {"need_vlm": False}
-    # PDF (or unknown) with no usable text -> try the VLM path
-    return {"need_vlm": bool(fetched.get("pdf_path"))}
+    # PDF: try the DETERMINISTIC layout extractor (pdf_oxide, T5.1) FIRST — deterministic-first doctrine.
+    # Only if it can't confirm the parsed values do we fall to the untrusted VLM (last resort).
+    pdf = fetched.get("pdf_path")
+    if pdf:
+        ext = spec_extract.extract_pdf(pdf)
+        if ext.get("ok") and state.get("parsed") and spec_extract.value_confirmed(ext["text"], state["parsed"]):
+            cs = spec_compiler.make_source(
+                fetched.get("source_type_guess", "webpage"), title=fetched.get("title"),
+                url=fetched.get("url"), retrieved_at=fetched.get("retrieved_at"),
+                source_hash=fetched.get("source_hash"), engine=fetched.get("engine"),
+                table=f"pdf_layout:{ext.get('extractor')}")
+            cs["confidence"] = spec_compiler.score_confidence(
+                cs["source_type"], structured_table=True, unit_stated=True, has_edition_date=False)
+            return {"need_vlm": False, "live_confirmed": True, "confirm_source": cs}
+        return {"need_vlm": True}            # deterministic PDF extraction didn't confirm -> VLM last resort
+    return {"need_vlm": False}
 
 
 def extract_visual_tables_with_vlm(state: SpecState) -> dict:

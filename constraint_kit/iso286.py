@@ -5,10 +5,10 @@ size step. IT grade value = factor·i. Fundamental deviations from the published
 (validated against ISO 286-2 tables at Ø20: H7=+21/0, g6=−7/−20, k6=+15/+2, n6=+28/+15, f7=−20/−41).
 
 Honest scope: hole-basis (H) holes + shaft letters f, g, h, js, k, m, n have clean validated power-law
-formulas (exact deviations + clearances). Interference letters p, r, s do NOT reduce to a formula, so their
+formulas (exact deviations + clearances). Interference letters p, r, s, t, u, v do NOT reduce to a formula, so their
 fundamental deviations are TABULATED (INTERFERENCE_EI) — extracted deterministically from ISO 286-2:2010
 and cross-validated against the closed-form columns + known fit anchors (T5.1), never fabricated. Letters
-t, u, v, … remain class-only until extracted. 3 < D <= 500 mm. All deviations in micrometres (µm).
+x, y, z … remain class-only until extracted. 3 < D <= 500 mm. All deviations in micrometres (µm).
 """
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ EXACT_SHAFT_LETTERS = {"f", "g", "h", "js", "k", "m", "n"}
 # (p6@20=+22, r6@20=+28, s6@20=+35, s6@60=+53). The fundamental deviation ei is grade-independent; the
 # upper deviation is es = ei + IT(grade). Interference fits subdivide sizes >50 mm finer than the IT steps.
 ISO286_2_PROVENANCE = {
-    "standard": "ISO 286-2:2010", "extractor": "pdf_oxide bbox reconstruction",
-    "validation": "closed-form m/n columns + known fit-table anchors (p6/r6/s6)",
-    "scope": "shaft letters p, r, s; hole-basis; class-only fallback outside these letters/ranges",
+    "standard": "ISO 286-2:2010", "extractor": "pdf_oxide bbox reconstruction (x-clustered columns)",
+    "validation": "closed-form m/n columns + known fit-table anchors (p6/r6/s6/t6/u6/v6)",
+    "scope": "shaft letters p, r, s, t, u, v; hole-basis; class-only fallback outside these letters/ranges",
 }
 INTERFERENCE_EI = {
     "p": {(6, 10): 15, (10, 18): 18, (18, 30): 22, (30, 50): 26, (50, 80): 32, (80, 120): 37,
@@ -44,6 +44,19 @@ INTERFERENCE_EI = {
           (80, 100): 71, (100, 120): 79, (120, 140): 92, (140, 160): 100, (160, 180): 108, (180, 200): 122,
           (200, 225): 130, (225, 250): 140, (250, 280): 158, (280, 315): 170, (315, 355): 190,
           (355, 400): 208, (400, 450): 232, (450, 500): 252},
+    # t is undefined for D <= 24 mm (no small-size rows); u/v subdivide 18-30 into 18-24, 24-30.
+    "t": {(24, 30): 41, (30, 40): 48, (40, 50): 54, (50, 65): 66, (65, 80): 75, (80, 100): 91,
+          (100, 120): 104, (120, 140): 122, (140, 160): 134, (160, 180): 146, (180, 200): 166,
+          (200, 225): 180, (225, 250): 196, (250, 280): 218, (280, 315): 240, (315, 355): 268,
+          (355, 400): 294, (400, 450): 330, (450, 500): 360},
+    "u": {(3, 6): 23, (6, 10): 28, (10, 18): 33, (18, 24): 41, (24, 30): 48, (30, 40): 60, (40, 50): 70,
+          (50, 65): 87, (65, 80): 102, (80, 100): 124, (100, 120): 144, (120, 140): 170, (140, 160): 190,
+          (160, 180): 210, (180, 200): 236, (200, 225): 258, (225, 250): 284, (250, 280): 315,
+          (280, 315): 350, (315, 355): 390, (355, 400): 435, (400, 450): 490, (450, 500): 540},
+    "v": {(18, 24): 47, (24, 30): 55, (30, 40): 68, (40, 50): 81, (50, 65): 102, (65, 80): 120,
+          (80, 100): 146, (100, 120): 172, (120, 140): 202, (140, 160): 228, (160, 180): 252,
+          (180, 200): 284, (200, 225): 310, (225, 250): 340, (250, 280): 385, (280, 315): 425,
+          (315, 355): 475, (355, 400): 530, (400, 450): 595, (450, 500): 660},
 }
 
 
@@ -100,10 +113,10 @@ def shaft_deviation(letter: str, grade: int, nominal: float):
         ei = (it_grade(7, nominal) or 0) - (it_grade(6, nominal) or 0); return (ei + it, ei)
     if lo == "n":
         ei = round(5 * d ** 0.34); return (ei + it, ei)
-    ei_t = interference_ei(lo, nominal)         # p/r/s: tabulated ei from ISO 286-2 (T5.1), es = ei + IT
+    ei_t = interference_ei(lo, nominal)         # p/r/s/t/u/v: tabulated ei from ISO 286-2 (T5.1), es = ei + IT
     if ei_t is not None:
         return (ei_t + it, ei_t)
-    return None  # t, u, v, ... still tabulated-only (not yet extracted) -> class only, never faked
+    return None  # x, y, z, za..zc still tabulated-only (not yet extracted) -> class only, never faked
 
 
 def hole_deviation(letter: str, grade: int, nominal: float):

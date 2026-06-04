@@ -53,7 +53,7 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   spec_graph.py        # LangGraph orchestration of the spec-compilation flow (13 nodes)
   spec_db.py           # SQLite durable spec store (resolutions/facts/sources/links/cache) — NOT atlas
   spec_sources.py      # SearXNG discovery + rule-based source ranking (snippets are NOT facts)
-  spec_extract.py      # fetch + deterministic HTML/PDF extraction + qwen27b VLM (visual tables only); hardened parse/confirm [T5.3]
+  spec_extract.py      # fetch + deterministic HTML/PDF extraction + qwen27b VLM (visual tables only); hardened parse/confirm [T5.3]; pdf_oxide layout-aware PDF reader [durable]
   spec_cache.py        # optional JSON artifact dump (debug/export) under SPEC_CACHE_DIR
   api.py               # FastAPI (port 8195)
 cadkit/                # Dockerfile + docker-compose.yaml + README + output/
@@ -164,7 +164,9 @@ orchestrated by **LangGraph** (`spec_graph.py`, 13 nodes), all fail-soft:
 
 ```
 need fact -> check SQLite cache -> (miss) SearXNG discovery -> rank -> fetch source
-          -> deterministic HTML/PDF extraction -> (visual/low-conf) qwen27b VLM
+          -> deterministic extraction: HTML tables | PDF via pdf_oxide LAYOUT (extract_pdf/_pdf_tables,
+             Rust, recovers dense-table cells pypdf scrambles) -> confirm values -> (only if unconfirmed)
+             qwen27b VLM last resort
           -> normalize units/schema -> rule-based trust score -> validate -> persist SQLite
           -> optional JSON artifact -> return  (provenance attached to EVERY value)
 ```
@@ -196,12 +198,14 @@ need fact -> check SQLite cache -> (miss) SearXNG discovery -> rank -> fetch sou
 - **Fits are REAL when a nominal size is given** (`iso286.py`): `resolve_fit("H7/g6 at 20mm")` computes
   IT grades + fundamental deviations from the ISO 286 formulas (`i=0.45·∛D+0.001·D`, validated vs ISO
   286-2 tables) → exact hole/shaft deviations + min/max clearance in µm. Hole-basis H + shaft f/g/h/js/k/m/n are
-  exact (closed-form, ISO-table-validated). **Interference p/r/s [T5.1]** now resolve too: their fundamental
+  exact (closed-form, ISO-table-validated). **Interference p/r/s/t/u/v [T5.1]** now resolve too: their fundamental
   deviations (`iso286.INTERFERENCE_EI`) were extracted DETERMINISTICALLY from the authoritative ISO 286-2:2010
-  PDF (via `pdf_oxide` bbox reconstruction — `tools/extract_iso286_interference.py`, offline/repro), then
-  cross-validated against the closed-form m/n columns + known fit anchors (p6@20=+22, s6@20=+35, s6@60=+53);
-  the de-scrambling beat pypdf, which flattens these visual tables. Letters t/u/v… stay honest **class-only +
-  warning** (not yet extracted, never faked); no nominal → class-only + "give a size" warning. 3 < D ≤ 500 mm.
+  PDF (via `pdf_oxide` bbox reconstruction, x-clustered columns for multi-letter pages —
+  `tools/extract_iso286_interference.py`, offline/repro), cross-validated against the closed-form m/n columns
+  + known anchors (p6@20=+22, s6@20=+35, t6@24-30=+41, u6@18-24=+41, v6@24-30=+55); the de-scrambling beat
+  pypdf, which flattens these visual tables. t is undefined ≤24mm; u/v subdivide 18-30 finer than the IT
+  steps. Letters x/y/z… stay honest **class-only + warning** (not yet extracted, never faked); no nominal →
+  class-only + "give a size" warning. 3 < D ≤ 500 mm.
 - Env: `SPEC_SEARCH_URL`, `SPEC_DB_PATH`, `SPEC_CACHE_DIR`, `QWEN_BASE_URL`, `QWEN_MODEL` (compose).
 - **Wired into the builder (opt-in):** a build spec with `"resolve_specs": true` resolves each screw/
   thread part's nominal-diameter+pitch via the spec compiler and attaches `spec`
