@@ -76,7 +76,8 @@ def main():
     print(f"   -> {clash['n_parts']} parts, {'CLEAN' if clash['ok'] else str(len(clash['clashes']))+' CLASHES'}")
 
     print("[5/8] exploded view (manufacturing doc) ...")
-    exp = post("/assembly/explode", {"root": "gearbox", "defs": defs, "factor": 18, "name": name})
+    exp = post("/assembly/explode", {"root": "gearbox", "defs": defs, "factor": 18,
+                                     "name": f"{name}_exploded"})   # distinct base: don't clobber the assembled GLB
     print(f"   -> {os.path.basename(exp['glb'])}  bbox {exp['bbox']['size']} mm")
 
     print("[6/8] 2D drawing (section DXF + projection SVGs) ...")
