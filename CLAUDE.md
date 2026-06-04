@@ -229,6 +229,8 @@ not just the points. This is the fix for grounding mate intent to durable refere
 
 Any part spec may carry an opt-in `"finish": {"fillet"|"chamfer": r, "edges"?: selector}` post-op (`builder._apply_finish`, default ALL edges, fail-soft — keeps the part if the radius is impossible). Stable *named* edge selection across regen is still research (R1.a).
 
+`joints.derive_ports(wp)` DERIVES oriented ports from a *built* solid (top/bottom/center/bore_axis, via face queries + OCC cylinder-axis) — geometry-grounded interfaces interchangeable with authored joints. It's a snapshot; making derived ports regen-stable like authored joint names is research (R2.a).
+
 Mates (`mates.py` + builder dispatch): `coincident`/`rigid` (lands B's frame exactly on A's — `rigid`
 signals an oriented joint mate and aligns axes), `contact` (drops B so its bbox bottom rests on A's plane —
 the placement floor/crown-seat, generalized), `mesh` (two

@@ -33,7 +33,11 @@ Every `CkTask.requires = "sequential-thinking + atlas-update"`.
 | E8 | lifecycle-and-packaging | parametric edit/re-solve, versioning, CI, subpackage reorg |
 | E9 | rule-validation | standards/code/design-rule checks fed by the spec compiler |
 
-31 tasks, 13 research items (see atlas / `tools/seed_backlog.py`). **Next up (`status=todo`):** T1.1 fillet/chamfer op · T2.1 geometric port-derivation. (✅ done: T3.2 spatial interference prefilter, T8.4 CI runner.)
+31 tasks, 13 research items (see atlas / `tools/seed_backlog.py`). **✅ done so far:** T3.2 spatial
+interference prefilter · T8.4 CI runner · T1.1 fillet/chamfer finish · T2.1 geometric port-derivation.
+**Suggested next (promote from backlog):** T4.1 CG+inertia roll-up · T7.3 BOM document export · T1.5
+parametric housing part · T6.1 library loader (well-defined, unblocked). Query `status='todo'` for the live
+queue; blocked items wait on their `BLOCKED_BY` research.
 
 ## CI / hooks
 `tools/ci.sh` runs the suite (exit 0 = green). Enable the pre-push gate once: `git config core.hooksPath .githooks` (bypass with `git push --no-verify`).
