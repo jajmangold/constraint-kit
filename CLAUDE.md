@@ -93,6 +93,9 @@ image only when changing `cadkit/Dockerfile` (deps).
   STEP+GLB + rolled-up BOM/mass; persisted as a `CkAssemblyTree` atlas breadcrumb
 - `POST /design {requirements,relations?,asserts?,defs,root,name?}` — **[Phase B]** top-down parametric
   design: requirements → derived params (provenance) → substituted into defs → build; returns the param table
+- `POST /design/reedit {…design…,edits}` — **[T8.2]** incremental re-solve: apply `edits` (changed
+  requirement values), report which defs are dirty vs clean, and rebuild regenerating ONLY the affected
+  subtree's parts (rest reuse the T3.1 cache); returns dependency report + rebuild summary. Warm via `/design` first
 - `POST /assembly/bom {defs,root,fmt?,name?}` — export a Bill of Materials (md/csv): qty + mass per type + totals + CG
 - `POST /assembly/interference {defs,root,tol_volume?}` — **[Phase C]** clash check (bbox prefilter + exact OCC)
 - `POST /assembly/explode {defs,root,factor?,axis?,name?}` — **[E7/T7.1]** exploded view for docs: rank world
@@ -120,6 +123,14 @@ fixpoint + cycle detection, and **provenance** (each derived value records its r
 `assembly.build_design`/`design_and_export` substitute params into the defs — any `"=expr"` string (e.g.
 `"length":"=track"`, `"at":[0,0,"=track"]`) becomes a number — so changing a requirement changes the
 geometry deterministically. Requirement `asserts` (e.g. `"clearance > 0"`) refuse to build an invalid design.
+
+**Incremental re-solve (`assembly.reedit_design`, T8.2):** changing a requirement re-solves WITHOUT a full
+rebuild. `parameters.param_dependencies` collects the `=expr` free-names each def's geometry reads;
+`changed_values` diffs the old/new parameter tables; `affected_defs` marks a def `param_dirty` if it reads a
+changed value and `subtree_dirty` if it or any child is — so the report names exactly the dirty vs clean
+subtrees. The rebuild then regenerates ONLY the affected subtree's parts (clean subtrees have identical
+params → T3.1 part-cache hits), and reports `parts_generated`/`parts_reused`. Proven equal to a from-scratch
+design (`test_reedit_rebuilds_only_affected_subtree`). `reedit_and_export` / `POST /design/reedit`.
 
 **Interference validation (`validate.py`, Phase C):** flattens the nested assembly to world-placed parts at
 **PART granularity** (one whole shape per leaf — a part's intended internal contact like a gear mesh is NOT

@@ -309,6 +309,28 @@ def design(req: DesignReq) -> dict:
     return res
 
 
+class ReeditReq(DesignReq):
+    edits: dict
+
+
+@app.post("/design/reedit")
+def design_reedit(req: ReeditReq) -> dict:
+    """PARAMETRIC EDIT / incremental re-solve (T8.2): apply `edits` (changed requirement values) to a
+    baseline design, report exactly which defs the change affects (dirty vs clean subtrees), and rebuild —
+    regenerating ONLY the affected subtree's parts (the rest reuse the T3.1 part cache). Returns the
+    dependency report + rebuild summary (parts_generated vs parts_reused) + BOM/mass + artifacts, or a
+    structured ok:false if the edited design is invalid. Warm the cache by building the baseline first."""
+    name = req.name or req.root
+    try:
+        res = assembly.reedit_and_export(req.requirements, req.relations, req.defs, req.root,
+                                         req.edits, os.path.join(OUTPUT_DIR, name), req.asserts)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"reedit failed: {exc}") from exc
+    if res.get("ok"):
+        res["stored"] = store.record_assembly_tree(res)
+    return res
+
+
 class SynthPlanetaryReq(BaseModel):
     target_ratio: float
     n_planets: int = 3

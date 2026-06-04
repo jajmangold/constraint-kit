@@ -161,6 +161,75 @@ def build_design(requirements: dict, relations: list[dict] | None, defs: dict, r
             "tree": build_tree(root, defs2)}
 
 
+def affected_defs(defs: dict, root: str, changed: set) -> dict:
+    """Which defs (reachable from `root`) a set of changed parameter values touches. A def is `param_dirty`
+    if any `=expr` in its OWN dict (its parts' params, its mates, its ports, and the placement of its
+    children) references a changed value; `subtree_dirty` if it is param_dirty or any child ref is
+    subtree_dirty. Clean subtrees need no rebuild — their identical params hit the T3.1 part cache.
+    Returns {def_name: {deps, param_dirty, subtree_dirty}}."""
+    out: dict = {}
+    memo: dict = {}
+
+    def visit(name: str, stack: tuple = ()) -> bool:
+        if name in memo:
+            return memo[name]
+        if name not in defs or name in stack:     # unknown/cyclic -> build_tree raises; don't recurse
+            return False
+        node = defs[name]
+        deps = parameters.param_dependencies(
+            {k: node.get(k) for k in ("parts", "mates", "ports", "children")})
+        param_dirty = bool(deps & changed)
+        subtree_dirty = param_dirty
+        for child in node.get("children", []):
+            subtree_dirty = visit(child["ref"], (*stack, name)) or subtree_dirty
+        out[name] = {"deps": sorted(deps), "param_dirty": param_dirty, "subtree_dirty": subtree_dirty}
+        memo[name] = subtree_dirty
+        return subtree_dirty
+
+    visit(root)
+    return out
+
+
+def reedit_design(requirements: dict, relations: list[dict] | None, defs: dict, root: str,
+                  edits: dict, asserts: list[dict] | None = None) -> dict:
+    """PARAMETRIC EDIT / incremental re-solve (T8.2): apply `edits` (changed requirement values) on top of
+    a baseline design, recompute the parameter table, and identify exactly which defs the change affects —
+    so a rebuild regenerates ONLY the affected subtree's parts and reuses the rest from the T3.1 part cache
+    (the caller having already built the baseline warms it). Returns the dependency report + the rebuilt
+    tree + a rebuild summary (parts_generated vs parts_reused over the rebuild). Refuses (ok:false) if the
+    edited design violates an assertion or fails to resolve — never a half-built result."""
+    base = parameters.resolve(requirements, relations or [])
+    new = parameters.resolve({**requirements, **(edits or {})}, relations or [])
+    changed = parameters.changed_values(base["values"], new["values"])
+    affected = affected_defs(defs, root, changed)
+    common = {"changed_requirements": sorted(edits or {}), "changed_values": sorted(changed),
+              "affected": affected,
+              "dirty_defs": sorted(n for n, v in affected.items() if v["subtree_dirty"]),
+              "clean_defs": sorted(n for n, v in affected.items() if not v["subtree_dirty"]),
+              "parameters": new["params"]}
+    violations = parameters.check_asserts(asserts, new["values"])
+    if not new["ok"] or violations:
+        return {"ok": False, **common, "warnings": new["warnings"] + violations, "tree": None}
+    defs2 = parameters.substitute(defs, new["values"])
+    before = builder.cache_stats()
+    tree = build_tree(root, defs2)
+    after = builder.cache_stats()
+    return {"ok": True, **common, "warnings": [],
+            "rebuild": {"parts_generated": after["misses"] - before["misses"],
+                        "parts_reused": after["hits"] - before["hits"]},
+            "tree": tree}
+
+
+def reedit_and_export(requirements: dict, relations: list[dict] | None, defs: dict, root: str,
+                      edits: dict, out_base: str, asserts: list[dict] | None = None) -> dict:
+    """reedit_design + one combined STEP+GLB export of the re-solved tree (or a structured ok:false)."""
+    d = reedit_design(requirements, relations, defs, root, edits, asserts)
+    if not d["ok"] or d["tree"] is None:
+        return {k: v for k, v in d.items() if k != "tree"}
+    exported = builder.export(d["tree"]["cq_assembly"], out_base)
+    return {k: v for k, v in d.items() if k != "tree"} | {**report(d["tree"]), **exported}
+
+
 def design_and_export(requirements: dict, relations: list[dict] | None, defs: dict, root: str,
                       out_base: str, asserts: list[dict] | None = None) -> dict:
     """build_design + one combined STEP+GLB export. Returns report + parameter table + artifacts, or a

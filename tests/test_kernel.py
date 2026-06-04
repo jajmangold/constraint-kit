@@ -1027,6 +1027,43 @@ def test_design_refuses_requirement_violation():
     assert any("positive" in w for w in d["warnings"])     # refuses to build an invalid design
 
 
+@test
+def test_reedit_rebuilds_only_affected_subtree():
+    """T8.2: a requirement edit re-solves incrementally — the dependency analysis flags exactly the
+    affected defs, and the rebuild regenerates ONLY the affected subtree's parts (the rest reuse the T3.1
+    part cache). The incremental result is identical to a full from-scratch design. Geometry/counters are
+    truth, not the VLM."""
+    from constraint_kit import assembly, builder, parameters
+    defs = {
+        "blockA": {"parts": [{"id": "a", "type": "spacer", "params": {"outer_d": 20, "bore_d": 0,
+                                                                      "height": "=ha"}}],
+                   "ports": {"p": {"origin": [0, 0, 0]}}},
+        "blockB": {"parts": [{"id": "b", "type": "spacer", "params": {"outer_d": 20, "bore_d": 0,
+                                                                      "height": "=hb"}}],
+                   "ports": {"p": {"origin": [0, 0, 0]}}},
+        "rig": {"children": [{"instance": "A", "ref": "blockA", "place": {"port": "p", "at": [0, 0, 0]}},
+                             {"instance": "B", "ref": "blockB", "place": {"port": "p", "at": [0, 0, 50]}}]},
+    }
+    reqs = {"ha": 10, "hb": 12}
+    # param-level dependency analysis is exact
+    assert parameters.param_dependencies(defs["blockA"]) == {"ha"}
+    assert parameters.changed_values({"ha": 10, "hb": 12}, {"ha": 20, "hb": 12}) == {"ha"}
+
+    builder.clear_cache()
+    assert assembly.build_design(reqs, [], defs, "rig")["ok"]      # baseline warms the part cache
+
+    r = assembly.reedit_design(reqs, [], defs, "rig", {"ha": 20})  # edit only ha
+    assert r["ok"]
+    assert r["changed_values"] == ["ha"]
+    assert set(r["dirty_defs"]) == {"blockA", "rig"}              # blockA changed + its parent re-places
+    assert r["clean_defs"] == ["blockB"]                         # B subtree untouched
+    assert r["rebuild"]["parts_generated"] == 1                  # only blockA's spacer regenerated
+    assert r["rebuild"]["parts_reused"] == 1                     # blockB's spacer reused from cache (T3.1)
+
+    full = assembly.build_design({"ha": 20, "hb": 12}, [], defs, "rig")   # from scratch
+    approx(r["tree"]["mass_g"], full["tree"]["mass_g"])          # incremental == full
+
+
 # ---- interference / clash validation (Phase C) ---------------------------------------------------
 @test
 def test_interference_detects_overlap():

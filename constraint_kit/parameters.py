@@ -123,6 +123,30 @@ def substitute(obj, values: dict):
     return obj
 
 
+def param_dependencies(obj) -> set:
+    """The set of parameter names an object's geometry depends on: every `=expr` string anywhere inside it
+    (recursively) contributes its free names. Used by the incremental re-solve (T8.2) to decide which defs a
+    requirement change actually affects. Bad expressions are skipped (they surface as build-time warnings)."""
+    deps: set = set()
+    if isinstance(obj, dict):
+        for v in obj.values():
+            deps |= param_dependencies(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            deps |= param_dependencies(v)
+    elif isinstance(obj, str) and obj.startswith("="):
+        try:
+            deps |= _free_names(obj[1:])
+        except SyntaxError:
+            pass
+    return deps
+
+
+def changed_values(old: dict, new: dict) -> set:
+    """Names whose resolved value differs between two parameter tables (added/removed count as changed)."""
+    return {n for n in set(old) | set(new) if old.get(n) != new.get(n)}
+
+
 def check_asserts(asserts: list[dict] | None, values: dict) -> list[str]:
     """Evaluate requirement constraints; return failure messages ([] = all hold)."""
     failures = []
