@@ -1266,6 +1266,23 @@ def test_build_cache():
     assert len(bolt_xy) == 4                                # 4 distinct positions -> no aliasing
 
 
+@test
+def test_scale_grid_interference():
+    """T3.4: build a 16-part grid; interference completes clean and the spatial grid prunes pairs."""
+    from constraint_kit import assembly, validate
+    k, sp = 4, 40.0
+    defs = {"cell": {"parts": [{"id": "s", "type": "spacer",
+                               "params": {"outer_d": 20, "bore_d": 8, "height": 10}}],
+                     "ports": {"p": {"origin": [0, 0, 0]}}},
+            "grid": {"children": [{"instance": f"c{i}_{j}", "ref": "cell",
+                                   "place": {"port": "p", "at": [i * sp, j * sp, 0]}}
+                                  for i in range(k) for j in range(k)]}}
+    res = assembly.build_tree("grid", defs)
+    assert res["part_count"] == 16
+    inter = validate.interference(res["cq_assembly"])
+    assert inter["ok"] and inter["pairs_candidate"] < inter["pairs_total"]   # spread grid -> pruned
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:

@@ -270,6 +270,21 @@ def record_assembly_tree(res: dict) -> bool:
     return True
 
 
+def record_benchmark(b: dict) -> bool:
+    """Record a scale-benchmark run (T3.4): part count + build/interference timings + pair pruning.
+    Fail-soft."""
+    d = _connect()
+    if d is None:
+        return False
+    with d.session() as s:
+        s.run(
+            """CREATE (b:CkBenchmark {project:$project, n_parts:$n, build_s:$bs, interference_s:$isec,
+                   pairs_total:$pt, pairs_candidate:$pc, created:timestamp()})""",
+            project=_PROJECT, n=b.get("n_parts"), bs=b.get("build_s"),
+            isec=b.get("interference_s"), pt=b.get("pairs_total"), pc=b.get("pairs_candidate"))
+    return True
+
+
 def record_spec_resolution(result: dict) -> bool:
     """Work-tracking breadcrumb ONLY (the spec DATA lives in SQLite, never atlas). Records that a spec
     resolution happened: query/kind/ok/cache_hit/fact count + top confidence. Fail-soft."""
