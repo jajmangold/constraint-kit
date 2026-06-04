@@ -263,6 +263,27 @@ def adapter(bottom_w: float = 40.0, bottom_d: float = 40.0, top_d: float = 24.0,
 
 
 # registry the planner/builder dispatch on; extend here as parts are added.
+def panel(width: float = 100.0, depth: float = 100.0, height: float = 18.0):
+    """A plain rectangular panel/board/member (box) — the architectural primitive (stud, wall plate, floor
+    slab, sheathing). X,Y centered on the origin; Z in [0,height] so members stack/seat cleanly.
+
+    Anchors (oriented): 'base' (−Z underside), 'top' (+Z), 'center', and the four side-face centers
+    'x_pos'/'x_neg'/'y_pos'/'y_neg' (outward normals) for butting members together."""
+    from .joints import frame
+    w, d, h = width, depth, height
+    wp = cq.Workplane("XY").box(w, d, h, centered=(True, True, False))   # x,y centered; z in [0,h]
+    anchors = {
+        "base": frame((0, 0, 0), z_axis=(0, 0, -1)),
+        "top": frame((0, 0, h), z_axis=(0, 0, 1)),
+        "center": _loc(0, 0, h / 2.0),
+        "x_pos": frame((w / 2.0, 0, h / 2.0), z_axis=(1, 0, 0)),
+        "x_neg": frame((-w / 2.0, 0, h / 2.0), z_axis=(-1, 0, 0)),
+        "y_pos": frame((0, d / 2.0, h / 2.0), z_axis=(0, 1, 0)),
+        "y_neg": frame((0, -d / 2.0, h / 2.0), z_axis=(0, -1, 0)),
+    }
+    return wp, anchors
+
+
 def sheet_bracket(thickness: float = 2.0, base_length: float = 40.0, flange_length: float = 25.0,
                   width: float = 30.0, bend_radius: float = 0.0):
     """A constant-thickness sheet-metal L-bracket — one 90° flange/bend (T1.4). The base leg lies flat
@@ -298,6 +319,7 @@ def sheet_bracket(thickness: float = 2.0, base_length: float = 40.0, flange_leng
 
 PART_GENS = {
     "plate": plate,
+    "panel": panel,
     "sheet_bracket": sheet_bracket,
     "housing": housing,
     "adapter": adapter,

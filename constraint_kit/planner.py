@@ -24,7 +24,7 @@ SPEC_SCHEMA = {
                 "required": ["id", "type", "params", "material"],
                 "properties": {
                     "id": {"type": "string"},
-                    "type": {"enum": ["plate", "housing", "adapter", "sheet_bracket", "spur_gear",
+                    "type": {"enum": ["plate", "panel", "housing", "adapter", "sheet_bracket", "spur_gear",
                                       "ring_gear", "planetary_gearset",
                                       "spacer", "shaft", "four_bar", "bolt", "nut", "washer", "bearing",
                                       "extrusion", "ball_bearing", "screw", "threaded_rod",
@@ -88,6 +88,8 @@ Real catalog parts (build123d/bd_warehouse) — prefer these when the user names
 - extrusion also has slot-mount joints "slot_xp/xn/yp/yn" on its four faces (a block's "mount" coincides
     with one of these to bolt onto the rail).
 
+- panel: width, depth, height. A plain rectangular board/member/box (stud, wall plate, floor slab,
+    sheathing). anchors: "base","top","center","x_pos","x_neg","y_pos","y_neg" (side-face centers).
 - sheet_bracket: thickness, base_length, flange_length, width, bend_radius. A constant-thickness sheet-metal
     L-bracket (one 90° bend). anchors: "base","mount" (base top),"flange_end","flange_face","bend".
 - shaft: diameter, length. A round shaft along +Z. anchors: "base","top","mid", and "key" (off-axis).

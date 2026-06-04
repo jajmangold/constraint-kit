@@ -1619,6 +1619,24 @@ def test_library_loader():
     assert library.library_meta("automotive")["version"] == "0.1"
 
 
+@test
+def test_architectural_library():
+    """T6.3: the architectural library loads and a framed `room` (floor + 4 stud walls) builds through the
+    kernel — 25 panel members, depth 3 (room->wall->member), mass rolls up, all panels placed."""
+    from constraint_kit import assembly, library
+    assert "architectural" in library.list_libraries()
+    defs = library.load_library("architectural")
+    assert {"stud", "wall_plate", "wall", "floor", "room"} <= set(defs)
+    wall = assembly.build_tree("wall", defs)
+    assert wall["bom"]["panel"] == 6                         # 2 plates + 4 studs
+    room = assembly.build_tree("room", defs)
+    assert room["bom"]["panel"] == 25                        # floor + 4 walls x 6
+    assert room["depth"] == 3 and room["mass_g"] > 0
+    # the 4 walls + floor span the room footprint (rotated side walls reach ±600 in both X and Y)
+    bb = room["cq_assembly"].toCompound().BoundingBox()
+    assert bb.xlen > 1100 and bb.ylen > 1100 and bb.zlen > 2300
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:

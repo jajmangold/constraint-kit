@@ -1,0 +1,44 @@
+{
+  "version": "0.1",
+  "description": "Architectural starter defs (T6.3) — stud/plate/wall/floor/room composed from `panel` members (light timber framing, mm). A 1200x1200 framed room: a floor slab + 4 stud walls.",
+  "defs": {
+    "stud": {
+      "parts": [
+        {"id": "s", "type": "panel", "material": "pla", "params": {"width": 38, "depth": 89, "height": 2324}}
+      ],
+      "ports": {"base": {"origin": [0, 0, 0]}}
+    },
+    "wall_plate": {
+      "parts": [
+        {"id": "p", "type": "panel", "material": "pla", "params": {"width": 1200, "depth": 89, "height": 38}}
+      ],
+      "ports": {"base": {"origin": [0, 0, 0]}}
+    },
+    "wall": {
+      "children": [
+        {"instance": "bottom_plate", "ref": "wall_plate", "place": {"port": "base", "at": [0, 0, 0]}},
+        {"instance": "top_plate", "ref": "wall_plate", "place": {"port": "base", "at": [0, 0, 2362]}},
+        {"instance": "stud0", "ref": "stud", "place": {"port": "base", "at": [-550, 0, 38]}},
+        {"instance": "stud1", "ref": "stud", "place": {"port": "base", "at": [-180, 0, 38]}},
+        {"instance": "stud2", "ref": "stud", "place": {"port": "base", "at": [180, 0, 38]}},
+        {"instance": "stud3", "ref": "stud", "place": {"port": "base", "at": [550, 0, 38]}}
+      ],
+      "ports": {"base": {"origin": [0, 0, 0]}}
+    },
+    "floor": {
+      "parts": [
+        {"id": "slab", "type": "panel", "material": "pla", "params": {"width": 1300, "depth": 1300, "height": 18}}
+      ],
+      "ports": {"top": {"origin": [0, 0, 18]}}
+    },
+    "room": {
+      "children": [
+        {"instance": "floor", "ref": "floor", "place": {"port": "top", "at": [0, 0, 18]}},
+        {"instance": "wall_front", "ref": "wall", "place": {"port": "base", "at": [0, -600, 18]}},
+        {"instance": "wall_back", "ref": "wall", "place": {"port": "base", "at": [0, 600, 18]}},
+        {"instance": "wall_left", "ref": "wall", "place": {"port": "base", "at": [-600, 0, 18], "x_axis": [0, 1, 0]}},
+        {"instance": "wall_right", "ref": "wall", "place": {"port": "base", "at": [600, 0, 18], "x_axis": [0, 1, 0]}}
+      ]
+    }
+  }
+}
