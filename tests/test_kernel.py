@@ -1412,6 +1412,15 @@ def test_mate_intent_resolves_canonical_seat():
     # synonyms normalize to the same canonical intent
     assert mate_intent.canonical_intent("stack") == "seat_on"
     assert mate_intent.canonical_intent("Place On") == "seat_on"
+    # T2.4: AUTHORED seat anchor wins over a derived one. A planetary_gearset authors 'base' (its true
+    # seat); derive_ports also offers 'bottom' which sits earlier in the seat_on candidate list. The
+    # resolver must pick the authored 'base', not the derived 'bottom' (the capstone mis-seat bug).
+    gp = _mkparts([("plate", "plate", {}),
+                   ("pg", "planetary_gearset", {"module": 1, "sun_teeth": 12, "planet_teeth": 18,
+                                                "width": 8, "n_planets": 3})])
+    assert "base" in gp["pg"]["anchors"] and "bottom" not in gp["pg"]["anchors"]   # base authored, bottom derived
+    rg = mate_intent.resolve_intent(gp, {"a": "plate", "b": "pg", "intent": "seat_on"})
+    assert rg["b_joint"] == "base"
 
 
 @test

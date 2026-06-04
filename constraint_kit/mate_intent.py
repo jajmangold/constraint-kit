@@ -66,7 +66,15 @@ def available_frames(part: dict) -> dict:
     return frames
 
 
-def _pick(candidates: list[str], frames: dict, part_id: str, side: str, intent: str) -> str:
+def _pick(candidates: list[str], frames: dict, part_id: str, side: str, intent: str,
+          authored: set | None = None) -> str:
+    """First candidate present on the part. AUTHORED frames win over geometry-DERIVED ones (T2.4): a part
+    whose intended seat is an authored anchor (e.g. a gearset's `base`) must not be pre-empted by a derived
+    `bottom` that merely sits earlier in the candidate list. So we scan authored frames first, then all."""
+    if authored:
+        for name in candidates:
+            if name in authored:
+                return name
     for name in candidates:
         if name in frames:
             return name
@@ -93,8 +101,10 @@ def resolve_intent(parts: dict, m: dict) -> dict:
     if canon == "fasten" and m.get("hole_index") is not None:
         a_cands = [f"bolt{int(m['hole_index'])}"] + a_cands
 
-    a_joint = m.get("a_joint") or _pick(a_cands, a_frames, a, "a", canon)
-    b_joint = m.get("b_joint") or _pick(b_cands, b_frames, b, "b", canon)
+    a_auth = {k for k in parts[a]["anchors"] if not k.startswith("_")}
+    b_auth = {k for k in parts[b]["anchors"] if not k.startswith("_")}
+    a_joint = m.get("a_joint") or _pick(a_cands, a_frames, a, "a", canon, a_auth)
+    b_joint = m.get("b_joint") or _pick(b_cands, b_frames, b, "b", canon, b_auth)
 
     # make any DERIVED frame the resolver chose visible to the frame-based solver
     for pid, joint, frames in ((a, a_joint, a_frames), (b, b_joint, b_frames)):
