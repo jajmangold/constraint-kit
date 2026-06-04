@@ -306,6 +306,7 @@ def design(req: DesignReq) -> dict:
         raise HTTPException(400, f"design failed: {exc}") from exc
     if res.get("ok"):
         res["stored"] = store.record_assembly_tree(res)
+        res["version_id"] = store.record_design_version(res)   # T8.1: version the design (params + git SHA)
     return res
 
 
@@ -328,7 +329,14 @@ def design_reedit(req: ReeditReq) -> dict:
         raise HTTPException(400, f"reedit failed: {exc}") from exc
     if res.get("ok"):
         res["stored"] = store.record_assembly_tree(res)
+        res["version_id"] = store.record_design_version(res)   # T8.1: edits create a new linked version
     return res
+
+
+@app.get("/design/versions")
+def design_versions(name: str, limit: int = 20) -> dict:
+    """T8.1: list the recorded versions of a design (CkDesignVersion: params + git SHA, most recent first)."""
+    return {"name": name, "versions": store.design_versions(name, limit)}
 
 
 class SynthPlanetaryReq(BaseModel):

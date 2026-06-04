@@ -589,6 +589,38 @@ def test_store_roundtrip_or_failsoft():
     assert any(m["type"] == "coincident" for m in got["mates"])
 
 
+@test
+def test_design_versioning():
+    """T8.1: a design's version id is a stable hash of its parameter VALUES (idempotent; a param edit -> a
+    new id), and versions persist as CkDesignVersion (params + git SHA) linked from the design's tree."""
+    from constraint_kit import assembly, store
+    # deterministic id — pure, no DB needed
+    assert store.design_version_id("w", {"h": 10}) == store.design_version_id("w", {"h": 10})
+    assert store.design_version_id("w", {"h": 10}) != store.design_version_id("w", {"h": 20})
+    assert store.design_version_id("w", {"h": 10}).startswith("dv_w_")
+
+    if not store.enabled():                              # fail-soft contract
+        assert store.record_design_version({"name": "w", "parameters": {}}) is None
+        assert store.design_versions("w") == []
+        return
+
+    import uuid
+    name = f"vertest_{uuid.uuid4().hex[:8]}"
+    defs = {"part": {"parts": [{"id": "s", "type": "spacer",
+                               "params": {"outer_d": 20, "bore_d": 0, "height": "=h"}}], "ports": {}}}
+    res10 = {**assembly.report(assembly.build_design({"h": 10}, [], defs, "part")["tree"]),
+             "name": name, "parameters": assembly.build_design({"h": 10}, [], defs, "part")["parameters"]}
+    res20 = {**assembly.report(assembly.build_design({"h": 20}, [], defs, "part")["tree"]),
+             "name": name, "parameters": assembly.build_design({"h": 20}, [], defs, "part")["parameters"]}
+    id10 = store.record_design_version(res10, git_sha="deadbeef")
+    id20 = store.record_design_version(res20, git_sha="deadbeef")
+    assert id10 and id20 and id10 != id20               # the edit produced a distinct version
+    assert store.record_design_version(res10, git_sha="deadbeef") == id10   # idempotent re-record
+    vs = store.design_versions(name)
+    assert {id10, id20} <= {v["id"] for v in vs}         # both linked to the design
+    assert all(v["git_sha"] == "deadbeef" for v in vs if v["id"] in {id10, id20})
+
+
 # ---- spec compiler (LangGraph + SQLite + SearXNG/VLM, all mocked offline) -------------------------
 def _isolate_spec_db():
     import os

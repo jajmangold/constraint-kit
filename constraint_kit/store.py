@@ -270,6 +270,70 @@ def record_assembly_tree(res: dict) -> bool:
     return True
 
 
+def _git_sha() -> str | None:
+    """Current repo commit, for design provenance (T8.1). Prefers env CK_GIT_SHA (set at container start,
+    since only the package — not .git — is bind-mounted), else tries `git rev-parse`. Fail-soft -> None."""
+    sha = os.environ.get("CK_GIT_SHA")
+    if sha:
+        return sha.strip()
+    try:
+        import subprocess
+        here = os.path.dirname(os.path.abspath(__file__))
+        out = subprocess.run(["git", "-C", here, "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, timeout=5)
+        return out.stdout.strip() or None
+    except Exception:  # noqa: BLE001 -- provenance is best-effort
+        return None
+
+
+def design_version_id(name: str, values: dict) -> str:
+    """Stable version id for a design: name + a content hash of its resolved parameter VALUES. Identical
+    parameters dedupe to the same version (idempotent); any parameter edit yields a new version id."""
+    import hashlib
+    import json
+    digest = hashlib.sha256(json.dumps(values, sort_keys=True, default=str).encode()).hexdigest()[:12]
+    return f"dv_{name}_{digest}"
+
+
+def record_design_version(res: dict, git_sha: str | None = None) -> str | None:
+    """Persist a CkDesignVersion (T8.1): the resolved parameter table + git SHA, linked from the design's
+    CkAssemblyTree by a HAS_VERSION edge. The version id hashes the parameter VALUES, so re-recording the
+    same design is idempotent and a parametric edit creates a distinct, linked version. Returns the version
+    id (or None if storage is disabled). Fail-soft."""
+    import json
+    params = res.get("parameters") or {}
+    values = {k: v.get("value") if isinstance(v, dict) else v for k, v in params.items()}
+    name = res.get("name", "design")
+    vid = design_version_id(name, values)
+    d = _connect()
+    if d is None:
+        return None
+    sha = git_sha if git_sha is not None else _git_sha()
+    with d.session() as s:
+        s.run(
+            """MERGE (a:CkAssemblyTree {name:$name}) SET a.project=$project
+               MERGE (v:CkDesignVersion {id:$vid})
+                 SET v.project=$project, v.name=$name, v.git_sha=$sha, v.params=$params,
+                     v.mass_g=$mass, v.part_count=$pc, v.created=timestamp()
+               MERGE (a)-[:HAS_VERSION]->(v)""",
+            name=name, project=_PROJECT, vid=vid, sha=sha, params=json.dumps(values),
+            mass=res.get("mass_g"), pc=res.get("part_count"))
+    return vid
+
+
+def design_versions(name: str, limit: int = 20) -> list[dict]:
+    """All recorded versions of a design (most recent first). Fail-soft -> []."""
+    d = _connect()
+    if d is None:
+        return []
+    with d.session() as s:
+        return s.run(
+            """MATCH (a:CkAssemblyTree {name:$name})-[:HAS_VERSION]->(v:CkDesignVersion)
+               RETURN v.id AS id, v.git_sha AS git_sha, v.params AS params, v.mass_g AS mass_g,
+                      v.part_count AS part_count, v.created AS created
+               ORDER BY v.created DESC LIMIT $limit""", name=name, limit=int(limit)).data()
+
+
 def record_benchmark(b: dict) -> bool:
     """Record a scale-benchmark run (T3.4): part count + build/interference timings + pair pruning.
     Fail-soft."""

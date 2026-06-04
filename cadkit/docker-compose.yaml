@@ -40,6 +40,9 @@ services:
       SPEC_CACHE_DIR: "/srv/nvme-data/containers/constraint-kit/cadkit/output/spec_cache"
       QWEN_BASE_URL: "http://localhost:8000/v1"
       QWEN_MODEL: "qwen27b"
+      # design-version provenance (T8.1): .git is NOT bind-mounted, so pass the host SHA through.
+      # Set it at up-time: CK_GIT_SHA=$(git rev-parse --short HEAD) docker compose ... up -d
+      CK_GIT_SHA: "${CK_GIT_SHA:-}"
       HOME: /tmp
     command: >
       uvicorn constraint_kit.api:app --host 127.0.0.1 --port 8195

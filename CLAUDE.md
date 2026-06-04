@@ -64,7 +64,7 @@ drivers/showcase.py    # FULL-STACK demo: SMT-synthesize a planetary gearbox -> 
 ## Run
 
 ```bash
-HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose -f cadkit/docker-compose.yaml up -d --build
+CK_GIT_SHA=$(git rev-parse --short HEAD) HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose -f cadkit/docker-compose.yaml up -d --build   # CK_GIT_SHA optional (design-version provenance, T8.1)
 curl -s http://127.0.0.1:8195/health        # check "atlas": "connected:..."
 python3 drivers/phase0.py "a plate with a spacer and a 24-tooth gear stacked on its boss"
 ```
@@ -286,7 +286,10 @@ are **parameterized Cypher** (no injection). Model:
 (:CkPart2D)-[:MATE {a_joint,b_joint,offset,seq}]->(:CkPart2D)
 ```
 `CkAssembly` carries total_mass_g, bbox_size, glb/step/render_png paths, vlm_verdict; `CkLayout` carries
-sheet_size, dxf/png paths, vlm_verdict. Inspect:
+sheet_size, dxf/png paths, vlm_verdict. **Design versioning (T8.1):** `(:CkAssemblyTree)-[:HAS_VERSION]->
+(:CkDesignVersion {id, git_sha, params, mass_g, part_count})` — the version id hashes the resolved
+parameter values (idempotent; a parametric edit creates a new linked version). `store.record_design_version`
+/ `GET /design/versions?name=`. Inspect:
 `docker exec n4j_atlas cypher-shell -u neo4j -p microdrama-local "MATCH (a:CkAssembly) RETURN a"`.
 
 ## Hard-won gotchas
