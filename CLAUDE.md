@@ -196,8 +196,12 @@ need fact -> check SQLite cache -> (miss) SearXNG discovery -> rank -> fetch sou
 - **Fits are REAL when a nominal size is given** (`iso286.py`): `resolve_fit("H7/g6 at 20mm")` computes
   IT grades + fundamental deviations from the ISO 286 formulas (`i=0.45·∛D+0.001·D`, validated vs ISO
   286-2 tables) → exact hole/shaft deviations + min/max clearance in µm. Hole-basis H + shaft f/g/h/js/k/m/n are
-  exact (closed-form, ISO-table-validated); interference letters p–zc are TABULATED in ISO 286 (no closed form) → honest **class-only + warning** (never faked);
-  no nominal → class-only + "give a size" warning. 3 < D ≤ 500 mm.
+  exact (closed-form, ISO-table-validated). **Interference p/r/s [T5.1]** now resolve too: their fundamental
+  deviations (`iso286.INTERFERENCE_EI`) were extracted DETERMINISTICALLY from the authoritative ISO 286-2:2010
+  PDF (via `pdf_oxide` bbox reconstruction — `tools/extract_iso286_interference.py`, offline/repro), then
+  cross-validated against the closed-form m/n columns + known fit anchors (p6@20=+22, s6@20=+35, s6@60=+53);
+  the de-scrambling beat pypdf, which flattens these visual tables. Letters t/u/v… stay honest **class-only +
+  warning** (not yet extracted, never faked); no nominal → class-only + "give a size" warning. 3 < D ≤ 500 mm.
 - Env: `SPEC_SEARCH_URL`, `SPEC_DB_PATH`, `SPEC_CACHE_DIR`, `QWEN_BASE_URL`, `QWEN_MODEL` (compose).
 - **Wired into the builder (opt-in):** a build spec with `"resolve_specs": true` resolves each screw/
   thread part's nominal-diameter+pitch via the spec compiler and attaches `spec`

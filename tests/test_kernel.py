@@ -938,6 +938,30 @@ def test_spec_fit_exact_with_nominal():
 
 
 @test
+def test_iso286_interference_prs_from_table():
+    """T5.1: interference letters p/r/s now resolve to REAL deviations from the ISO 286-2 table (extracted
+    via pdf_oxide, cross-validated). Values must match known published fit anchors EXACTLY, the fundamental
+    deviation is grade-independent, and an unsupported letter stays honestly class-only."""
+    from constraint_kit import iso286, spec_compiler
+    # published ISO anchors: p6@20=+35/+22, r6@20=+41/+28, s6@20=+48/+35, s6@60=+72/+53 (50-65 fine range)
+    assert iso286.shaft_deviation("p", 6, 20) == (35, 22)
+    assert iso286.shaft_deviation("r", 6, 20) == (41, 28)
+    assert iso286.shaft_deviation("s", 6, 20) == (48, 35)
+    assert iso286.shaft_deviation("s", 6, 60) == (72, 53)        # finer size step than the IT grades
+    # ei is grade-independent (fundamental deviation); es = ei + IT(grade)
+    assert iso286.shaft_deviation("s", 7, 20)[1] == 35 and iso286.shaft_deviation("s", 6, 20)[1] == 35
+    # full fit: H7/s6@20 is an interference fit
+    f = iso286.fit("H", 7, "s", 6, 20)
+    assert f["fit_class"] == "interference" and f["max_clearance_um"] < 0
+    # honest boundary: t/u not yet extracted -> class-only (None), never fabricated
+    assert iso286.shaft_deviation("u", 6, 20) is None
+    # via the spec compiler (provenance on every value)
+    r = spec_compiler.resolve_fit("H7/p6 at 50mm", allow_live=False)
+    v = r["facts"][0]["values"]
+    assert v["fit_class"]["value"] == "interference" and all(val.get("source_ref") for val in v.values())
+
+
+@test
 def test_iso286_m_js_letters_and_more_bearings():
     from constraint_kit import iso286, spec_compiler
     assert iso286.shaft_deviation("m", 6, 20) == (21, 8)         # m6 = +21/+8 (ISO table)
@@ -951,17 +975,18 @@ def test_iso286_m_js_letters_and_more_bearings():
 
 @test
 def test_spec_fit_classonly_fallbacks():
-    """No nominal -> class only + warning; interference letter (p) -> class only + warning (never faked)."""
+    """No nominal -> class only + warning; a NOT-YET-EXTRACTED interference letter (u) -> class only +
+    warning (never faked). p/r/s now resolve exactly (T5.1), so the class-only path is for t/u/v…"""
     _isolate_spec_db()
     from constraint_kit import spec_compiler
     nofit = spec_compiler.resolve_fit("H7/g6", allow_live=False)              # no size
     f = nofit["facts"][0]
     assert f["values"]["fit_class"]["value"] == "clearance" and "min_clearance" not in f["values"]
     assert f["warnings"]                                                      # warns to give a size
-    p = spec_compiler.resolve_fit("H7/p6 at 20mm", allow_live=False)          # interference letter
-    pf = p["facts"][0]
-    assert pf["values"]["fit_class"]["value"] == "interference"
-    assert "min_clearance" not in pf["values"] and pf["warnings"]             # exact not fabricated
+    u = spec_compiler.resolve_fit("H7/u6 at 20mm", allow_live=False)          # not-yet-extracted letter
+    uf = u["facts"][0]
+    assert uf["values"]["fit_class"]["value"] == "interference"
+    assert "min_clearance" not in uf["values"] and uf["warnings"]             # exact not fabricated
 
 
 @test
