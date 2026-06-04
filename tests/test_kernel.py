@@ -1465,6 +1465,30 @@ def test_housing_part():
 
 
 @test
+def test_sheet_bracket():
+    """T1.4: a constant-thickness 90° sheet-metal L-bracket — exact L-volume (not a solid box), bbox = the
+    two leg lengths, oriented anchors (base −Z, flange face −X), and an optional fail-soft bend radius."""
+    from constraint_kit import builder
+    from constraint_kit.parts import sheet_bracket
+    t, a, b, w = 2.0, 40.0, 25.0, 30.0
+    wp, anchors = sheet_bracket(thickness=t, base_length=a, flange_length=b, width=w)
+    bb = wp.val().BoundingBox()
+    approx(bb.xlen, a, eps=1e-6); approx(bb.zlen, b, eps=1e-6); approx(bb.ylen, w, eps=1e-6)
+    approx(wp.val().Volume(), w * t * (a + b - t), eps=1e-3)     # L (corner counted once), NOT a*w*b box
+    assert wp.val().Volume() < a * w * b * 0.5                   # clearly an L, not a filled box
+    assert _axis_of(anchors["base"]) == (0.0, 0.0, -1.0)         # base seats face-down
+    assert _axis_of(anchors["flange_face"]) == (-1.0, 0.0, 0.0)  # flange outer face normal −X
+    assert "_bend_failed" not in anchors
+    # builds through the kernel with mass
+    _, rep = builder.build_assembly({"parts": [{"id": "br", "type": "sheet_bracket", "material": "steel",
+        "params": {"thickness": t, "base_length": a, "flange_length": b, "width": w}}], "mates": []})
+    assert rep[0]["mass_g"] > 0
+    # bend radius produces a still-valid solid (fillet applied, or fail-soft flagged — never broken)
+    wpb, ab = sheet_bracket(thickness=t, base_length=a, flange_length=b, width=w, bend_radius=3.0)
+    assert wpb.val().Volume() > 0 and wpb.val().isValid()
+
+
+@test
 def test_adapter_loft():
     """T1.3: a lofted square-to-round adapter is non-prismatic — round top face, square base face."""
     import math

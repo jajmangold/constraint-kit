@@ -24,7 +24,8 @@ SPEC_SCHEMA = {
                 "required": ["id", "type", "params", "material"],
                 "properties": {
                     "id": {"type": "string"},
-                    "type": {"enum": ["plate", "spur_gear", "ring_gear", "planetary_gearset",
+                    "type": {"enum": ["plate", "housing", "adapter", "sheet_bracket", "spur_gear",
+                                      "ring_gear", "planetary_gearset",
                                       "spacer", "shaft", "four_bar", "bolt", "nut", "washer", "bearing",
                                       "extrusion", "ball_bearing", "screw", "threaded_rod",
                                       "bearing_block", "sprocket", "flange", "pipe"]},
@@ -87,6 +88,8 @@ Real catalog parts (build123d/bd_warehouse) — prefer these when the user names
 - extrusion also has slot-mount joints "slot_xp/xn/yp/yn" on its four faces (a block's "mount" coincides
     with one of these to bolt onto the rail).
 
+- sheet_bracket: thickness, base_length, flange_length, width, bend_radius. A constant-thickness sheet-metal
+    L-bracket (one 90° bend). anchors: "base","mount" (base top),"flange_end","flange_face","bend".
 - shaft: diameter, length. A round shaft along +Z. anchors: "base","top","mid", and "key" (off-axis).
 - threaded_rod: major_diameter, pitch, length, or just `designation` (e.g. "M6x1") + length with
     resolve_specs — a REAL helical thread whose pitch comes from the resolved spec. anchors: "base","top","axis".

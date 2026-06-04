@@ -263,8 +263,42 @@ def adapter(bottom_w: float = 40.0, bottom_d: float = 40.0, top_d: float = 24.0,
 
 
 # registry the planner/builder dispatch on; extend here as parts are added.
+def sheet_bracket(thickness: float = 2.0, base_length: float = 40.0, flange_length: float = 25.0,
+                  width: float = 30.0, bend_radius: float = 0.0):
+    """A constant-thickness sheet-metal L-bracket — one 90° flange/bend (T1.4). The base leg lies flat
+    (z in [0,thickness], x in [0,base_length]); the flange rises +Z at the x=0 end (x in [0,thickness],
+    z in [0,flange_length]); both `width` deep in Y, centered. `bend_radius` (>0) rounds the inner concave
+    bend edge via a fillet — applied fail-soft (skipped + flagged if the geometry won't take it, R1.a), so
+    the sharp-bend core is always valid. Sharp-bend volume = width·thickness·(base_length+flange_length−thickness).
+
+    Anchors (oriented frames): 'base' (underside center, −Z), 'mount' (base top center, +Z),
+    'flange_end' (flange free-end top, +Z), 'flange_face' (flange outer face center, −X), 'bend' (inner corner)."""
+    from .joints import frame
+    t, a, b, w = thickness, base_length, flange_length, width
+    base = cq.Workplane("XY").box(a, w, t, centered=(False, True, False))     # x:0..a, z:0..t
+    flange = cq.Workplane("XY").box(t, w, b, centered=(False, True, False))   # x:0..t, z:0..b (rises +Z)
+    wp = base.union(flange)
+    bend_failed = False
+    if bend_radius and bend_radius > 0:
+        try:                                  # round the inner concave edge (parallel to Y at x=t, z=t)
+            wp = wp.edges(cq.NearestToPointSelector((t, 0.0, t))).fillet(bend_radius)
+        except Exception:  # noqa: BLE001 -- fragile edge fillet; keep the sharp solid
+            bend_failed = True
+    anchors = {
+        "base": frame((a / 2.0, 0, 0), z_axis=(0, 0, -1)),
+        "mount": frame((a / 2.0, 0, t), z_axis=(0, 0, 1)),
+        "flange_end": frame((t / 2.0, 0, b), z_axis=(0, 0, 1)),
+        "flange_face": frame((0, 0, b / 2.0), z_axis=(-1, 0, 0)),
+        "bend": frame((t, 0, t), z_axis=(0, 0, 1)),
+    }
+    if bend_failed:
+        anchors["_bend_failed"] = _loc()
+    return wp, anchors
+
+
 PART_GENS = {
     "plate": plate,
+    "sheet_bracket": sheet_bracket,
     "housing": housing,
     "adapter": adapter,
     "spur_gear": spur_gear,

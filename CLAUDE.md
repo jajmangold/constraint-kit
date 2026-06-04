@@ -213,6 +213,7 @@ Parts (`parts.py::PART_GENS`), each exposes **named anchor frames** (the rig-equ
   complete meshed sun+N-planets+ring (cq_gears), RAISES on an invalid set (`planetary.validate`)
 - `adapter(bottom_w,bottom_d,top_d,height)` → `base`,`top` — square-to-round loft transition/duct (non-prismatic, T1.3; `finish:{shell}` hollows it)
 - `housing(width,depth,height,wall,bore_d,bolt_d,bolt_circle,bolt_count,fillet)` → `base`,`top`,`bore_axis`,`bolt0..N` — open-top enclosure (filleted box, shelled, floor bore + mount holes; first 'rich' part, T1.5)
+- `sheet_bracket(thickness,base_length,flange_length,width,bend_radius)` → `base`,`mount`,`flange_end`,`flange_face`,`bend` — constant-thickness sheet-metal L-bracket, one 90° bend; `bend_radius` rounds the inner edge (fail-soft, T1.4)
 - `spacer(outer_d,bore_d,height)` → `bottom`,`top` (enables chained stacks plate→spacer→gear)
 - `shaft(diameter,length)` → `base`,`top`,`mid`,`key` (off-axis marker; mate into a bore via `revolute`)
 - `threaded_rod(major_diameter,pitch,length)` → `base`,`top`,`axis` — a REAL helical thread
