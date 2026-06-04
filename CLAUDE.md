@@ -41,6 +41,7 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   parameters.py        # TOP-DOWN design: requirements -> derived params (safe AST eval, provenance) [Phase B]
   massprops.py         # mass properties: exact CG + inertia tensor (OCC GProp, density-weighted) [T4.1]
   bom.py               # BOM document export (Markdown/CSV) from a build-tree roll-up [T7.3]
+  rules.py             # design-rule + strength checks [E9/T4.3]: engagement/fit/clearance, beam-bending, bolt-preload
   validate.py          # interference/clash check: bbox prefilter + exact OCC boolean (world solids) [Phase C]
   synthesis.py         # SMT design synthesis (Z3): discrete/mixed-int constraint solving -> design to a spec
   planner.py           # qwen27b, schema-enforced specs: plan() [3D] + plan_layout() [2D]
@@ -102,6 +103,10 @@ image only when changing `cadkit/Dockerfile` (deps).
   parts along `axis` (default +Z), offset each by rank·factor → one STEP+GLB of the separated assembly
 - `POST /synthesize/planetary {target_ratio,n_planets?,teeth_min?,teeth_max?,module?,ratio_tol?,objective?,build?}`
   — **SMT** design synthesis (Z3): solve a gearset to a ratio spec → optionally build the exact CAD; honest UNSAT
+- `POST /rules/{fastener_engagement,fit,clearance}` — **[E9]** design-rule checks (engagement/fit/min-gap)
+- `POST /rules/beam_bending {material,length_mm,width_mm,height_mm,load_n,safety_factor?}` · `POST /rules/bolt_preload
+  {size,prop_class?,applied_load_n?,preload_fraction?}` — **[T4.3]** closed-form strength checks (cantilever
+  stress+deflection vs yield/SF; bolt proof load + preload from ISO 898-1); honest `ok:null` for unknown material/size
 
 ## Hierarchical assemblies (`assembly.py`) — the scale foundation
 

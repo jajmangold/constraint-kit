@@ -273,6 +273,22 @@ class ClearanceReq(BaseModel):
     required: float = 0.5
 
 
+class BeamReq(BaseModel):
+    material: str
+    length_mm: float
+    width_mm: float
+    height_mm: float
+    load_n: float
+    safety_factor: float = 2.0
+
+
+class BoltLoadReq(BaseModel):
+    size: str
+    prop_class: str = "8.8"
+    applied_load_n: float = 0.0
+    preload_fraction: float = 0.75
+
+
 class ToleranceReq(BaseModel):
     dims: list
     as_clearance: bool = False
@@ -445,6 +461,20 @@ def rule_clearance(req: ClearanceReq) -> dict:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"clearance build failed: {exc}") from exc
     return rules.min_clearance(asm, req.required)
+
+
+@app.post("/rules/beam_bending")
+def rule_beam_bending(req: BeamReq) -> dict:
+    """E4/T4.3: cantilever beam max bending stress + tip deflection vs material yield over a safety factor."""
+    return rules.beam_bending(req.material, req.length_mm, req.width_mm, req.height_mm,
+                              req.load_n, req.safety_factor)
+
+
+@app.post("/rules/bolt_preload")
+def rule_bolt_preload(req: BoltLoadReq) -> dict:
+    """E4/T4.3: bolt proof load + recommended preload (ISO 898-1 Sp × tensile stress area); checks an
+    applied tensile load stays below proof."""
+    return rules.bolt_preload(req.size, req.prop_class, req.applied_load_n, req.preload_fraction)
 
 
 @app.post("/tolerance/stackup")

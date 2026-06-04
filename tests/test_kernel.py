@@ -1543,6 +1543,30 @@ def test_design_rules():
 
 
 @test
+def test_material_strength_checks():
+    """T4.3: cantilever bending stress/deflection and bolt proof load — validated against the closed-form
+    hand calc (geometry/physics is truth). Honest ok:None for unknown material/size."""
+    from constraint_kit import rules
+    # cantilever: P=100N, L=100mm, b=h=10mm, steel (yield 235). sigma = 6PL/(b h^2) = 60000/1000 = 60 MPa
+    r = rules.beam_bending("steel", length_mm=100, width_mm=10, height_mm=10, load_n=100, safety_factor=2.0)
+    approx(r["max_stress_mpa"], 60.0, eps=1e-2)
+    approx(r["allowable_mpa"], 117.5, eps=1e-2)                 # 235 / 2
+    assert r["ok"] is True
+    # I = b h^3/12 = 833.33 mm^4; delta = PL^3/(3 E I), E=210000 MPa -> 1e8 / (3*210000*833.33) = 0.190 mm
+    approx(r["deflection_mm"], 0.1905, eps=1e-3)
+    assert rules.beam_bending("steel", 100, 10, 10, 1000)["ok"] is False   # 600 MPa > 117.5 -> fails
+    assert rules.beam_bending("unobtanium", 100, 10, 10, 100)["ok"] is None  # honest unknown
+
+    # bolt: M8 class 8.8 -> As=36.6mm^2, Sp=600MPa -> proof load 21960N; preload 0.75x = 16470N
+    b = rules.bolt_preload("M8-1.25", "8.8", applied_load_n=10000)
+    approx(b["proof_load_n"], 21960.0, eps=1.0)
+    approx(b["recommended_preload_n"], 16470.0, eps=1.0)
+    assert b["ok"] is True                                      # 10000 < 21960
+    assert rules.bolt_preload("M8", "8.8", applied_load_n=25000)["ok"] is False   # 25000 > 21960
+    assert rules.bolt_preload("M99", "8.8")["ok"] is None       # honest unknown size
+
+
+@test
 def test_tolerance_stackup():
     """T4.2: a hole H7 − shaft g6 stack at 20mm reproduces the ISO 286 fit clearance exactly, and RSS is
     narrower than worst-case."""
