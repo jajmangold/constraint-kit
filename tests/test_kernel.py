@@ -1226,6 +1226,24 @@ def test_housing_part():
     assert any(abs(r - 10.0) < 0.5 for r in radii)           # the 20mm floor bore is present
 
 
+@test
+def test_adapter_loft():
+    """T1.3: a lofted square-to-round adapter is non-prismatic — round top face, square base face."""
+    import math
+    from constraint_kit import builder
+    from constraint_kit.parts import adapter
+    W, Dd, top_d, H = 40.0, 40.0, 24.0, 30.0
+    _, rep = builder.build_assembly({"parts": [{"id": "a", "type": "adapter",
+        "params": {"bottom_w": W, "bottom_d": Dd, "top_d": top_d, "height": H}}], "mates": []})
+    assert rep[0]["volume_mm3"] > 0
+    wp, anchors = adapter(bottom_w=W, bottom_d=Dd, top_d=top_d, height=H)
+    assert {"base", "top"} <= set(anchors)
+    bb = wp.val().BoundingBox()
+    approx(bb.zmax, H, eps=1e-3); approx(bb.zmin, 0.0, eps=1e-3)
+    approx(wp.faces(">Z").val().Area(), math.pi * (top_d / 2) ** 2, eps=1.0)   # round top
+    approx(wp.faces("<Z").val().Area(), W * Dd, eps=1.0)                        # square base
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:

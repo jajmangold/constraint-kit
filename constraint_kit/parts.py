@@ -252,10 +252,21 @@ def housing(width: float = 60.0, depth: float = 60.0, height: float = 40.0, wall
     return wp, anchors
 
 
+def adapter(bottom_w: float = 40.0, bottom_d: float = 40.0, top_d: float = 24.0,
+            height: float = 30.0):
+    """A square-to-round TRANSITION (T1.3) built by LOFTING a rectangular base to a circular top — a
+    non-prismatic part (duct/transition/reducer). Solid; `finish:{"shell": t}` makes it a hollow duct.
+    Rect base at z=0, circular top at z=height, centered in XY. Anchors: 'base', 'top'."""
+    wp = (cq.Workplane("XY").rect(bottom_w, bottom_d)
+          .workplane(offset=height).circle(top_d / 2.0).loft(combine=True))
+    return wp, {"base": _loc(0, 0, 0), "top": _loc(0, 0, height)}
+
+
 # registry the planner/builder dispatch on; extend here as parts are added.
 PART_GENS = {
     "plate": plate,
     "housing": housing,
+    "adapter": adapter,
     "spur_gear": spur_gear,
     "ring_gear": ring_gear,
     "planetary_gearset": planetary_gearset,
