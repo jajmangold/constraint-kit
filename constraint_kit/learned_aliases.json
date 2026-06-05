@@ -1,4 +1,6 @@
 {
   "kind": {},
-  "req": {}
+  "req": {
+    "shaft_diameter": "shank_d"
+  }
 }
