@@ -22,9 +22,10 @@ import cadquery as cq
 from . import mate_intent, mates
 from .parts import DENSITY_G_MM3, PART_GENS
 from .parts_bd import PART_GENS_BD
+from .vitamins import VITAMIN_GENS
 
-# native cadquery parts + build123d/bd_warehouse catalog parts share one dispatch table.
-ALL_PART_GENS = {**PART_GENS, **PART_GENS_BD}
+# native cadquery parts + build123d/bd_warehouse catalog parts + OpenSCAD 'vitamin' backend share one dispatch.
+ALL_PART_GENS = {**PART_GENS, **PART_GENS_BD, **VITAMIN_GENS}
 
 # Content-hash part-generation cache (T3.1). The cost is part generation (cq_gears, IsoThread); identical
 # (type, params) yields identical geometry, so we memoize it. Caveat: cadquery may mutate an object's .loc
