@@ -158,6 +158,14 @@ def reference_signature(part_type: str, params: dict) -> dict:
     return signature(wp)
 
 
+def program_signature(program: dict) -> dict:
+    """Compile a whole program (part OR assembly) and return its geometric signature — so a reference can
+    be an authored PROGRAM, not just a single part (lets us verify assemblies too)."""
+    built = compile_program(program)
+    assy = built[0] if isinstance(built, tuple) else built["cq_assembly"]
+    return signature(assy)
+
+
 def reference_volume(part_type: str, params: dict) -> float:
     """Ground-truth volume only (kept for callers that just want the scalar)."""
     return reference_signature(part_type, params)["volume"]

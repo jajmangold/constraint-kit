@@ -548,6 +548,20 @@ def dsl_check(req: DslCheckReq) -> dict:
     return dsl.check(req.program)
 
 
+@app.post("/dsl/signature")
+def dsl_signature(req: DslCheckReq) -> dict:
+    """Compile a program (part or assembly) and return its geometric-equivalence signature. Lets a caller
+    use an authored PROGRAM as a reference (e.g. to verify assemblies). {ok:false, diagnostics|reason} on
+    invalid/uncompilable programs."""
+    res = dsl.check(req.program)
+    if not res["ok"]:
+        return {"ok": False, "diagnostics": res["diagnostics"]}
+    try:
+        return {"ok": True, "signature": dsl.program_signature(req.program)}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "reason": f"compile-error: {type(exc).__name__}: {exc}"}
+
+
 @app.post("/dsl/verify")
 def dsl_verify(req: DslVerifyReq) -> dict:
     """Compile a program and verify its EXACT geometry volume against a known reference (corpus filter / RL
