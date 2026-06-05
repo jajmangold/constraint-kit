@@ -1559,6 +1559,16 @@ def test_intent_resolve_with_provenance():
     # honest decline: a kind no part expresses
     r4 = intent.resolve({"entities": [{"id": "x", "kind": "synchronizer", "requirements": {}}]})
     assert r4["declined"] and r4["unresolved"][0]["kind"] == "synchronizer"
+    # kind-name NORMALIZATION (gauntlet finding): descriptive LLM names for parts that EXIST must remap to
+    # the canonical generator kind (with original_kind recorded), not falsely decline — while genuine OOV
+    # still declines.
+    for descriptive, canon in [("2020_aluminum_extrusion", "extrusion"),
+                               ("pillow_block_bearing", "bearing_block"), ("weld_neck_flange", "flange")]:
+        rr = intent.resolve({"entities": [{"id": "e", "kind": descriptive, "requirements": {}}]})
+        assert not rr["declined"], f"{descriptive} should remap, not decline"
+        ent = rr["entities"][0]
+        assert ent["kind"] == canon and ent.get("original_kind") == descriptive
+    assert intent.resolve({"entities": [{"id": "h", "kind": "helical_gear", "requirements": {}}]})["declined"]
     # a resolved intent lowers to a valid, compilable DSL program (resolve -> to_program -> dsl.check)
     prog = intent.to_program(r)
     assert prog["parts"][0]["type"] == "spur_gear" and dsl.check(prog)["ok"]

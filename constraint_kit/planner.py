@@ -233,8 +233,13 @@ An intent lists ENTITIES (parts/subsystems) and INTERFACES (how they connect). F
   washer{outer_d,bore_d,thick}; nut{af,height,bore_d}; bolt{shank_d,length,head_d,head_h};
   panel{width,depth,height}; link{length,width,thickness}; housing{width,depth,height,wall,bore_d};
   sheet_bracket{thickness,base_length,flange_length,width}; bearing{outer_d,bore_d,width};
-  ring_gear{module,teeth,width,rim_width}; planetary_gearset{module,sun_teeth,planet_teeth,width,n_planets}.
-  For a standard part add "designation" (e.g. "M6x1").
+  ring_gear{module,teeth,width,rim_width}; planetary_gearset{module,sun_teeth,planet_teeth,width,n_planets};
+  extrusion{rail_size,length}; bearing_block{width,depth,height,bore_d,bolt_d,bolt_spacing};
+  ball_bearing{size}; screw{size,length}; sprocket{num_teeth,chain_pitch,thickness,bore_d};
+  flange{nps,flange_class,kind}; pipe{nps,length}.
+  Use these EXACT kind names: a V-slot rail is "extrusion" (NOT "2020_extrusion"); a pillow block is
+  "bearing_block" (NOT "pillow_block_bearing"); a pipe flange is "flange" (NOT "weld_neck_flange" — put the
+  type in params). For a standard part add "designation" (e.g. "M6x1").
 
 INTERFACES connect entities; relation in [seat_on, insert, fasten, mesh].
 

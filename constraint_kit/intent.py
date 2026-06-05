@@ -28,6 +28,37 @@ _QUANTITY_MAP = {
 }
 
 
+# common descriptive names the LLM uses -> the canonical generator kind. Measured from the gauntlet:
+# qwen says "pillow_block_bearing"/"2020_extrusion"/"weld_neck_flange" for parts that DO exist as
+# bearing_block/extrusion/flange — a naming gap, not a missing capability. Aliases catch the tricky ones
+# (where substring would mis-match, e.g. pillow_block_bearing must NOT become the simplified 'bearing').
+_KIND_ALIASES = {
+    "pillow_block": "bearing_block", "pillow_block_bearing": "bearing_block", "bearing_pillow_block": "bearing_block",
+    "aluminum_extrusion": "extrusion", "v_slot_extrusion": "extrusion", "vslot_extrusion": "extrusion",
+    "deep_groove_bearing": "ball_bearing", "deep_groove_ball_bearing": "ball_bearing",
+    "cap_screw": "screw", "socket_head_cap_screw": "screw", "machine_screw": "screw", "hex_screw": "screw",
+    "hex_bolt": "bolt", "cap_bolt": "bolt", "hex_head_bolt": "bolt",
+    "pipe_flange": "flange", "weld_neck_flange": "flange", "slip_on_flange": "flange", "blind_flange": "flange",
+    "chain_sprocket": "sprocket", "roller_chain_sprocket": "sprocket",
+}
+
+
+def _normalize_kind(kind):
+    """Map an LLM-stated `kind` to a canonical generator kind, or None if nothing expresses it. Exact match
+    first, then the alias table, then the longest part-gen name that appears as a substring (so
+    '2020_extrusion'->extrusion, 'weld_neck_flange'->flange) — but 'helical_gear'/'jaw_coupling' match
+    nothing and stay None (an honest decline). Records nothing here; the caller notes any remap."""
+    if not isinstance(kind, str):
+        return None
+    k = kind.strip().lower()
+    if k in ALL_PART_GENS:
+        return k
+    if k in _KIND_ALIASES:
+        return _KIND_ALIASES[k]
+    cands = [g for g in ALL_PART_GENS if g in k]          # part-gen name as a substring of the stated kind
+    return max(cands, key=len) if cands else None         # longest wins (extrusion over a shorter accidental hit)
+
+
 def _param_defaults(kind: str) -> dict:
     """{param: default} for a part kind, read straight from the generator signature — the defaults 'table'
     is the code itself, so it never drifts."""
@@ -50,10 +81,11 @@ def resolve(intent: dict) -> dict:
     out_entities, unresolved = [], []
     for i, e in enumerate(intent.get("entities", []) or []):
         eid = e.get("id", f"e{i}")
-        kind = e.get("kind")
-        if kind not in ALL_PART_GENS:
-            unresolved.append({"id": eid, "kind": kind, "reason": f"no part/subsystem expresses kind {kind!r}"})
-            out_entities.append({"id": eid, "kind": kind, "requirements": {}, "resolvable": False})
+        raw_kind = e.get("kind")
+        kind = _normalize_kind(raw_kind)                 # remap descriptive names to canonical generator kinds
+        if kind is None:
+            unresolved.append({"id": eid, "kind": raw_kind, "reason": f"no part/subsystem expresses kind {raw_kind!r}"})
+            out_entities.append({"id": eid, "kind": raw_kind, "requirements": {}, "resolvable": False})
             continue
         stated = e.get("requirements", {}) or {}
         defaults = _param_defaults(kind)
@@ -77,7 +109,10 @@ def resolve(intent: dict) -> dict:
                                      "provenance": "standard", "source_ref": val.get("source_ref")}
             except Exception:  # noqa: BLE001 -- standards fill is best-effort; defaults already hold
                 pass
-        out_entities.append({"id": eid, "kind": kind, "requirements": reqs, "resolvable": True})
+        entry = {"id": eid, "kind": kind, "requirements": reqs, "resolvable": True}
+        if kind != raw_kind:
+            entry["original_kind"] = raw_kind            # transparency: we remapped the LLM's descriptive name
+        out_entities.append(entry)
     return {"entities": out_entities, "interfaces": intent.get("interfaces", []) or [],
             "constraints": intent.get("constraints", []) or [], "unresolved": unresolved,
             "declined": bool(unresolved), "decline_reasons": [u["reason"] for u in unresolved]}
