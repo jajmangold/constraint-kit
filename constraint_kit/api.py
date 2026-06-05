@@ -569,8 +569,9 @@ def intent_design(req: IntentDesignReq) -> dict:
         raise HTTPException(502, f"planner (qwen) parse failed: {type(exc).__name__}: {exc}") from exc
     resolved = intent.resolve(parsed)
     out: dict = {"intent": parsed, "resolved": resolved}
-    if resolved["declined"]:
-        return {**out, "declined": True, "decline_reasons": resolved["decline_reasons"]}
+    variant = intent.variant_mismatch(req.request, parsed)   # deterministic guard vs LLM kind-substitution
+    if resolved["declined"] or variant:
+        return {**out, "declined": True, "decline_reasons": resolved["decline_reasons"] + variant}
     if req.build:
         try:
             program = intent.to_program(resolved)

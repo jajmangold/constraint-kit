@@ -360,6 +360,30 @@ def sheet_bracket(thickness: float = 2.0, base_length: float = 40.0, flange_leng
     return wp, anchors
 
 
+def coupling(outer_d: float = 25.0, bore_d: float = 8.0, length: float = 30.0, set_screw_d: float = 4.0):
+    """A RIGID shaft coupler — a bored sleeve that joins two coaxial shafts end-to-end, with a radial
+    set-screw hole over each shaft half. Axis = Z, z in [0, length].
+
+    Anchors: 'end_a' (z=0 bore center), 'end_b' (z=length), 'center', 'bore_axis'.
+    HONESTLY a rigid coupler: jaw / flexible / spider couplings (interlocking jaws + elastomer) are NOT
+    modeled — those stay an honest decline rather than a silent rigid-sleeve substitution. Added because
+    the census measured 'coupling' as the top recurring missing part.
+    """
+    r = max(outer_d / 2.0, 1.0)
+    wp = cq.Workplane("XY").circle(r).extrude(length)
+    if bore_d and bore_d > 0:
+        wp = wp.faces(">Z").workplane().hole(bore_d)
+    if set_screw_d and set_screw_d > 0:                       # radial set-screw hole over each half
+        try:
+            for z in (length * 0.25, length * 0.75):
+                cyl = cq.Solid.makeCylinder(set_screw_d / 2.0, r + 0.5, cq.Vector(0, 0, z), cq.Vector(1, 0, 0))
+                wp = wp.cut(cq.Workplane("XY").add(cyl))
+        except Exception:  # noqa: BLE001 -- a degenerate set-screw cut just leaves a plain sleeve
+            pass
+    return wp, {"end_a": _loc(0, 0, 0), "end_b": _loc(0, 0, length),
+                "center": _loc(0, 0, length / 2.0), "bore_axis": _loc(0, 0, 0)}
+
+
 PART_GENS = {
     "plate": plate,
     "panel": panel,
@@ -378,4 +402,5 @@ PART_GENS = {
     "nut": nut,
     "washer": washer,
     "bearing": bearing,
+    "coupling": coupling,
 }

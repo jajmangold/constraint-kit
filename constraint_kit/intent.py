@@ -28,6 +28,16 @@ _QUANTITY_MAP = {
 }
 
 
+# qualifiers in a name/request that a generic kind does NOT model -> must NOT silently map to the generic
+# part. Used both by _normalize_kind (block 'jaw_coupling'->coupling) and variant_mismatch (block a 'jaw'
+# qualifier in the request when the kind is the generic 'coupling').
+_VARIANT_QUALIFIERS = {
+    "coupling": ["jaw", "flexible", "spider", "oldham", "beam", "bellows", "elastomer", "universal"],
+    "bearing": ["tapered", "roller", "needle", "thrust", "angular"],
+    "ball_bearing": ["tapered", "roller", "needle"],
+}
+
+
 # common descriptive names the LLM uses -> the canonical generator kind. Measured from the gauntlet:
 # qwen says "pillow_block_bearing"/"2020_extrusion"/"weld_neck_flange" for parts that DO exist as
 # bearing_block/extrusion/flange — a naming gap, not a missing capability. Aliases catch the tricky ones
@@ -46,8 +56,9 @@ _KIND_ALIASES = {
 def _normalize_kind(kind):
     """Map an LLM-stated `kind` to a canonical generator kind, or None if nothing expresses it. Exact match
     first, then the alias table, then the longest part-gen name that appears as a substring (so
-    '2020_extrusion'->extrusion, 'weld_neck_flange'->flange) — but 'helical_gear'/'jaw_coupling' match
-    nothing and stay None (an honest decline). Records nothing here; the caller notes any remap."""
+    '2020_extrusion'->extrusion, 'weld_neck_flange'->flange). But a substring hit is REFUSED when the name
+    carries an unmodeled VARIANT qualifier ('jaw_coupling' contains 'coupling' but a jaw coupling is NOT the
+    rigid coupling) -> returns None so it honestly declines. Records nothing here; the caller notes any remap."""
     if not isinstance(kind, str):
         return None
     k = kind.strip().lower()
@@ -56,7 +67,12 @@ def _normalize_kind(kind):
     if k in _KIND_ALIASES:
         return _KIND_ALIASES[k]
     cands = [g for g in ALL_PART_GENS if g in k]          # part-gen name as a substring of the stated kind
-    return max(cands, key=len) if cands else None         # longest wins (extrusion over a shorter accidental hit)
+    if not cands:
+        return None
+    cand = max(cands, key=len)                            # longest wins (extrusion over a shorter accidental hit)
+    if any(q in k for q in _VARIANT_QUALIFIERS.get(cand, [])):
+        return None                                       # unmodeled variant (jaw_coupling) -> honest decline
+    return cand
 
 
 # requirement keys that are legitimately NOT generator params (so they don't count as unexpressible features)
@@ -172,6 +188,24 @@ def resolve(intent: dict) -> dict:
     return {"entities": out_entities, "interfaces": intent.get("interfaces", []) or [],
             "constraints": intent.get("constraints", []) or [], "unresolved": unresolved,
             "declined": bool(unresolved), "decline_reasons": [u["reason"] for u in unresolved]}
+
+
+def variant_mismatch(request: str, parsed: dict) -> list:
+    """Catch a kind-level silent substitution: a variant qualifier in the natural-language REQUEST that the
+    chosen (generic) kind doesn't model — e.g. a 'flexible jaw' coupling mapped to the rigid `coupling`, or a
+    'tapered roller' bearing mapped to the simplified `bearing`. Returns honest-decline reasons. The prompt
+    asks the LLM not to do this; this enforces it deterministically where the LLM doesn't comply."""
+    rt = (request or "").lower()
+    reasons = []
+    for e in parsed.get("entities", []) or []:
+        quals = _VARIANT_QUALIFIERS.get(e.get("kind"))
+        if quals:
+            hit = [q for q in quals if q in rt]
+            if hit:
+                reasons.append(f"request asks for a {hit} {e.get('kind')}, which isn't modeled "
+                               f"(the {e.get('kind')!r} part is the generic/rigid form) — declining rather "
+                               f"than substituting it")
+    return reasons
 
 
 def to_program(resolved: dict) -> dict:

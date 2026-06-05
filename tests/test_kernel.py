@@ -1587,6 +1587,27 @@ def test_intent_resolve_with_provenance():
 
 
 @test
+def test_coupling_part():
+    """coupling (the census's top recurring missing part): a rigid bored sleeve with set-screw holes -> a
+    real shaft coupler, anchors at both ends, less material than a solid cylinder. An honest rigid coupler
+    (jaw/flexible variants stay declined)."""
+    import math
+    from constraint_kit import builder
+    wp, anchors = builder._generate("coupling", {"outer_d": 25, "bore_d": 8, "length": 30, "set_screw_d": 4})
+    vol = wp.val().Volume()
+    assert 0 < vol < math.pi * 12.5 ** 2 * 30                      # bored + set-screw holes removed material
+    assert {"end_a", "end_b", "center", "bore_axis"} <= set(anchors)
+    bb = wp.val().BoundingBox()
+    assert abs(bb.zmin) < 1e-6 and abs(bb.zmax - 30) < 1e-6        # axis along Z, z in [0,length]
+    # honesty guard: a JAW/FLEXIBLE coupling (which we don't model) must NOT silently use the rigid coupling
+    from constraint_kit import intent
+    assert intent.variant_mismatch("a flexible jaw coupling for two shafts",
+                                   {"entities": [{"kind": "coupling"}]})            # -> decline reasons
+    assert not intent.variant_mismatch("a rigid shaft coupling 25mm OD",
+                                       {"entities": [{"kind": "coupling"}]})        # rigid is fine
+
+
+@test
 def test_param_value_coercion():
     """Param-VALUE normalization (gauntlet cascade): the build chokepoint canonicalizes common human/LLM
     value formats so a catalog generator that wants 'M5-0.8' still builds from 'M5'. Helps every path."""

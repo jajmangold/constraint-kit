@@ -26,7 +26,7 @@ SPEC_SCHEMA = {
                     "id": {"type": "string"},
                     "type": {"enum": ["plate", "panel", "link", "housing", "adapter", "sheet_bracket", "spur_gear",
                                       "helical_gear", "ring_gear", "planetary_gearset",
-                                      "spacer", "shaft", "four_bar", "bolt", "nut", "washer", "bearing",
+                                      "spacer", "shaft", "coupling", "four_bar", "bolt", "nut", "washer", "bearing",
                                       "extrusion", "ball_bearing", "screw", "threaded_rod",
                                       "bearing_block", "sprocket", "flange", "pipe"]},
                     "material": {"enum": ["steel", "stainless", "aluminum", "brass",
@@ -226,16 +226,19 @@ An intent lists ENTITIES (parts/subsystems) and INTERFACES (how they connect). F
 - id: a short unique name.
 - kind: a part type you know, OR — if you have NO matching type — the REAL name of the thing
   (e.g. "synchronizer", "tapered_bearing", "shift_fork"). NEVER substitute a different part for one you
-  lack, and NEVER downgrade to a simpler part that drops a stated FEATURE (a "keyed shaft" is NOT a plain
-  shaft; a "clevis/tab mount" is NOT a plain plate) — name it honestly and record the feature; it will be
-  declined downstream if unbuildable. Record EVERY stated feature/dimension as a requirement (use a
-  descriptive key if no standard param name fits, e.g. "keyway_width": 4).
+  lack, and NEVER downgrade to a simpler part that drops a stated FEATURE or TYPE qualifier (a "keyed shaft"
+  is NOT a plain shaft; a "clevis/tab mount" is NOT a plain plate; a "jaw"/"flexible"/"spider"/"universal"
+  coupling is NOT the rigid "coupling" — name those "jaw_coupling"/"universal_joint"/etc. so they decline).
+  Name it honestly and record the feature; it will be declined downstream if unbuildable. Record EVERY
+  stated feature/dimension as a requirement (use a descriptive key if no standard param name fits, e.g.
+  "keyway_width": 4).
 - requirements: ONLY the values the user explicitly stated; OMIT anything unstated (defaults fill downstream).
   Use these param names (mm): spacer{outer_d,bore_d,height}; spur_gear{module,teeth,width,bore_d};
   helical_gear{module,teeth,width,bore_d,helix_angle};
   plate{width,depth,thick,boss_d,boss_h,bolt_d,bolt_circle,bolt_count}; shaft{diameter,length};
   washer{outer_d,bore_d,thick}; nut{af,height,bore_d}; bolt{shank_d,length,head_d,head_h};
   panel{width,depth,height}; link{length,width,thickness}; housing{width,depth,height,wall,bore_d};
+  coupling{outer_d,bore_d,length,set_screw_d} (a RIGID shaft coupler — not jaw/flexible);
   sheet_bracket{thickness,base_length,flange_length,width}; bearing{outer_d,bore_d,width};
   ring_gear{module,teeth,width,rim_width}; planetary_gearset{module,sun_teeth,planet_teeth,width,n_planets};
   extrusion{rail_size,length}; bearing_block{width,depth,height,bore_d,bolt_d,bolt_spacing};
