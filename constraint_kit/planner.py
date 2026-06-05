@@ -25,7 +25,7 @@ SPEC_SCHEMA = {
                 "properties": {
                     "id": {"type": "string"},
                     "type": {"enum": ["plate", "panel", "link", "housing", "adapter", "sheet_bracket", "spur_gear",
-                                      "ring_gear", "planetary_gearset",
+                                      "helical_gear", "ring_gear", "planetary_gearset",
                                       "spacer", "shaft", "four_bar", "bolt", "nut", "washer", "bearing",
                                       "extrusion", "ball_bearing", "screw", "threaded_rod",
                                       "bearing_block", "sprocket", "flange", "pipe"]},
@@ -225,10 +225,14 @@ SYSTEM_INTENT = """You convert a natural-language part/assembly request into a s
 An intent lists ENTITIES (parts/subsystems) and INTERFACES (how they connect). For each entity:
 - id: a short unique name.
 - kind: a part type you know, OR — if you have NO matching type — the REAL name of the thing
-  (e.g. "synchronizer", "helical_gear", "tapered_bearing", "shift_fork"). NEVER substitute a different
-  part for one you lack; name it honestly and it will be declined downstream.
+  (e.g. "synchronizer", "tapered_bearing", "shift_fork"). NEVER substitute a different part for one you
+  lack, and NEVER downgrade to a simpler part that drops a stated FEATURE (a "keyed shaft" is NOT a plain
+  shaft; a "clevis/tab mount" is NOT a plain plate) — name it honestly and record the feature; it will be
+  declined downstream if unbuildable. Record EVERY stated feature/dimension as a requirement (use a
+  descriptive key if no standard param name fits, e.g. "keyway_width": 4).
 - requirements: ONLY the values the user explicitly stated; OMIT anything unstated (defaults fill downstream).
   Use these param names (mm): spacer{outer_d,bore_d,height}; spur_gear{module,teeth,width,bore_d};
+  helical_gear{module,teeth,width,bore_d,helix_angle};
   plate{width,depth,thick,boss_d,boss_h,bolt_d,bolt_circle,bolt_count}; shaft{diameter,length};
   washer{outer_d,bore_d,thick}; nut{af,height,bore_d}; bolt{shank_d,length,head_d,head_h};
   panel{width,depth,height}; link{length,width,thickness}; housing{width,depth,height,wall,bore_d};

@@ -1568,7 +1568,19 @@ def test_intent_resolve_with_provenance():
         assert not rr["declined"], f"{descriptive} should remap, not decline"
         ent = rr["entities"][0]
         assert ent["kind"] == canon and ent.get("original_kind") == descriptive
-    assert intent.resolve({"entities": [{"id": "h", "kind": "helical_gear", "requirements": {}}]})["declined"]
+    # helical_gear is now a real part (was a genuine OOV gap) -> resolves + builds, no longer declined
+    rh = intent.resolve({"entities": [{"id": "h", "kind": "helical_gear",
+                                       "requirements": {"teeth": 24, "helix_angle": 20}}]})
+    assert not rh["declined"] and rh["entities"][0]["kind"] == "helical_gear"
+    # HONESTY (silent-under-expression kill): a stated FEATURE the chosen part can't express -> decline,
+    # NOT a silent plain build. "keyed shaft" w/ keyway_width on a plain shaft has no such param.
+    rk = intent.resolve({"entities": [{"id": "s", "kind": "shaft",
+                                       "requirements": {"diameter": 12, "length": 60, "keyway_width": 4}}]})
+    assert rk["declined"] and "keyway_width" in rk["entities"][0].get("unexpressible", [])
+    # but a legit synonym ('od' for a spacer's outer_d) and meta-fields ('material') do NOT false-flag
+    rok = intent.resolve({"entities": [{"id": "s", "kind": "spacer",
+                                        "requirements": {"od": 30, "height": 10, "material": "steel"}}]})
+    assert not rok["declined"] and rok["entities"][0]["requirements"]["outer_d"]["value"] == 30
     # a resolved intent lowers to a valid, compilable DSL program (resolve -> to_program -> dsl.check)
     prog = intent.to_program(r)
     assert prog["parts"][0]["type"] == "spur_gear" and dsl.check(prog)["ok"]

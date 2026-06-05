@@ -91,6 +91,27 @@ def spur_gear(module: float = 1.0, teeth: int = 20, width: float = 6.0,
     return wp, anchors
 
 
+def helical_gear(module: float = 1.0, teeth: int = 20, width: float = 6.0, bore_d: float = 12.0,
+                 helix_angle: float = 15.0, pressure_angle: float = 20.0):
+    """An involute HELICAL gear — cq_gears SpurGear with a nonzero helix_angle (axis = Z, z=0..width, bore
+    centered). Same anchors as spur_gear ('bore_base','bore_top'). Falls back to a bored cylinder blank if
+    cq_gears errors. Added because the gauntlet measured 'helical gear' as a genuine expressiveness gap."""
+    teeth = int(teeth)
+    try:
+        from cq_gears import SpurGear
+        g = SpurGear(module=module, teeth_number=teeth, width=width, bore_d=bore_d,
+                     pressure_angle=pressure_angle, helix_angle=helix_angle)
+        built = g.build()
+        wp = built if isinstance(built, cq.Workplane) else cq.Workplane("XY").add(built)
+    except Exception as exc:  # noqa: BLE001 -- any cq_gears failure -> blank, keep the slice alive
+        pitch_r = max(module * teeth / 2.0, 1.0)
+        wp = cq.Workplane("XY").circle(pitch_r).extrude(width)
+        if bore_d and bore_d > 0:
+            wp = wp.faces(">Z").workplane().hole(bore_d)
+        wp.metadata = {"gear_fallback": str(exc)}  # type: ignore[attr-defined]
+    return wp, {"bore_base": _loc(0, 0, 0), "bore_top": _loc(0, 0, width)}
+
+
 def ring_gear(module: float = 1.0, teeth: int = 36, width: float = 6.0, rim_width: float = 3.0,
               pressure_angle: float = 20.0):
     """An internal (ring) gear, axis = Z, z in [0, width]. anchors: 'bore_base','bore_top' (the axis)."""
@@ -347,6 +368,7 @@ PART_GENS = {
     "housing": housing,
     "adapter": adapter,
     "spur_gear": spur_gear,
+    "helical_gear": helical_gear,
     "ring_gear": ring_gear,
     "planetary_gearset": planetary_gearset,
     "spacer": spacer,

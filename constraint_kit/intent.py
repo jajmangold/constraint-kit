@@ -59,6 +59,30 @@ def _normalize_kind(kind):
     return max(cands, key=len) if cands else None         # longest wins (extrusion over a shorter accidental hit)
 
 
+# requirement keys that are legitimately NOT generator params (so they don't count as unexpressible features)
+_META_FIELDS = {"material", "designation", "name", "color", "tag", "finish", "note", "qty", "count"}
+# common requirement-key synonyms -> a generator param name (applied only when the target IS a param of the
+# chosen kind, so it never mis-maps; exact match always wins first). Avoids false 'unexpressible' flags.
+_REQ_ALIASES = {
+    "od": "outer_d", "outer_diameter": "outer_d", "outside_diameter": "outer_d", "diameter": "outer_d",
+    "id": "bore_d", "inner_diameter": "bore_d", "bore": "bore_d", "inside_diameter": "bore_d",
+    "thickness": "thick", "len": "length", "face_width": "width", "num_teeth": "teeth", "tooth_count": "teeth",
+}
+
+
+def _alias_req_key(key: str, defaults: dict) -> str:
+    """Map a stated requirement key to the chosen kind's param name where possible (exact, then a guarded
+    synonym, then a unique substring match). Returns the key unchanged if nothing fits — which then surfaces
+    it as an UNEXPRESSIBLE feature rather than silently dropping it."""
+    if key in defaults:
+        return key
+    a = _REQ_ALIASES.get(key)
+    if a and a in defaults:
+        return a
+    cands = [d for d in defaults if key == d or key in d or d in key]
+    return cands[0] if len(cands) == 1 else key
+
+
 def _param_defaults(kind: str) -> dict:
     """{param: default} for a part kind, read straight from the generator signature — the defaults 'table'
     is the code itself, so it never drifts."""
@@ -87,15 +111,29 @@ def resolve(intent: dict) -> dict:
             unresolved.append({"id": eid, "kind": raw_kind, "reason": f"no part/subsystem expresses kind {raw_kind!r}"})
             out_entities.append({"id": eid, "kind": raw_kind, "requirements": {}, "resolvable": False})
             continue
-        stated = e.get("requirements", {}) or {}
         defaults = _param_defaults(kind)
+        # alias stated keys toward the generator's param names; any leftover that's neither a param nor a
+        # meta-field is an UNEXPRESSIBLE FEATURE the chosen part can't represent — flag it, don't drop it
+        # silently (the gauntlet's 'keyed shaft' built a plain shaft because the keyway was dropped).
+        stated, unexpressible = {}, []
+        for k, v in (e.get("requirements", {}) or {}).items():
+            ak = _alias_req_key(k, defaults)
+            stated[ak] = v
+            if ak not in defaults and ak not in _META_FIELDS:
+                unexpressible.append(k)
+        if unexpressible:
+            unresolved.append({"id": eid, "kind": kind,
+                               "reason": f"kind {kind!r} cannot express requirement(s) {unexpressible}"})
+            out_entities.append({"id": eid, "kind": kind, "requirements": {}, "resolvable": False,
+                                 "unexpressible": unexpressible})
+            continue
         reqs = {}
         for name, dflt in defaults.items():
             if name in stated:
                 reqs[name] = {"value": _stated_value(stated[name]), "provenance": "stated"}
             else:
                 reqs[name] = {"value": dflt, "provenance": "default"}
-        for name, v in stated.items():                       # stated extras the generator doesn't take (e.g. material)
+        for name, v in stated.items():                       # legit meta extras (material, designation, ...)
             if name not in reqs:
                 reqs[name] = {"value": _stated_value(v), "provenance": "stated"}
         if e.get("designation"):                             # standards fill, with provenance, via the spec compiler
