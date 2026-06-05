@@ -88,13 +88,20 @@ def generate_corrected(desc, max_rounds=3):
             msgs += [{"role": "assistant", "content": out},
                      {"role": "user", "content": "That was not valid JSON. Resend ONLY the JSON program."}]
             continue
+        if isinstance(prog, dict) and prog.get("unsupported"):
+            return prog, rounds, []                       # honest decline (OOV)
         res = cadkit("/dsl/check", {"program": prog})
-        if res["ok"]:
+        if not res["ok"]:
+            msgs += [{"role": "assistant", "content": json.dumps(prog)},
+                     {"role": "user", "content": "The checker reported these errors — fix ALL and resend "
+                      "the full JSON:\n" + json.dumps([d for d in res["diagnostics"] if d["severity"] == "error"])}]
+            continue
+        sig = cadkit("/dsl/signature", {"program": prog})  # compile tier: catches what static check can't
+        if sig.get("ok"):
             return prog, rounds, []
         msgs += [{"role": "assistant", "content": json.dumps(prog)},
-                 {"role": "user", "content": "The checker reported these errors — fix ALL and resend the "
-                  "full JSON program:\n" + json.dumps([d for d in res["diagnostics"]
-                                                       if d["severity"] == "error"])}]
+                 {"role": "user", "content": "It passed static checks but FAILED to build: "
+                  + str(sig.get("reason") or sig.get("diagnostics")) + ". Fix and resend the full JSON."}]
     return prog, rounds, res.get("diagnostics", [])
 
 

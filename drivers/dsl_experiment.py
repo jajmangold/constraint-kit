@@ -128,8 +128,8 @@ def _post(url, payload, headers, timeout=120):
     return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
 
 
-def deepseek(messages):
-    body = {"model": MODEL, "messages": messages, "temperature": 0.0,
+def deepseek(messages, temperature=0.2):
+    body = {"model": MODEL, "messages": messages, "temperature": temperature,
             "response_format": {"type": "json_object"}, "thinking": {"type": "disabled"}}
     return _post(DEEPSEEK, body, {"Authorization": f"Bearer {KEY}"})["choices"][0]["message"]["content"]
 
@@ -138,21 +138,34 @@ def cadkit(path, payload):
     return _post(f"{CADKIT}{path}", payload, {})
 
 
-def generate(desc, max_rounds=3):
+def generate(desc, max_rounds=4):
+    """Two-tier self-correction: static /dsl/check, THEN compile via /dsl/signature (catches what static
+    can't). Returns (prog, rounds, status, candidate_signature). status: None=compiles, 'declined'=honest
+    refusal, 'check-failed'/'compile-failed'=exhausted correction rounds."""
     msgs = [{"role": "system", "content": SYSTEM}, *FEWSHOT, {"role": "user", "content": desc}]
-    prog, rounds = None, 0
+    prog, rounds, status = None, 0, "check-failed"
     for rounds in range(1, max_rounds + 1):
         try:
             prog = json.loads(deepseek(msgs))
         except json.JSONDecodeError:
             msgs.append({"role": "user", "content": "Resend ONLY valid JSON."}); continue
+        if isinstance(prog, dict) and prog.get("unsupported"):
+            return prog, rounds, "declined", None
         chk = cadkit("/dsl/check", {"program": prog})
-        if chk["ok"]:
-            return prog, rounds, None
+        if not chk["ok"]:
+            status = "check-failed"
+            msgs += [{"role": "assistant", "content": json.dumps(prog)},
+                     {"role": "user", "content": "Fix these and resend full JSON:\n"
+                      + json.dumps([d for d in chk["diagnostics"] if d["severity"] == "error"])}]
+            continue
+        sig = cadkit("/dsl/signature", {"program": prog})
+        if sig.get("ok"):
+            return prog, rounds, None, sig["signature"]
+        status = "compile-failed"
         msgs += [{"role": "assistant", "content": json.dumps(prog)},
-                 {"role": "user", "content": "Fix these and resend full JSON:\n"
-                  + json.dumps([d for d in chk["diagnostics"] if d["severity"] == "error"])}]
-    return prog, rounds, "check-failed"
+                 {"role": "user", "content": "It passed static checks but FAILED to build: "
+                  + str(sig.get("reason") or sig.get("diagnostics")) + ". Fix and resend the full JSON."}]
+    return prog, rounds, status, None
 
 
 def compare(cand_sig, ref_sig):
@@ -174,41 +187,43 @@ def compare(cand_sig, ref_sig):
 def main():
     if not KEY:
         print("DEEPSEEK_API_KEY not set"); return
+    import sys
     from collections import defaultdict
-    tally = defaultdict(lambda: [0, 0])           # cat -> [pass, total]
+    N = int(sys.argv[1]) if len(sys.argv) > 1 else 3     # samples per case (temp>0 -> a real rate)
+    tally = defaultdict(lambda: [0, 0])                  # cat -> [pass, total]
     modes = defaultdict(int)
+    refcache = {}
     for cat, desc, ref in CASES:
-        prog, rounds, gerr = generate(desc)
-        if cat == "oov":                          # honesty probe: honest = explicit decline OR invalid
-            chk = cadkit("/dsl/check", {"program": prog}) if prog else {"ok": False}
-            declined = bool(chk.get("declined")) or (isinstance(prog, dict) and bool(prog.get("unsupported")))
-            honest = declined or not chk.get("ok")    # refused, or at least didn't pass off a wrong part
-            used = [p.get("type") for p in (prog.get("parts", []) if isinstance(prog, dict) else [])]
-            label = "DECLINED" if declined else ("HONEST-FAIL" if honest else "HALLUCINATED " + str(used))
-            print(f"  [oov]   {label}  :: {desc[:46]}")
-            modes["oov_declined" if declined else ("oov_honest" if honest else "oov_hallucinated")] += 1
-            continue
-        tally[cat][1] += 1
-        refsig = cadkit("/dsl/signature", {"program": ref})
-        if gerr:
-            modes["check-failed"] += 1
-            print(f"  [{cat:9}] FAIL (check, r{rounds})  :: {desc[:46]}"); continue
-        candsig = cadkit("/dsl/signature", {"program": prog})
-        if not candsig.get("ok"):
-            modes["candidate-uncompilable"] += 1
-            print(f"  [{cat:9}] FAIL (compile)  :: {desc[:46]}"); continue
-        fails = compare(candsig["signature"], refsig["signature"])
-        if not fails:
-            tally[cat][0] += 1
-            print(f"  [{cat:9}] PASS (r{rounds})  :: {desc[:46]}")
-        else:
-            for f in fails:
-                modes[f"mismatch:{f}"] += 1
-            print(f"  [{cat:9}] FAIL {fails}  :: {desc[:46]}")
-    print("\n=== pass rate by category ===")
+        refsig = None
+        if ref is not None:
+            key = json.dumps(ref, sort_keys=True)
+            refsig = refcache.get(key) or cadkit("/dsl/signature", {"program": ref}).get("signature")
+            refcache[key] = refsig
+        passes = 0
+        for _ in range(N):
+            prog, rounds, status, candsig = generate(desc)
+            if cat == "oov":                             # honest = declined (refused to fake it)
+                declined = status == "declined"
+                tally["oov"][1] += 1; tally["oov"][0] += int(declined)
+                modes["oov_declined" if declined else "oov_substituted"] += 1
+                continue
+            tally[cat][1] += 1
+            if status == "declined":
+                modes["false-decline"] += 1; continue    # refused something it CAN build -> wrong
+            if candsig is None:
+                modes[status or "uncompilable"] += 1; continue
+            fails = compare(candsig, refsig)
+            if not fails:
+                tally[cat][0] += 1; passes += 1
+            else:
+                for f in fails:
+                    modes[f"mismatch:{f}"] += 1
+        if cat != "oov":
+            print(f"  [{cat:9}] {passes}/{N}  :: {desc[:52]}")
+    print(f"\n=== pass rate by category (N={N} per case) ===")
     for cat, (p, t) in sorted(tally.items()):
-        print(f"  {cat:10} {p}/{t}")
-    print("=== failure modes ===")
+        print(f"  {cat:10} {p}/{t}  ({100*p//max(t,1)}%)")
+    print("=== failure / behaviour modes ===")
     for m, c in sorted(modes.items(), key=lambda x: -x[1]):
         print(f"  {m}: {c}")
 
