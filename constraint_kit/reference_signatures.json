@@ -1,0 +1,97 @@
+{
+  "mesh_references": [
+    {
+      "name": "spur_gear_m1_t24_w6_b8",
+      "scad": "spur_gear(mod=1, teeth=24, thickness=6, shaft_diam=8);",
+      "signature": {
+        "volume": 2366.7742,
+        "area": 1849.9347,
+        "bbox_sorted": [
+          6.0,
+          25.9902,
+          25.9902
+        ]
+      },
+      "provenance": {
+        "source": "BOSL2",
+        "license": "BSD-2-Clause",
+        "fn": 64
+      }
+    },
+    {
+      "name": "ring_gear_m1_t36_w6",
+      "scad": "ring_gear(mod=1, teeth=36, thickness=6, backing=3);",
+      "signature": {
+        "volume": 3189.8021,
+        "area": 3248.9925,
+        "bbox_sorted": [
+          6.0,
+          44.5,
+          44.5
+        ]
+      },
+      "provenance": {
+        "source": "BOSL2",
+        "license": "BSD-2-Clause",
+        "fn": 64
+      }
+    },
+    {
+      "name": "bevel_gear_m1_t20",
+      "scad": "bevel_gear(mod=1, teeth=20, face_width=6, pitch_angle=45, shaft_diam=6);",
+      "error": "Current top level object is empty."
+    },
+    {
+      "name": "ball_bearing_608",
+      "scad": "ball_bearing(\"608\");",
+      "signature": {
+        "volume": 1700.0597,
+        "area": 2423.4031,
+        "bbox_sorted": [
+          7.0,
+          22.0,
+          22.0
+        ]
+      },
+      "provenance": {
+        "source": "BOSL2",
+        "license": "BSD-2-Clause",
+        "fn": 64
+      }
+    },
+    {
+      "name": "knuckle_hinge_L60",
+      "scad": "knuckle_hinge(length=60, segs=5, offset=5, knuckle_diam=6, pin_diam=3);",
+      "signature": {
+        "volume": 1770.0032,
+        "area": 1789.3092,
+        "bbox_sorted": [
+          8.01,
+          12.2426,
+          60.0
+        ]
+      },
+      "provenance": {
+        "source": "BOSL2",
+        "license": "BSD-2-Clause",
+        "fn": 64
+      }
+    }
+  ],
+  "cross_verify": [
+    {
+      "name": "spur_gear_m1_t24_w6_b8",
+      "ours": "spur_gear",
+      "our_vol": 2379.624,
+      "bosl2_vol": 2366.7742,
+      "vol_rel": 0.005
+    },
+    {
+      "name": "ball_bearing_608",
+      "ours": "bearing",
+      "our_vol": 2309.0706,
+      "bosl2_vol": 1700.0597,
+      "vol_rel": 0.358
+    }
+  ]
+}

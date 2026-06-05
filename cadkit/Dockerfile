@@ -36,6 +36,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     && pip install --no-cache-dir python-solvespace \
     && apt-get purge -y --auto-remove build-essential && rm -rf /var/lib/apt/lists/*
 
+# OpenSCAD + BOSL2 (BSD-2) — GROUND-TRUTH GENERATION (the pdf_oxide pattern): render real, parametric,
+# open-licensed library parts to STL -> mesh reference SIGNATURES that our B-rep generators must match.
+# NOT a runtime dependency (the verify path uses the recorded signatures); openscad is here so the recorder
+# (drivers/scad_reference.py) can produce ground truth for the census's demanded parts. STL export is CSG->
+# mesh (CGAL) and needs no GL; QT offscreen keeps it headless.
+RUN apt-get update && apt-get install -y --no-install-recommends openscad \
+    && git clone --depth 1 https://github.com/BelfrySCAD/BOSL2 /opt/openscad-libs/BOSL2 \
+    && rm -rf /var/lib/apt/lists/*
+ENV OPENSCADPATH=/opt/openscad-libs \
+    QT_QPA_PLATFORM=offscreen
+
 WORKDIR /srv/nvme-data/containers/constraint-kit
 EXPOSE 8195
 CMD ["uvicorn", "constraint_kit.api:app", "--host", "127.0.0.1", "--port", "8195"]
