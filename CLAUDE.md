@@ -45,7 +45,7 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   rules.py             # design-rule + strength checks [E9/T4.3]: engagement/fit/clearance, beam-bending, bolt-preload
   validate.py          # interference/clash check: bbox prefilter + exact OCC boolean (world solids) [Phase C]
   synthesis.py         # SMT design synthesis (Z3): discrete/mixed-int constraint solving -> design to a spec
-  dsl.py               # the DSL recipe layer: validate() diagnostics (LSP backend) + verify() exact-volume vs reference
+  dsl.py               # the DSL recipe layer: validate() diagnostics (LSP backend) + verify() geometric-equivalence SIGNATURE (volume+area+sorted-bbox+topology counts) vs reference
   planner.py           # qwen27b, schema-enforced specs: plan() [3D] + plan_layout() [2D]
   store.py             # atlas persistence (Neo4j); FAIL-SOFT. Also CkSpecResolution work-breadcrumbs
   qa.py                # qwen27b vision QA
@@ -113,9 +113,11 @@ image only when changing `cadkit/Dockerfile` (deps).
 - `POST /assembly/drawing {defs,root,plane?,height?,views?,name?}` — **[E7/T7.2]** 2D drawing set: cross-section
   DXF (cut on plane) + orthographic projection SVGs + overall dims (exact OCC geometry; no GD&T frames)
 - `POST /dsl/check {program}` — DSL static validation → LSP-shaped diagnostics (LLM self-correction signal)
-- `POST /dsl/verify {program, reference|expected_volume, tol_frac?}` — compile + exact-volume match vs a known
-  reference (the corpus filter / RL reward). `drivers/deepseek_dsl.py` closes the loop: deepseek-v4-flash
-  (thinking disabled) → DSL → /dsl/check correct → /dsl/verify → keep verified pairs (cadkit/output/dsl_corpus.jsonl)
+- `POST /dsl/verify {program, reference|expected_volume, tol_frac?}` — compile + geometric-equivalence
+  **signature** match vs a known reference (volume + area + sorted-bbox + solids/faces/edges — volume alone
+  is non-discriminating; the signature rejects same-volume different-shape parts). The corpus filter / RL
+  reward. `drivers/deepseek_dsl.py` closes the loop: deepseek-v4-flash (thinking disabled) → DSL → /dsl/check
+  correct → /dsl/verify → keep verified pairs (cadkit/output/dsl_corpus.jsonl)
 - `POST /synthesize/planetary {target_ratio,n_planets?,teeth_min?,teeth_max?,module?,ratio_tol?,objective?,build?}`
   — **SMT** design synthesis (Z3): solve a gearset to a ratio spec → optionally build the exact CAD; honest UNSAT
 - `POST /synthesize/tolerance {dims,budget_um,grade_min?,grade_max?,method?}` — **[E10/T10.1] SMT** tolerance

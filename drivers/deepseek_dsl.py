@@ -104,10 +104,11 @@ def main():
             prog, rounds, _diags = generate_corrected(r["desc"])
             v = cadkit("/dsl/verify", {"program": prog, "reference": r["ref"]})
             ok = bool(v.get("match"))
-            print(f"[{'MATCH' if ok else 'no-match'}] rounds={rounds} rel_err={v.get('rel_err')}  {r['desc'][:54]}")
+            why = "" if ok else " fails=" + ",".join(f["field"] for f in v.get("fails", [])) or v.get("reason", "")
+            print(f"[{'MATCH' if ok else 'no-match'}] rounds={rounds}{why}  {r['desc'][:54]}")
             if ok:
                 fh.write(json.dumps({"description": r["desc"], "program": prog,
-                                     "verified_volume": v["volume"]}) + "\n")
+                                     "signature": v["signature"]}) + "\n")
                 kept += 1
     print(f"\nverified pairs kept: {kept}/{len(REFERENCES)} -> {OUT}")
 

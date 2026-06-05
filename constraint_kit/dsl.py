@@ -124,31 +124,80 @@ def compile_program(program: dict):
     return builder.build_assembly(program)
 
 
-def _volume(obj) -> float:
+def _shape(obj):
     import cadquery as cq
-    comp = obj.toCompound() if isinstance(obj, cq.Assembly) else obj
-    return float(comp.Volume())
+    if isinstance(obj, cq.Assembly):
+        return obj.toCompound()
+    return obj.val() if hasattr(obj, "val") else obj
+
+
+# continuous signature fields (compared with relative tolerance) vs integer-count fields (compared exactly)
+_CONTINUOUS = ("volume", "area", "bbox_sorted")
+_COUNTS = ("n_solids", "n_faces", "n_edges")
+
+
+def signature(obj) -> dict:
+    """A discriminating geometric-equivalence SIGNATURE of a built object — far stronger than volume alone
+    (volume is non-discriminating: a cube and a cylinder can share it). Combines continuous measures
+    (volume, surface area, orientation-agnostic sorted bbox extents) with exact topology counts
+    (solids/faces/edges). To fool all of these you essentially have to be the same part. This is the
+    'geometry is truth' check the whole generate->verify->corpus->reward chain rests on."""
+    s = _shape(obj)
+    bb = s.BoundingBox()
+    return {
+        "volume": round(float(s.Volume()), 4),
+        "area": round(float(s.Area()), 4),
+        "bbox_sorted": sorted(round(float(d), 4) for d in (bb.xlen, bb.ylen, bb.zlen)),
+        "n_solids": len(s.Solids()), "n_faces": len(s.Faces()), "n_edges": len(s.Edges()),
+    }
+
+
+def reference_signature(part_type: str, params: dict) -> dict:
+    """Ground-truth signature of a known reference part, from our exact generators."""
+    wp, _ = ALL_PART_GENS[part_type](**params)
+    return signature(wp)
 
 
 def reference_volume(part_type: str, params: dict) -> float:
-    """Ground-truth volume of a known reference part (compiled by our exact generators)."""
-    wp, _ = ALL_PART_GENS[part_type](**params)
-    return _volume(wp.val() if hasattr(wp, "val") else wp)
+    """Ground-truth volume only (kept for callers that just want the scalar)."""
+    return reference_signature(part_type, params)["volume"]
 
 
-def verify(program: dict, expected_volume: float, tol_frac: float = 1e-3) -> dict:
-    """Compile the program and compare its TOTAL geometry volume to a known reference (relative tol). This
-    is the corpus filter / RL reward: a program is a verified design only if its exact geometry matches
-    ground truth. Returns {match, volume, expected, rel_err, diagnostics}."""
+def _compare_sig(sig: dict, ref: dict, tol_frac: float) -> dict:
+    """Compare a signature to a reference, field by field. Reference may be partial (e.g. {volume:…}) —
+    only its present fields are checked. Continuous fields use relative tol; counts must match exactly."""
+    fails = []
+    for k, rv in ref.items():
+        sv = sig.get(k)
+        if k in _COUNTS:
+            if sv != rv:
+                fails.append({"field": k, "got": sv, "expected": rv})
+        elif k == "bbox_sorted":
+            if sv is None or len(sv) != len(rv) or any(
+                    abs(a - b) > tol_frac * max(abs(b), 1e-9) for a, b in zip(sv, rv)):
+                fails.append({"field": k, "got": sv, "expected": rv})
+        elif k in _CONTINUOUS:
+            if sv is None or abs(sv - rv) > tol_frac * max(abs(rv), 1e-9):
+                fails.append({"field": k, "got": sv, "expected": rv,
+                              "rel_err": round(abs(sv - rv) / max(abs(rv), 1e-9), 6) if sv is not None else None})
+    return {"match": not fails, "fails": fails}
+
+
+def verify(program: dict, reference, tol_frac: float = 1e-3) -> dict:
+    """Compile a program and check its geometry against a reference SIGNATURE (the corpus filter / RL
+    reward). `reference` is a signature dict (full or partial) — or a bare float, treated as a
+    volume-only reference for convenience. A program is a verified design only if every reference field
+    matches (continuous within `tol_frac`, topology counts exactly). Returns {match, signature, reference,
+    fails}."""
+    ref = {"volume": float(reference)} if isinstance(reference, (int, float)) else dict(reference)
     res = check(program)
     if not res["ok"]:
         return {"match": False, "reason": "static-invalid", "diagnostics": res["diagnostics"]}
     try:
         built = compile_program(program)
         assy = built[0] if isinstance(built, tuple) else built["cq_assembly"]
-        vol = _volume(assy)
+        sig = signature(assy)
     except Exception as exc:  # noqa: BLE001 -- compile/geometry failure is an honest non-match
         return {"match": False, "reason": f"compile-error: {type(exc).__name__}: {exc}"}
-    rel = abs(vol - expected_volume) / expected_volume if expected_volume else float("inf")
-    return {"match": rel <= tol_frac, "volume": round(vol, 4), "expected": round(expected_volume, 4),
-            "rel_err": round(rel, 6)}
+    cmp = _compare_sig(sig, ref, tol_frac)
+    return {"match": cmp["match"], "signature": sig, "reference": ref, "fails": cmp["fails"]}

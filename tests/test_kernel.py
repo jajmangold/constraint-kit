@@ -1491,18 +1491,26 @@ def test_dsl_validate_and_verify():
     assert not res["ok"]
     assert {"unknown-part-type", "duplicate-id", "unknown-part-ref", "bad-mate-type"} <= codes
     assert all({"severity", "code", "message", "path"} <= set(d) for d in res["diagnostics"])  # LSP-shaped
-    # verify: exact volume match to a known reference (solid cylinder spacer, analytic volume)
+    # verify: geometric-equivalence SIGNATURE vs a known reference (solid cylinder spacer)
     ref_params = {"outer_d": 20, "bore_d": 0, "height": 10}
-    ref_vol = dsl.reference_volume("spacer", ref_params)
+    ref_sig = dsl.reference_signature("spacer", ref_params)
     import math
-    approx(ref_vol, math.pi * 100 * 10, eps=1.0)                              # ~cylinder volume
+    approx(ref_sig["volume"], math.pi * 100 * 10, eps=1.0)
+    assert ref_sig["n_faces"] == 3 and "bbox_sorted" in ref_sig            # cylinder: 3 faces
     prog = {"parts": [{"id": "s", "type": "spacer", "params": ref_params}], "mates": []}
-    assert dsl.verify(prog, ref_vol)["match"] is True                        # correct -> verified pair
-    wrong = {"parts": [{"id": "s", "type": "spacer",
-                        "params": {"outer_d": 20, "bore_d": 0, "height": 12}}], "mates": []}
-    assert dsl.verify(wrong, ref_vol)["match"] is False                      # wrong geometry -> rejected
+    assert dsl.verify(prog, ref_sig)["match"] is True                       # correct -> verified pair
+    # THE POINT: a box with the SAME VOLUME but a different shape. Volume-only would (wrongly) pass it;
+    # the signature must reject it on bbox/area/face-count while volume itself matches.
+    h = (math.pi * 100 * 10) / (20 * 20)                                    # panel vol == cylinder vol
+    decoy = {"parts": [{"id": "p", "type": "panel",
+                        "params": {"width": 20, "depth": 20, "height": h}}], "mates": []}
+    assert dsl.verify(decoy, ref_sig["volume"])["match"] is True            # volume-only: FALSE POSITIVE
+    res = dsl.verify(decoy, ref_sig)                                        # full signature: rejected
+    assert res["match"] is False
+    failed = {f["field"] for f in res["fails"]}
+    assert "volume" not in failed and {"bbox_sorted", "area", "n_faces"} & failed  # caught by shape, not volume
     # a statically-invalid program is honestly a non-match, not a crash
-    assert dsl.verify({"parts": []}, ref_vol)["match"] is False
+    assert dsl.verify({"parts": []}, ref_sig)["match"] is False
 
 
 def _mkparts(specs):
