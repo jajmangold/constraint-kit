@@ -239,7 +239,9 @@ An intent lists ENTITIES (parts/subsystems) and INTERFACES (how they connect). F
   flange{nps,flange_class,kind}; pipe{nps,length}.
   Use these EXACT kind names: a V-slot rail is "extrusion" (NOT "2020_extrusion"); a pillow block is
   "bearing_block" (NOT "pillow_block_bearing"); a pipe flange is "flange" (NOT "weld_neck_flange" — put the
-  type in params). For a standard part add "designation" (e.g. "M6x1").
+  type in params). EXACT param-VALUE formats: extrusion rail_size is "20x20"/"20x40"/"40x40" (NOT "2020");
+  screw size is "M5-0.8" (size-pitch, NOT bare "M5"); flange nps is a bare number string like "2" (NOT
+  "2-inch"). For a standard part add "designation" (e.g. "M6x1").
 
 INTERFACES connect entities; relation in [seat_on, insert, fasten, mesh].
 

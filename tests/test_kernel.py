@@ -1574,6 +1574,21 @@ def test_intent_resolve_with_provenance():
     assert prog["parts"][0]["type"] == "spur_gear" and dsl.check(prog)["ok"]
 
 
+@test
+def test_param_value_coercion():
+    """Param-VALUE normalization (gauntlet cascade): the build chokepoint canonicalizes common human/LLM
+    value formats so a catalog generator that wants 'M5-0.8' still builds from 'M5'. Helps every path."""
+    from constraint_kit import builder
+    assert builder._coerce_params("extrusion", {"rail_size": "2020", "length": 100})["rail_size"] == "20x20"
+    assert builder._coerce_params("screw", {"size": "M5", "length": 16})["size"] == "M5-0.8"
+    assert builder._coerce_params("flange", {"nps": "2-inch"})["nps"] == "2"
+    assert builder._coerce_params("flange", {"nps": '2"'})["nps"] == "2"
+    assert builder._coerce_params("spacer", {"outer_d": 20})["outer_d"] == 20      # untouched passthrough
+    # end to end: a part the LLM mis-formats now builds instead of raising
+    wp, _anch = builder._generate("extrusion", {"rail_size": "2020", "length": 60})
+    assert wp.val().Volume() > 0
+
+
 def _mkparts(specs):
     """Build a minimal builder-style parts map {id: {wp, anchors, type}} from (id, type, params) tuples."""
     from constraint_kit.builder import ALL_PART_GENS

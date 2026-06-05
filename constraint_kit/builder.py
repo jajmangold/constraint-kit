@@ -15,6 +15,7 @@ import hashlib
 import json
 import math
 import os
+import re
 
 import cadquery as cq
 
@@ -38,8 +39,40 @@ def _gen_key(ptype: str, params: dict) -> str:
         json.dumps(params, sort_keys=True, default=str).encode()).hexdigest()
 
 
+# standard metric coarse-thread pitch (mm) -> turns a bare size like "M5" into the catalog's "M5-0.8"
+_COARSE_PITCH = {"M2": 0.4, "M2.5": 0.45, "M3": 0.5, "M4": 0.7, "M5": 0.8, "M6": 1.0,
+                 "M8": 1.25, "M10": 1.5, "M12": 1.75, "M16": 2.0, "M20": 2.5}
+
+
+def _coerce_params(ptype: str, params: dict) -> dict:
+    """Be liberal in what we accept: map common human/LLM param-VALUE formats to the canonical values the
+    generators require (measured from the gauntlet: rail_size '2020'->'20x20', screw 'M5'->'M5-0.8', flange
+    nps '2-inch'->'2'). Non-matching values pass through untouched. Applied at the single generate chokepoint,
+    so it helps EVERY build path (intent + direct DSL)."""
+    if not params:
+        return params
+    p = dict(params)
+    if ptype == "extrusion":
+        rs = str(p.get("rail_size", "")).lower().replace(" ", "")
+        if rs.isdigit() and len(rs) == 4:                      # "2020" -> "20x20"
+            p["rail_size"] = f"{rs[:2]}x{rs[2:]}"
+    elif ptype == "screw":
+        sz = str(p.get("size", ""))
+        if re.fullmatch(r"[Mm]\d+(\.\d+)?", sz):               # bare "M5" -> "M5-0.8" (standard coarse pitch)
+            pitch = _COARSE_PITCH.get(sz.upper())
+            if pitch:
+                p["size"] = f"{sz.upper()}-{pitch}"
+    elif ptype == "flange":
+        nps = re.sub(r'[-\s]*(?:inches|inch|in)\.?$', '', str(p.get("nps", "")).strip().rstrip('"'),
+                     flags=re.I).strip()                       # '2"', "2-inch", "2 inch" -> "2"
+        if nps:
+            p["nps"] = nps
+    return p
+
+
 def _generate(ptype: str, params: dict):
     """Generate a part (type, params) through the cache, returning an independent copy each time."""
+    params = _coerce_params(ptype, params)                     # canonicalize human-style param values first
     key = _gen_key(ptype, params)
     cached = _GEN_CACHE.get(key)
     if cached is None:
