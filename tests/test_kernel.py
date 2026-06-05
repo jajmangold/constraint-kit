@@ -1581,6 +1581,15 @@ def test_intent_resolve_with_provenance():
     rok = intent.resolve({"entities": [{"id": "s", "kind": "spacer",
                                         "requirements": {"od": 30, "height": 10, "material": "steel"}}]})
     assert not rok["declined"] and rok["entities"][0]["requirements"]["outer_d"]["value"] == 30
+    # VITAMIN routing: an OOV kind that names a library vitamin routes to the mesh vitamin tier (not a
+    # decline); a truly-unknown part still declines. (Routing is pure logic — no OpenSCAD needed here.)
+    rv = intent.resolve({"entities": [{"id": "m", "kind": "nema17_motor", "requirements": {}}]})
+    ent = rv["entities"][0]
+    assert not rv["declined"] and ent["kind"] == "vitamin" and ent.get("tier") == "vitamin"
+    assert ent.get("original_kind") == "nema17_motor"
+    scad = ent["requirements"]["scad"]["value"]
+    assert "nema_stepper_motor" in scad and "size=17" in scad
+    assert intent.resolve({"entities": [{"id": "x", "kind": "flux_capacitor", "requirements": {}}]})["declined"]
     # a resolved intent lowers to a valid, compilable DSL program (resolve -> to_program -> dsl.check)
     prog = intent.to_program(r)
     assert prog["parts"][0]["type"] == "spur_gear" and dsl.check(prog)["ok"]

@@ -143,6 +143,15 @@ def resolve(intent: dict) -> dict:
         raw_kind = e.get("kind")
         kind = _normalize_kind(raw_kind)                 # remap descriptive names to canonical generator kinds
         if kind is None:
+            from . import vitamins                        # route OOV -> a library VITAMIN (mesh tier) if one exists
+            spec = vitamins.vitamin_for(raw_kind, e.get("requirements", {}))
+            if spec:
+                out_entities.append({"id": eid, "kind": "vitamin", "tier": "vitamin",
+                                     "original_kind": raw_kind, "resolvable": True, "requirements": {
+                                         "scad": {"value": spec["scad"], "provenance": "vitamin-library"},
+                                         "name": {"value": spec["name"], "provenance": "vitamin-library"},
+                                         "fn": {"value": spec["fn"], "provenance": "default"}}})
+                continue
             unresolved.append({"id": eid, "kind": raw_kind, "reason": f"no part/subsystem expresses kind {raw_kind!r}"})
             out_entities.append({"id": eid, "kind": raw_kind, "requirements": {}, "resolvable": False})
             continue

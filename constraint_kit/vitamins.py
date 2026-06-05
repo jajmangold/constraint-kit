@@ -12,6 +12,7 @@ a one-time cost per distinct part. openscad is a GENERATION tool here, not a run
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 
@@ -39,7 +40,48 @@ def _stl_to_solid(stl_path: str) -> cq.Shape:
     return cq.Shape(mk.Solid())
 
 
-def vitamin(scad: str, fn: int = 48, name: str = "vitamin"):
+# library vitamins keyed by canonical name: aliases the LLM might use -> a BOSL2 scad template + defaults.
+# Curated + render-verified; only genuinely-missing components we have NO native generator for. Extend
+# freely (each entry is just an open-licensed library module call).
+VITAMIN_CATALOG = {
+    "nema_motor": {
+        "aliases": ["nema_motor", "nema_stepper", "stepper_motor", "stepper", "nema17", "nema_17",
+                    "nema23", "nema_23", "nema14", "nema_14", "servo_motor"],
+        "scad": "nema_stepper_motor(size={size}, h={h}, shaft_len={shaft_len});",
+        "defaults": {"size": 17, "h": 40, "shaft_len": 20},
+    },
+}
+
+
+def vitamin_for(kind, requirements=None):
+    """If an OOV `kind` names a known library VITAMIN, return {scad, name, fn} to render it (the intent
+    resolver routes here at the decline boundary, so a sourced part we don't model natively becomes a mesh
+    vitamin instead of an honest decline). Returns None if no catalog entry matches. Standard nominal sizes;
+    finer stated dims are approximate (mesh tier)."""
+    if not isinstance(kind, str):
+        return None
+    k = kind.strip().lower()
+    req = requirements or {}
+    for cname, spec in VITAMIN_CATALOG.items():
+        if not any(a in k for a in spec["aliases"]):
+            continue
+        p = dict(spec["defaults"])
+        m = re.search(r"(\d{2,3})", k)                        # 'nema17' -> size 17
+        if m and "size" in p:
+            p["size"] = int(m.group(1))
+        for key in list(p):                                   # stated requirements override
+            rv = req.get(key)
+            rv = rv.get("value") if isinstance(rv, dict) else rv
+            if rv is not None:
+                try:
+                    p[key] = int(float(rv))
+                except (TypeError, ValueError):
+                    pass
+        return {"scad": spec["scad"].format(**p), "name": cname, "fn": 48}
+    return None
+
+
+def vitamin(scad: str = "", fn: int = 48, name: str = "vitamin"):
     """Render a BOSL2 module call `scad` (e.g. 'ball_bearing(\"608\");') to a watertight cq solid with
     bbox-DERIVED anchors. Anchors: 'base' (zmin face center) / 'top' (zmax) / 'center' / 'mount' (=base,
     for seating onto a surface). Tagged tier='vitamin'. Raises if the render is empty/non-watertight."""
