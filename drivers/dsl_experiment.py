@@ -34,7 +34,11 @@ SYSTEM = (
     "MATES connect parts; use either {\"a\",\"b\",\"intent\"} with intent in "
     "[seat_on,insert,fasten,mesh], OR {\"a\",\"a_joint\",\"b\",\"b_joint\",\"type\"} with type in "
     "[coincident,rigid,contact,mesh,revolute]. plate anchors: mount,bolt0..N. spur_gear: bore_base,bore_top. "
-    "spacer: top,bottom. The FIRST part is the fixed base. Output JSON only, no prose."
+    "spacer: top,bottom. The FIRST part is the fixed base. "
+    "HONESTY RULE: if the description needs a part type or feature you have NO match for (synchronizer, "
+    "helical/bevel/worm gear, spline, tapered/roller/needle bearing, shift fork, threads-as-feature), do "
+    'NOT substitute a different part — output exactly {"unsupported":"<what you cannot express>"}. '
+    "Output JSON only, no prose."
 )
 FEWSHOT = [
     {"role": "user", "content": "a steel spacer, 14mm OD, 6mm bore, 10mm tall"},
@@ -45,6 +49,8 @@ FEWSHOT = [
         {"id": "plate", "type": "plate", "material": "aluminum", "params": {}},
         {"id": "gear", "type": "spur_gear", "material": "steel", "params": {"module": 1, "teeth": 20, "width": 6, "bore_d": 12}}],
         "mates": [{"a": "plate", "b": "gear", "intent": "seat_on"}]})},
+    {"role": "user", "content": "a synchronizer hub with blocker ring and cone clutch"},
+    {"role": "assistant", "content": json.dumps({"unsupported": "no synchronizer / cone-clutch / dog-tooth part in the vocabulary"})},
 ]
 
 def P(parts, mates=None):
@@ -173,12 +179,14 @@ def main():
     modes = defaultdict(int)
     for cat, desc, ref in CASES:
         prog, rounds, gerr = generate(desc)
-        if cat == "oov":                          # honesty probe: pass = honestly fails (no valid program)
+        if cat == "oov":                          # honesty probe: honest = explicit decline OR invalid
             chk = cadkit("/dsl/check", {"program": prog}) if prog else {"ok": False}
-            honest = not chk.get("ok")
+            declined = bool(chk.get("declined")) or (isinstance(prog, dict) and bool(prog.get("unsupported")))
+            honest = declined or not chk.get("ok")    # refused, or at least didn't pass off a wrong part
             used = [p.get("type") for p in (prog.get("parts", []) if isinstance(prog, dict) else [])]
-            print(f"  [oov]   {'HONEST-FAIL' if honest else 'HALLUCINATED ' + str(used)}  :: {desc[:46]}")
-            modes["oov_honest" if honest else "oov_hallucinated"] += 1
+            label = "DECLINED" if declined else ("HONEST-FAIL" if honest else "HALLUCINATED " + str(used))
+            print(f"  [oov]   {label}  :: {desc[:46]}")
+            modes["oov_declined" if declined else ("oov_honest" if honest else "oov_hallucinated")] += 1
             continue
         tally[cat][1] += 1
         refsig = cadkit("/dsl/signature", {"program": ref})

@@ -51,6 +51,13 @@ def validate(program: dict, geometry: bool = True) -> list[dict]:
     if not isinstance(program, dict):
         return [{"severity": "error", "code": "not-an-object", "message": "program must be an object", "path": ""}]
 
+    if "unsupported" in program:                            # honest decline: no part expresses this intent
+        reason = program["unsupported"]
+        if not isinstance(reason, str) or not reason.strip():
+            return [{"severity": "error", "code": "bad-unsupported",
+                     "message": "'unsupported' must be a non-empty reason string", "path": "unsupported"}]
+        return []                                           # a refusal is a VALID, honest response
+
     if "defs" in program:                                   # tree program
         defs = program.get("defs")
         if not isinstance(defs, dict) or not defs:
@@ -133,17 +140,28 @@ def _check_part(p, path, err):
         err("bad-params", "'params' must be an object", f"{path}.params")
 
 
+def is_decline(program) -> bool:
+    """True if the program is an honest refusal {"unsupported": "<reason>"} — the system saying it has no
+    part for this intent rather than silently substituting a wrong one (the OOV honesty fix)."""
+    return isinstance(program, dict) and bool(program.get("unsupported"))
+
+
 def check(program: dict, geometry: bool = True) -> dict:
-    """Convenience wrapper: {ok, diagnostics, n_errors}. `ok` = no error-severity diagnostics. `geometry`
+    """Convenience wrapper: {ok, declined, diagnostics, n_errors}. `ok` = no error-severity diagnostics;
+    `declined` = the program is an honest 'unsupported' refusal (valid, but not buildable). `geometry`
     enables the anchor/build tier (default on; pass False for instant pure-static LSP feedback)."""
     diags = validate(program, geometry=geometry)
     n_err = sum(1 for x in diags if x["severity"] == "error")
-    return {"ok": n_err == 0, "diagnostics": diags, "n_errors": n_err}
+    return {"ok": n_err == 0, "declined": is_decline(program) and n_err == 0,
+            "reason": program.get("unsupported") if is_decline(program) else None,
+            "diagnostics": diags, "n_errors": n_err}
 
 
 def compile_program(program: dict):
     """Compile a (validated) program to exact geometry. leaf -> (cq.Assembly, report); tree -> build_tree
     result dict. Raises ValueError if the program is statically invalid (call `check` first to self-correct)."""
+    if is_decline(program):
+        raise ValueError(f"program is an honest 'unsupported' decline, not buildable: {program['unsupported']}")
     res = check(program)
     if not res["ok"]:
         raise ValueError(f"invalid program: {[x['message'] for x in res['diagnostics'] if x['severity']=='error']}")

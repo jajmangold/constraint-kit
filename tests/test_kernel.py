@@ -1525,6 +1525,11 @@ def test_dsl_validate_and_verify():
     assert "volume" not in failed and {"bbox_sorted", "area", "n_faces"} & failed  # caught by shape, not volume
     # a statically-invalid program is honestly a non-match, not a crash
     assert dsl.verify({"parts": []}, ref_sig)["match"] is False
+    # honest refusal (OOV): an {"unsupported": reason} decline is a VALID response, not a buildable program
+    dec = dsl.check({"unsupported": "no helical-gear part in the vocabulary"})
+    assert dec["ok"] and dec["declined"] and dec["reason"]
+    assert dsl.is_decline({"unsupported": "x"})
+    assert not dsl.check({"unsupported": ""})["ok"]                         # empty reason is malformed
 
 
 def _mkparts(specs):

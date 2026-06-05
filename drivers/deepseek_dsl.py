@@ -30,7 +30,10 @@ SYSTEM = (
     "spacer{outer_d,bore_d,height}; spur_gear{module,teeth,width,bore_d}; plate{width,depth,thick,boss_d,"
     "boss_h,bolt_d,bolt_circle,bolt_count}; shaft{diameter,length}; washer{outer_d,bore_d,thick}; "
     "nut{af,height,bore_d}; bolt{shank_d,length,head_d,head_h}; panel{width,depth,height}; "
-    "link{length,width,thickness}. Use millimetres. One part unless asked otherwise. No prose, JSON only."
+    "link{length,width,thickness}. Use millimetres. One part unless asked otherwise. "
+    "HONESTY RULE: if you have no matching part for the request (synchronizer, helical/bevel gear, spline, "
+    "tapered/roller bearing, shift fork), output {\"unsupported\":\"<reason>\"} instead of substituting. "
+    "No prose, JSON only."
 )
 FEWSHOT = [
     {"role": "user", "content": "a 14mm OD steel spacer, 6mm bore, 10mm tall"},
