@@ -88,6 +88,12 @@ VITAMIN_CATALOG = {
         "scad": "worm(circ_pitch={circ_pitch}, d={d}, l={l});",
         "defaults": {"circ_pitch": 5, "d": 30, "l": 40},
     },
+    "bevel_gear": {                                       # STRAIGHT bevel (spiral=0); we have no native bevel
+        "aliases": ["bevel_gear", "bevel", "miter_gear"],
+        "exclude": ["spiral", "hypoid"],                  # we only render straight bevels -> those decline
+        "scad": "bevel_gear(teeth={teeth}, mate_teeth={mate_teeth}, mod={mod}, face_width={face_width}, spiral=0);",
+        "defaults": {"teeth": 20, "mate_teeth": 20, "mod": 2, "face_width": 8},
+    },
 }
 
 
