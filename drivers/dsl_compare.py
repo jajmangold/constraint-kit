@@ -31,7 +31,12 @@ PARSE_SYSTEM = (
     "washer{outer_d,bore_d,thick}, nut{af,height,bore_d}, bolt{shank_d,length,head_d,head_h}, "
     "panel{width,depth,height}, link{length,width,thickness}, sheet_bracket{thickness,base_length,"
     "flange_length,width}. interfaces relation in [seat_on,insert,fasten,mesh]. designation for standards "
-    "('M6x1'). Output JSON only, no prose."
+    "('M6x1'). "
+    "RULES: (1) List the FIXED BASE entity FIRST — the part others attach to (a plate, a housing, the "
+    "ground/largest part). (2) In an interface, 'a' is that base/target and 'b' is the part placed onto it "
+    "(plate is 'a', the gear/bolt/washer seated on it is 'b'; for fasten, the holed part like the plate is "
+    "'a' and the fastener is 'b'). (3) Capture EVERY stated number, and encode negations/explicit values: "
+    "'no bore'/'solid' -> bore_d:0. Output JSON only, no prose."
 )
 PARSE_FEWSHOT = [
     {"role": "user", "content": "a gear"},
@@ -44,6 +49,14 @@ PARSE_FEWSHOT = [
         {"id": "plate", "kind": "plate", "requirements": {}},
         {"id": "g", "kind": "spur_gear", "requirements": {"module": 1, "teeth": 24}}],
         "interfaces": [{"a": "plate", "b": "g", "relation": "seat_on"}]})},
+    {"role": "user", "content": "a solid spacer, 20mm OD, 10mm tall, no bore"},
+    {"role": "assistant", "content": json.dumps({"entities": [{"id": "s", "kind": "spacer",
+        "requirements": {"outer_d": 20, "bore_d": 0, "height": 10}}], "interfaces": []})},
+    {"role": "user", "content": "a bolt fastened into the first hole of a plate"},
+    {"role": "assistant", "content": json.dumps({"entities": [           # base (plate) FIRST; a=plate, b=bolt
+        {"id": "plate", "kind": "plate", "requirements": {}},
+        {"id": "b", "kind": "bolt", "requirements": {}}],
+        "interfaces": [{"a": "plate", "b": "b", "relation": "fasten"}]})},
     {"role": "user", "content": "a synchronizer ring"},
     {"role": "assistant", "content": json.dumps({"entities": [{"id": "s", "kind": "synchronizer", "requirements": {}}], "interfaces": []})},
 ]
