@@ -29,7 +29,8 @@ BOSL2_PARTS = {
     "ring_gear_m1_t36_w6":    "ring_gear(mod=1, teeth=36, thickness=6, backing=3);",
     "bevel_gear_m1_t20":      "bevel_gear(mod=1, teeth=20, face_width=6, pitch_angle=45, shaft_diam=6);",
     "ball_bearing_608":       'ball_bearing("608");',
-    "knuckle_hinge_L60":      "knuckle_hinge(length=60, segs=5, offset=5, knuckle_diam=6, pin_diam=3);",
+    "knuckle_hinge_L60":      ("union(){knuckle_hinge(length=60, segs=5, offset=5, knuckle_diam=6, in_place=true); "
+                               "zrot(180) knuckle_hinge(length=60, segs=5, offset=5, knuckle_diam=6, inner=true, in_place=true);}"),
 }
 # BOSL2 part name -> (our native part, params) for a fidelity cross-verify against open ground truth
 CROSS = {

@@ -61,13 +61,13 @@
     },
     {
       "name": "knuckle_hinge_L60",
-      "scad": "knuckle_hinge(length=60, segs=5, offset=5, knuckle_diam=6, pin_diam=3);",
+      "scad": "union(){knuckle_hinge(length=60, segs=5, offset=5, knuckle_diam=6, in_place=true); zrot(180) knuckle_hinge(length=60, segs=5, offset=5, knuckle_diam=6, inner=true, in_place=true);}",
       "signature": {
-        "volume": 1770.0032,
-        "area": 1789.3092,
+        "volume": 3368.276,
+        "area": 2558.3231,
         "bbox_sorted": [
           8.01,
-          12.2426,
+          18.4853,
           60.0
         ]
       },

@@ -72,10 +72,13 @@ VITAMIN_CATALOG = {
         "defaults": {"size": 17, "h": 40, "shaft_len": 20},
     },
     "hinge": {                                            # census top OOV; BOSL2 knuckle_hinge (render-verified)
+        # COMPLETE hinge (both leaves, interleaved knuckles, print-in-place cones) — the bare module is only
+        # ONE leaf, which the image spot-check caught (looked like disconnected lumps). BOSL2's own pairing.
         "aliases": ["hinge", "door_hinge", "butt_hinge", "knuckle_hinge", "hinge_leaf", "piano_hinge"],
         "exclude": ["living", "flexure", "concealed", "european", "spring"],   # not a knuckle hinge -> decline
-        "scad": "knuckle_hinge(length={length}, segs={segs}, offset={offset}, knuckle_diam={knuckle_diam}, pin_diam={pin_diam});",
-        "defaults": {"length": 60, "segs": 5, "offset": 5, "knuckle_diam": 6, "pin_diam": 3},
+        "scad": ("union(){{knuckle_hinge(length={length}, segs={segs}, offset={offset}, knuckle_diam={knuckle_diam}, in_place=true); "
+                 "zrot(180) knuckle_hinge(length={length}, segs={segs}, offset={offset}, knuckle_diam={knuckle_diam}, inner=true, in_place=true);}}"),
+        "defaults": {"length": 60, "segs": 5, "offset": 5, "knuckle_diam": 6},
     },
     "gear_rack": {                                        # a linear rack (we have no native rack)
         "aliases": ["rack", "gear_rack", "linear_rack", "rack_gear"],
