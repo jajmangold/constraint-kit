@@ -284,6 +284,28 @@ def panel(width: float = 100.0, depth: float = 100.0, height: float = 18.0):
     return wp, anchors
 
 
+def link(length: float = 100.0, width: float = 8.0, thickness: float = 4.0):
+    """A planar linkage BAR along +X in the z=0..thickness slab, with a pin at each end (rounded ends +
+    a through-bore at each pivot). The interface primitive for posing mechanisms as assemblies of distinct
+    links (T10.2): a 4-bar = 4 links placed by the geometric solver. Anchors: 'p0' (pivot at x=0), 'p1'
+    (pivot at x=length), 'center' — all +Z, in the mid-thickness plane so a 2-point placement lands the
+    pivots exactly on the solved joints."""
+    from .joints import frame
+    L, w, t = length, width, thickness
+    r = w / 2.0
+    # rounded-end bar: a central box + a disc at each pivot (so the bar looks like a real link)
+    wp = cq.Workplane("XY").box(L, w, t, centered=(False, True, False))
+    for x in (0.0, L):
+        wp = wp.union(cq.Workplane("XY").circle(r).extrude(t).translate((x, 0, 0)))
+        wp = wp.cut(cq.Workplane("XY").circle(r * 0.35).extrude(3 * t, both=True).translate((x, 0, 0)))
+    anchors = {
+        "p0": frame((0, 0, t / 2.0), z_axis=(0, 0, 1)),
+        "p1": frame((L, 0, t / 2.0), z_axis=(0, 0, 1)),
+        "center": _loc(L / 2.0, 0, t / 2.0),
+    }
+    return wp, anchors
+
+
 def sheet_bracket(thickness: float = 2.0, base_length: float = 40.0, flange_length: float = 25.0,
                   width: float = 30.0, bend_radius: float = 0.0):
     """A constant-thickness sheet-metal L-bracket — one 90° flange/bend (T1.4). The base leg lies flat
@@ -320,6 +342,7 @@ def sheet_bracket(thickness: float = 2.0, base_length: float = 40.0, flange_leng
 PART_GENS = {
     "plate": plate,
     "panel": panel,
+    "link": link,
     "sheet_bracket": sheet_bracket,
     "housing": housing,
     "adapter": adapter,

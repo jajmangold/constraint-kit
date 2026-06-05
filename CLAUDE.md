@@ -89,6 +89,9 @@ image only when changing `cadkit/Dockerfile` (deps).
 - `POST /layout_qa {name,verdict?}` — attach a layout verdict
 - `POST /dof/planetary {…}` — GEAR-loop DOF (analytical Willis mobility)
 - `POST /dof/four_bar {ground,crank,coupler,rocker,input_angle_deg?}` — GEOMETRIC-loop DOF (SolveSpace)
+- `POST /mechanism/four_bar {ground,crank,coupler,rocker,input_angle_deg,width?,thickness?,name?}` —
+  **[E10/T10.2]** route the 4-bar loop through SolveSpace and POSE it as an assembly of 4 distinct `link`
+  parts (the bridge geometric-solver → builder); loop closes by construction → one STEP+GLB
 - `POST /dof/slider_crank {crank,rod,offset,input_angle_deg?}` — GEOMETRIC-loop DOF (SolveSpace)
 - `GET  /runs?limit=` · `GET /assembly/{name}` · `GET /catalog` · `GET /layouts?limit=` — read back from atlas
 - `/assemble` & `/build` responses include `loop_constraints` + `needs_dof_solver` (mates the tree solver skipped)
@@ -241,6 +244,7 @@ Parts (`parts.py::PART_GENS`), each exposes **named anchor frames** (the rig-equ
 - `housing(width,depth,height,wall,bore_d,bolt_d,bolt_circle,bolt_count,fillet)` → `base`,`top`,`bore_axis`,`bolt0..N` — open-top enclosure (filleted box, shelled, floor bore + mount holes; first 'rich' part, T1.5)
 - `sheet_bracket(thickness,base_length,flange_length,width,bend_radius)` → `base`,`mount`,`flange_end`,`flange_face`,`bend` — constant-thickness sheet-metal L-bracket, one 90° bend; `bend_radius` rounds the inner edge (fail-soft, T1.4)
 - `panel(width,depth,height)` → `base`,`top`,`center`,`x_pos`/`x_neg`/`y_pos`/`y_neg` — plain rectangular board/member/box; the architectural primitive (stud/plate/floor/sheathing), used by the `architectural` library (T6.3)
+- `link(length,width,thickness)` → `p0`,`p1`,`center` — planar linkage bar (rounded ends + pivot bores); the interface primitive for posing mechanisms as assemblies (T10.2: a 4-bar = 4 links placed by the geometric solver)
 - `spacer(outer_d,bore_d,height)` → `bottom`,`top` (enables chained stacks plate→spacer→gear)
 - `shaft(diameter,length)` → `base`,`top`,`mid`,`key` (off-axis marker; mate into a bore via `revolute`)
 - `threaded_rod(major_diameter,pitch,length)` → `base`,`top`,`axis` — a REAL helical thread

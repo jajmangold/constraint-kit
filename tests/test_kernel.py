@@ -485,6 +485,46 @@ def test_four_bar_geometry_builds():
 
 
 @test
+def test_pose_four_bar_assembly_closes_loop():
+    """T10.2: route a 4-bar loop through the geometric solver and POSE it as an assembly of 4 distinct link
+    parts. The loop must CLOSE — every link's pin anchors land on the solved joints, and shared joints
+    coincide between adjacent links. The bridge from SolveSpace to the assembly builder; geometry is truth."""
+    import math
+    from constraint_kit import builder
+    r = builder.pose_four_bar(ground=100, crank=30, coupler=90, rocker=60, input_angle_deg=60)
+    P = r["positions"]
+    assert len(r["links"]) == 4 and r["mass_g"] > 0 and r["grashof"] is True
+    assert r["gruebler_dof"] == 1                                # intrinsic mobility (Kutzbach)
+    spec = [("ground", "A", "D", 100), ("crank", "A", "B", 30),
+            ("coupler", "B", "C", 90), ("rocker", "D", "C", 60)]
+    worldpin = {}
+    maxerr = 0.0
+    for (name, j0, j1, L), child in zip(spec, r["assy"].children):
+        _, anch = builder._generate("link", {"length": L, "width": 8, "thickness": 4})
+        for jname, aname in ((j0, "p0"), (j1, "p1")):
+            (x, y, _z), _rot = (child.loc * anch[aname]).toTuple()
+            maxerr = max(maxerr, math.dist((x, y), P[jname]))     # pin lands on its solved joint
+            worldpin.setdefault(jname, []).append((x, y))
+    assert maxerr < 1e-3                                         # loop closes (pins on solved joints)
+    # each shared joint (B,C touched by 2 links; A,D by 2) — the links' pins coincide there
+    for jname, pts in worldpin.items():
+        for px, py in pts[1:]:
+            assert math.dist((px, py), pts[0]) < 1e-3
+    # exports as a real assembly
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        out = builder.export(r["assy"], os.path.join(d, "fb"))
+        assert os.path.getsize(out["step"]) > 0 and os.path.getsize(out["glb"]) > 0
+    # honest failure: a linkage that cannot close raises
+    try:
+        builder.pose_four_bar(ground=100, crank=10, coupler=10, rocker=10, input_angle_deg=60)
+    except ValueError:
+        return
+    raise AssertionError("expected non-closing linkage to raise")
+
+
+@test
 def test_three_gear_train():
     from constraint_kit import builder
     spec = {"parts": [{"id": "g1", "type": "spur_gear", "params": {"module": 1.5, "teeth": 20}},

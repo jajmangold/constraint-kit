@@ -185,6 +185,34 @@ def dof_four_bar(req: FourBarReq) -> dict:
     return linkage.solve_four_bar(req.ground, req.crank, req.coupler, req.rocker, req.input_angle_deg)
 
 
+class FourBarPoseReq(BaseModel):
+    ground: float = 100.0
+    crank: float = 30.0
+    coupler: float = 90.0
+    rocker: float = 60.0
+    input_angle_deg: float = 60.0
+    width: float = 8.0
+    thickness: float = 4.0
+    name: str | None = None
+
+
+@app.post("/mechanism/four_bar")
+def mechanism_four_bar(req: FourBarPoseReq) -> dict:
+    """E10/T10.2: route a 4-bar loop through the GEOMETRIC solver and POSE it as an assembly of 4 distinct
+    link parts (the bridge from SolveSpace to the builder) → one STEP+GLB. The loop closes by construction
+    (each link placed on its solved joints). Raises 400 if the linkage can't close."""
+    name = req.name or "four_bar"
+    try:
+        res = builder.pose_four_bar(req.ground, req.crank, req.coupler, req.rocker, req.input_angle_deg,
+                                    req.width, req.thickness)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"four-bar pose failed: {exc}") from exc
+    exported = builder.export(res["assy"], os.path.join(OUTPUT_DIR, name))
+    return {"ok": True, "positions": res["positions"], "links": res["links"], "mass_g": res["mass_g"],
+            "mechanism_dof": res["mechanism_dof"], "gruebler_dof": res["gruebler_dof"],
+            "grashof": res["grashof"], "solver": res["solver"], **exported}
+
+
 @app.post("/dof/slider_crank")
 def dof_slider_crank(req: SliderCrankReq) -> dict:
     """GEOMETRIC-loop DOF via SolveSpace — slider-crank (revolute×3 + prismatic)."""

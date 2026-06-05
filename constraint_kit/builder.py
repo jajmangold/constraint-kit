@@ -267,6 +267,44 @@ def build_assembly(spec: dict):
     return assy, report_parts
 
 
+def _two_point_loc(p0, p1) -> cq.Location:
+    """Rigid z=0-plane placement that lands a part's local (0,0)->p0 and (length,0)->p1: rotate about Z by
+    the p0->p1 direction, then translate to p0 (cq.Location applies rotation about the origin first)."""
+    ang = math.degrees(math.atan2(p1[1] - p0[1], p1[0] - p0[0]))
+    return cq.Location(cq.Vector(p0[0], p0[1], 0), cq.Vector(0, 0, 1), ang)
+
+
+def pose_four_bar(ground: float, crank: float, coupler: float, rocker: float,
+                  input_angle_deg: float = 60.0, width: float = 8.0, thickness: float = 4.0,
+                  material: str = "steel") -> dict:
+    """T10.2: route a 4-bar loop through the GEOMETRIC solver and POSE it as an assembly of distinct link
+    parts — the bridge from the geometric-loop solver (SolveSpace) to the assembly builder. linkage.solve_
+    four_bar gives the four joint positions; each of the 4 links (ground A-D, crank A-B, coupler B-C,
+    rocker D-C) is placed by a 2-point rigid transform onto its solved joints, so the loop CLOSES by
+    construction (shared joints coincide). Returns {assy, positions, dof, links, mass_g, ...}; raises if the
+    linkage can't close. DOF reported two ways that must agree (SolveSpace solved-dof == Gruebler)."""
+    from . import linkage
+    sol = linkage.solve_four_bar(ground, crank, coupler, rocker, input_angle_deg)
+    if not sol["ok"]:
+        raise ValueError(f"4-bar cannot close (grashof={sol['grashof']}, input={input_angle_deg}deg)")
+    P = sol["positions"]
+    spec_links = [("ground", "A", "D", ground), ("crank", "A", "B", crank),
+                  ("coupler", "B", "C", coupler), ("rocker", "D", "C", rocker)]
+    assy = cq.Assembly()
+    links, mass = [], 0.0
+    density = DENSITY_G_MM3.get(material.lower(), DENSITY_G_MM3["steel"])
+    for name, j0, j1, length in spec_links:
+        wp, _anch = _generate("link", {"length": length, "width": width, "thickness": thickness})
+        loc = _two_point_loc(P[j0], P[j1])
+        assy.add(wp, name=name, loc=loc)
+        m = round(_shape(wp).Volume() * density, 2)
+        mass += m
+        links.append({"name": name, "joints": [j0, j1], "length_mm": length, "mass_g": m})
+    return {"assy": assy, "positions": P, "links": links, "mass_g": round(mass, 2),
+            "mechanism_dof": sol["mechanism_dof"], "gruebler_dof": sol["gruebler_dof"],
+            "grashof": sol["grashof"], "solver": sol["solver"]}
+
+
 def _resolve_specs_prepass(spec: dict) -> dict:
     """If `resolve_specs`: resolve thread facts for screw/threaded parts BEFORE geometry generation. For
     `threaded_rod`, INJECT the resolved major_diameter+pitch into the part params (only where not already
