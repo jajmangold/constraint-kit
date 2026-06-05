@@ -46,7 +46,8 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   validate.py          # interference/clash check: bbox prefilter + exact OCC boolean (world solids) [Phase C]
   synthesis.py         # SMT design synthesis (Z3): discrete/mixed-int constraint solving -> design to a spec
   dsl.py               # the DSL recipe layer: validate() two-tier diagnostics (static + geometry/anchor tier that catches bad anchors & build errors before compile) + verify() geometric-equivalence SIGNATURE (volume+area+sorted-bbox+topology) vs reference
-  intent.py            # intent layer (design front-end): resolve() under-specified intent -> canonical PROVENANCE-tracked form (defaults from generator sigs + standards from spec compiler), honest decline on unknown kind; to_program() lowers to DSL [first slice]
+  intent.py            # intent layer (design front-end): resolve() under-specified intent -> canonical PROVENANCE-tracked form (defaults from generator sigs + standards from spec compiler); kind-name normalization (+ learned_aliases.json); honest decline on unknown kind, UNEXPRESSIBLE feature, or unmodeled VARIANT (variant_mismatch); to_program() lowers to DSL
+  learned_aliases.json # DATA the autonomous auto-fixer (drivers/autofix.py) writes — verified kind/param aliases the resolver merges on import (never edited code)
   planner.py           # qwen27b, schema-enforced: plan() [3D] + plan_layout() [2D] + plan_intent() [NL->INTENT]
   store.py             # atlas persistence (Neo4j); FAIL-SOFT. Also CkSpecResolution work-breadcrumbs
   qa.py                # qwen27b vision QA
@@ -67,6 +68,17 @@ drivers/capstone_gearbox.py  # CAPSTONE: the whole stack with solvers CROSS-VALI
                        #   ratio, Willis independently confirms it; build (parallel prewarm) -> interference
                        #   -> BOM/mass/CG -> exploded + 2D drawing + BOM doc -> render+QA (fail-soft). Hermetic
                        #   proof: tests/test_kernel.py::test_capstone_gearbox_full_stack
+drivers/census.py      # AUTONOMOUS LOOP slice 1 (read-only): DeepSeek generates a diverse request stream ->
+                       #   /intent/design concurrently -> classify + RANK gaps by frequency + grow the
+                       #   verified-pair corpus. Writes census_report.json. The statistical gauntlet.
+drivers/autofix.py     # AUTONOMOUS LOOP slice 2 (verified): consume the census gaps -> DeepSeek proposes
+                       #   high-confidence param-name aliases -> apply as DATA (learned_aliases.json) ONLY if
+                       #   each flips a decline AND the full suite stays green -> auto-commit; ambiguous +
+                       #   new-part gaps -> review_queue.json (human-ratify; never auto-writes generator code)
+drivers/reference_verify.py  # known-good parts we didn't make (bd_warehouse) -> reference SIGNATURES (ground
+                       #   truth) + native-vs-real cross-verify DELTA (e.g. our `bearing` is +39% volume vs a
+                       #   real 608). Breaks the verify-against-our-own-generators circularity.
+drivers/dsl_experiment.py / dsl_compare.py / target_gauntlet.py  # measurement drivers (direct-vs-intent, gauntlet)
 ```
 
 ## Run

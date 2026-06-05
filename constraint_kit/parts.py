@@ -384,6 +384,27 @@ def coupling(outer_d: float = 25.0, bore_d: float = 8.0, length: float = 30.0, s
                 "center": _loc(0, 0, length / 2.0), "bore_axis": _loc(0, 0, 0)}
 
 
+def pulley(outer_d: float = 40.0, groove_d: float = 30.0, width: float = 12.0,
+           groove_width: float = 6.0, bore_d: float = 8.0):
+    """A flanged belt/cable pulley — a wheel with two outer flanges and a central groove, bored on-axis.
+    Axis = Z, z in [0, width]. outer_d = flange OD, groove_d = groove valley diameter, groove_width = width
+    of the central groove band.
+
+    Anchors: 'bore_base' (z=0 bore center), 'bore_top' (z=width), 'center'.
+    HONESTLY a smooth flanged pulley: TOOTHED timing pulleys (GT2/HTD, with belt teeth) are NOT modeled.
+    Added because the census measured 'pulley' among the top recurring missing parts.
+    """
+    r_out, r_grv = max(outer_d / 2.0, 1.0), max(groove_d / 2.0, 0.5)
+    wp = cq.Workplane("XY").circle(r_out).extrude(width)
+    if groove_d < outer_d and 0 < groove_width < width:               # cut the central groove (annular band)
+        z0 = (width - groove_width) / 2.0
+        ring = cq.Workplane("XY").workplane(offset=z0).circle(r_out).circle(r_grv).extrude(groove_width)
+        wp = wp.cut(ring)
+    if bore_d and bore_d > 0:
+        wp = wp.faces(">Z").workplane().hole(bore_d)
+    return wp, {"bore_base": _loc(0, 0, 0), "bore_top": _loc(0, 0, width), "center": _loc(0, 0, width / 2.0)}
+
+
 PART_GENS = {
     "plate": plate,
     "panel": panel,
@@ -403,4 +424,5 @@ PART_GENS = {
     "washer": washer,
     "bearing": bearing,
     "coupling": coupling,
+    "pulley": pulley,
 }

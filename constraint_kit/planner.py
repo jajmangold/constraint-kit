@@ -26,7 +26,7 @@ SPEC_SCHEMA = {
                     "id": {"type": "string"},
                     "type": {"enum": ["plate", "panel", "link", "housing", "adapter", "sheet_bracket", "spur_gear",
                                       "helical_gear", "ring_gear", "planetary_gearset",
-                                      "spacer", "shaft", "coupling", "four_bar", "bolt", "nut", "washer", "bearing",
+                                      "spacer", "shaft", "coupling", "pulley", "four_bar", "bolt", "nut", "washer", "bearing",
                                       "extrusion", "ball_bearing", "screw", "threaded_rod",
                                       "bearing_block", "sprocket", "flange", "pipe"]},
                     "material": {"enum": ["steel", "stainless", "aluminum", "brass",
@@ -239,6 +239,7 @@ An intent lists ENTITIES (parts/subsystems) and INTERFACES (how they connect). F
   washer{outer_d,bore_d,thick}; nut{af,height,bore_d}; bolt{shank_d,length,head_d,head_h};
   panel{width,depth,height}; link{length,width,thickness}; housing{width,depth,height,wall,bore_d};
   coupling{outer_d,bore_d,length,set_screw_d} (a RIGID shaft coupler — not jaw/flexible);
+  pulley{outer_d,groove_d,width,groove_width,bore_d} (a smooth flanged belt pulley — not toothed/timing);
   sheet_bracket{thickness,base_length,flange_length,width}; bearing{outer_d,bore_d,width};
   ring_gear{module,teeth,width,rim_width}; planetary_gearset{module,sun_teeth,planet_teeth,width,n_planets};
   extrusion{rail_size,length}; bearing_block{width,depth,height,bore_d,bolt_d,bolt_spacing};

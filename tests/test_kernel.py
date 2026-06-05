@@ -1605,6 +1605,11 @@ def test_coupling_part():
                                    {"entities": [{"kind": "coupling"}]})            # -> decline reasons
     assert not intent.variant_mismatch("a rigid shaft coupling 25mm OD",
                                        {"entities": [{"kind": "coupling"}]})        # rigid is fine
+    # pulley (another seeded top-demand part): builds a flanged wheel; a TOOTHED/timing pulley declines
+    wpp, ap = builder._generate("pulley", {"outer_d": 40, "groove_d": 30, "width": 12, "groove_width": 6, "bore_d": 8})
+    assert wpp.val().Volume() > 0 and {"bore_base", "bore_top", "center"} <= set(ap)
+    assert intent._normalize_kind("timing_pulley") is None and intent._normalize_kind("pulley") == "pulley"
+    assert intent.variant_mismatch("a GT2 timing pulley", {"entities": [{"kind": "pulley"}]})
 
 
 @test

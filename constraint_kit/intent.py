@@ -35,6 +35,7 @@ _VARIANT_QUALIFIERS = {
     "coupling": ["jaw", "flexible", "spider", "oldham", "beam", "bellows", "elastomer", "universal"],
     "bearing": ["tapered", "roller", "needle", "thrust", "angular"],
     "ball_bearing": ["tapered", "roller", "needle"],
+    "pulley": ["timing", "toothed", "gt2", "htd", "synchronous", "geared"],
 }
 
 
