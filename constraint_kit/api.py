@@ -17,7 +17,7 @@ import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from . import (assembly, bom, builder, drawing, layout, library, linkage, planner, planetary, rules,
+from . import (assembly, bom, builder, drawing, dsl, layout, library, linkage, planner, planetary, rules,
                spec_compiler, spec_db, spec_sources, store, synthesis, tolerance)
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/srv/nvme-data/containers/constraint-kit/cadkit/output")
@@ -528,6 +528,40 @@ def assembly_drawing(req: DrawingReq) -> dict:
                                               req.plane, req.height, tuple(req.views))}
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"drawing failed: {exc}") from exc
+
+
+class DslCheckReq(BaseModel):
+    program: dict
+
+
+class DslVerifyReq(BaseModel):
+    program: dict
+    expected_volume: float | None = None
+    reference: dict | None = None     # {type, params} -> ground-truth volume computed server-side
+    tol_frac: float = 1e-3
+
+
+@app.post("/dsl/check")
+def dsl_check(req: DslCheckReq) -> dict:
+    """The DSL diagnostic engine (LSP backend / LLM self-correction signal): static validation of a program,
+    returning LSP-shaped diagnostics. Fast, no geometry kernel."""
+    return dsl.check(req.program)
+
+
+@app.post("/dsl/verify")
+def dsl_verify(req: DslVerifyReq) -> dict:
+    """Compile a program and verify its EXACT geometry volume against a known reference (corpus filter / RL
+    reward). Supply `expected_volume`, or a `reference` {type, params} whose ground-truth volume is computed
+    here. Returns {match, volume, expected, rel_err}."""
+    expected = req.expected_volume
+    if expected is None and req.reference:
+        try:
+            expected = dsl.reference_volume(req.reference["type"], req.reference.get("params", {}))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(400, f"bad reference: {exc}") from exc
+    if expected is None:
+        raise HTTPException(400, "provide expected_volume or reference {type, params}")
+    return {"reference_volume": round(expected, 4), **dsl.verify(req.program, expected, req.tol_frac)}
 
 
 @app.post("/rules/fastener_engagement")

@@ -1471,6 +1471,40 @@ def test_derived_ports_survive_param_changes():
     assert {"top", "bottom", "center"} <= set(solid)             # extreme-face/center ports still derive
 
 
+@test
+def test_dsl_validate_and_verify():
+    """The DSL engine: static `validate` catches malformed programs (the LSP/self-correction signal), and
+    `verify` confirms a program's EXACT compiled volume matches a known reference (the corpus filter / RL
+    reward) while rejecting wrong geometry. Geometry is truth."""
+    from constraint_kit import dsl
+    # a clean program validates
+    good = {"parts": [{"id": "g", "type": "spur_gear", "params": {"module": 1, "teeth": 20, "bore_d": 8}},
+                      {"id": "s", "type": "spacer", "params": {"outer_d": 20, "bore_d": 0, "height": 10}}],
+            "mates": [{"a": "g", "b": "s", "intent": "seat_on"}]}
+    assert dsl.check(good)["ok"]
+    # static errors are caught with LSP-shaped diagnostics
+    bad = {"parts": [{"id": "x", "type": "spurr_gear", "params": {}},          # typo'd part type
+                     {"id": "x", "type": "spacer"}],                           # duplicate id
+           "mates": [{"a": "x", "b": "nope", "type": "weldd"}]}                # bad ref + bad mate type
+    res = dsl.check(bad)
+    codes = {d["code"] for d in res["diagnostics"]}
+    assert not res["ok"]
+    assert {"unknown-part-type", "duplicate-id", "unknown-part-ref", "bad-mate-type"} <= codes
+    assert all({"severity", "code", "message", "path"} <= set(d) for d in res["diagnostics"])  # LSP-shaped
+    # verify: exact volume match to a known reference (solid cylinder spacer, analytic volume)
+    ref_params = {"outer_d": 20, "bore_d": 0, "height": 10}
+    ref_vol = dsl.reference_volume("spacer", ref_params)
+    import math
+    approx(ref_vol, math.pi * 100 * 10, eps=1.0)                              # ~cylinder volume
+    prog = {"parts": [{"id": "s", "type": "spacer", "params": ref_params}], "mates": []}
+    assert dsl.verify(prog, ref_vol)["match"] is True                        # correct -> verified pair
+    wrong = {"parts": [{"id": "s", "type": "spacer",
+                        "params": {"outer_d": 20, "bore_d": 0, "height": 12}}], "mates": []}
+    assert dsl.verify(wrong, ref_vol)["match"] is False                      # wrong geometry -> rejected
+    # a statically-invalid program is honestly a non-match, not a crash
+    assert dsl.verify({"parts": []}, ref_vol)["match"] is False
+
+
 def _mkparts(specs):
     """Build a minimal builder-style parts map {id: {wp, anchors, type}} from (id, type, params) tuples."""
     from constraint_kit.builder import ALL_PART_GENS
