@@ -46,6 +46,7 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   validate.py          # interference/clash check: bbox prefilter + exact OCC boolean (world solids) [Phase C]
   synthesis.py         # SMT design synthesis (Z3): discrete/mixed-int constraint solving -> design to a spec
   dsl.py               # the DSL recipe layer: validate() two-tier diagnostics (static + geometry/anchor tier that catches bad anchors & build errors before compile) + verify() geometric-equivalence SIGNATURE (volume+area+sorted-bbox+topology) vs reference
+  intent.py            # intent layer (design front-end): resolve() under-specified intent -> canonical PROVENANCE-tracked form (defaults from generator sigs + standards from spec compiler), honest decline on unknown kind; to_program() lowers to DSL [first slice]
   planner.py           # qwen27b, schema-enforced specs: plan() [3D] + plan_layout() [2D]
   store.py             # atlas persistence (Neo4j); FAIL-SOFT. Also CkSpecResolution work-breadcrumbs
   qa.py                # qwen27b vision QA
@@ -112,6 +113,8 @@ image only when changing `cadkit/Dockerfile` (deps).
   parts along `axis` (default +Z), offset each by rank·factor → one STEP+GLB of the separated assembly
 - `POST /assembly/drawing {defs,root,plane?,height?,views?,name?}` — **[E7/T7.2]** 2D drawing set: cross-section
   DXF (cut on plane) + orthographic projection SVGs + overall dims (exact OCC geometry; no GD&T frames)
+- `POST /intent/resolve {intent, build?}` — **[intent layer]** resolve under-specified intent → canonical
+  provenance-tracked form (defaults/standards/decline); `build:true` lowers to a DSL program + check + signature
 - `POST /dsl/check {program}` — DSL static validation → LSP-shaped diagnostics (LLM self-correction signal)
 - `POST /dsl/verify {program, reference|expected_volume, tol_frac?}` — compile + geometric-equivalence
   **signature** match vs a known reference (volume + area + sorted-bbox + solids/faces/edges — volume alone

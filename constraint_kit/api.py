@@ -17,8 +17,8 @@ import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from . import (assembly, bom, builder, drawing, dsl, layout, library, linkage, planner, planetary, rules,
-               spec_compiler, spec_db, spec_sources, store, synthesis, tolerance)
+from . import (assembly, bom, builder, drawing, dsl, intent, layout, library, linkage, planner, planetary,
+               rules, spec_compiler, spec_db, spec_sources, store, synthesis, tolerance)
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/srv/nvme-data/containers/constraint-kit/cadkit/output")
 
@@ -546,6 +546,30 @@ def dsl_check(req: DslCheckReq) -> dict:
     """The DSL diagnostic engine (LSP backend / LLM self-correction signal): static validation of a program,
     returning LSP-shaped diagnostics. Fast, no geometry kernel."""
     return dsl.check(req.program)
+
+
+class IntentReq(BaseModel):
+    intent: dict
+    build: bool = False
+
+
+@app.post("/intent/resolve")
+def intent_resolve(req: IntentReq) -> dict:
+    """Intent layer: resolve an under-specified intent into a canonical, provenance-tracked form (ambiguity
+    filled from defaults, standards from the spec compiler, unknown kinds declined). `build:true` also lowers
+    a resolved (non-declined) intent to a DSL program and compiles+verifies it."""
+    resolved = intent.resolve(req.intent)
+    out = {"resolved": resolved}
+    if req.build and not resolved["declined"]:
+        try:
+            program = intent.to_program(resolved)
+            out["program"] = program
+            out["check"] = dsl.check(program)
+            if out["check"]["ok"]:
+                out["signature"] = dsl.program_signature(program)
+        except Exception as exc:  # noqa: BLE001
+            out["build_error"] = f"{type(exc).__name__}: {exc}"
+    return out
 
 
 @app.post("/dsl/signature")

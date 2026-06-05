@@ -1532,6 +1532,38 @@ def test_dsl_validate_and_verify():
     assert not dsl.check({"unsupported": ""})["ok"]                         # empty reason is malformed
 
 
+@test
+def test_intent_resolve_with_provenance():
+    """Intent layer (first slice): the deterministic resolver turns under-specified intent into a canonical,
+    fully-specified, PROVENANCE-tagged form — ambiguity resolved (not guessed or failed), standards pulled
+    from the spec compiler, unknown kinds honestly declined, and a resolved intent lowers to a valid DSL
+    program. No LLM, no geometry kernel."""
+    from constraint_kit import dsl, intent
+    # ambiguity: "a gear" -> every spur_gear param filled, tagged 'default' (honest, not pretended-stated)
+    r = intent.resolve({"entities": [{"id": "g", "kind": "spur_gear", "requirements": {}}]})
+    assert not r["declined"]
+    g = r["entities"][0]["requirements"]
+    assert {"module", "teeth", "width", "bore_d"} <= set(g)
+    assert all(g[k]["provenance"] == "default" for k in ("module", "teeth", "width", "bore_d"))
+    assert g["teeth"]["value"] == 20                                   # the generator's own default
+    # partial spec: stated value kept as 'stated', the rest 'default'
+    r2 = intent.resolve({"entities": [{"id": "s", "kind": "spacer",
+                                       "requirements": {"outer_d": {"value": 40}}}]})
+    s = r2["entities"][0]["requirements"]
+    assert s["outer_d"]["provenance"] == "stated" and s["outer_d"]["value"] == 40
+    assert s["height"]["provenance"] == "default"
+    # standards: a designation pulls values from the spec compiler with provenance 'standard' + source_ref
+    r3 = intent.resolve({"entities": [{"id": "b", "kind": "bolt", "requirements": {}, "designation": "M6x1"}]})
+    std = [v for v in r3["entities"][0]["requirements"].values() if v.get("provenance") == "standard"]
+    assert std and all(v.get("source_ref") for v in std)
+    # honest decline: a kind no part expresses
+    r4 = intent.resolve({"entities": [{"id": "x", "kind": "synchronizer", "requirements": {}}]})
+    assert r4["declined"] and r4["unresolved"][0]["kind"] == "synchronizer"
+    # a resolved intent lowers to a valid, compilable DSL program (resolve -> to_program -> dsl.check)
+    prog = intent.to_program(r)
+    assert prog["parts"][0]["type"] == "spur_gear" and dsl.check(prog)["ok"]
+
+
 def _mkparts(specs):
     """Build a minimal builder-style parts map {id: {wp, anchors, type}} from (id, type, params) tuples."""
     from constraint_kit.builder import ALL_PART_GENS
