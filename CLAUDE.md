@@ -47,7 +47,7 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   synthesis.py         # SMT design synthesis (Z3): discrete/mixed-int constraint solving -> design to a spec
   dsl.py               # the DSL recipe layer: validate() two-tier diagnostics (static + geometry/anchor tier that catches bad anchors & build errors before compile) + verify() geometric-equivalence SIGNATURE (volume+area+sorted-bbox+topology) vs reference
   intent.py            # intent layer (design front-end): resolve() under-specified intent -> canonical PROVENANCE-tracked form (defaults from generator sigs + standards from spec compiler), honest decline on unknown kind; to_program() lowers to DSL [first slice]
-  planner.py           # qwen27b, schema-enforced specs: plan() [3D] + plan_layout() [2D]
+  planner.py           # qwen27b, schema-enforced: plan() [3D] + plan_layout() [2D] + plan_intent() [NL->INTENT]
   store.py             # atlas persistence (Neo4j); FAIL-SOFT. Also CkSpecResolution work-breadcrumbs
   qa.py                # qwen27b vision QA
   spec_compiler.py     # SPEC COMPILER core: preseed, trust scoring, fact build, validate, resolve()
@@ -113,7 +113,11 @@ image only when changing `cadkit/Dockerfile` (deps).
   parts along `axis` (default +Z), offset each by rank·factor → one STEP+GLB of the separated assembly
 - `POST /assembly/drawing {defs,root,plane?,height?,views?,name?}` — **[E7/T7.2]** 2D drawing set: cross-section
   DXF (cut on plane) + orthographic projection SVGs + overall dims (exact OCC geometry; no GD&T frames)
-- `POST /intent/resolve {intent, build?}` — **[intent layer]** resolve under-specified intent → canonical
+- `POST /intent/design {request, build?}` — **[intent layer]** NL → qwen parse (`plan_intent`) → resolve →
+  honest decline (OOV) OR lower to DSL + build + signature. The validated intent path end-to-end on the
+  RESIDENT qwen model (parse rules: fixed-base-first, interface direction, encode negations — measured to
+  beat direct NL→DSL on assemblies). Fail-soft on planner outage (502)
+- `POST /intent/resolve {intent, build?}` — **[intent layer]** resolve a (pre-parsed) intent → canonical
   provenance-tracked form (defaults/standards/decline); `build:true` lowers to a DSL program + check + signature
 - `POST /dsl/check {program}` — DSL static validation → LSP-shaped diagnostics (LLM self-correction signal)
 - `POST /dsl/verify {program, reference|expected_volume, tol_frac?}` — compile + geometric-equivalence

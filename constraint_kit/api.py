@@ -553,6 +553,36 @@ class IntentReq(BaseModel):
     build: bool = False
 
 
+class IntentDesignReq(BaseModel):
+    request: str
+    build: bool = True
+
+
+@app.post("/intent/design")
+def intent_design(req: IntentDesignReq) -> dict:
+    """The intent layer end to end: natural language -> qwen parse -> deterministic resolve (+provenance) ->
+    honest decline (OOV) OR lower to DSL + build. The production form of the validated intent path, with
+    parse on the RESIDENT qwen model. Fail-soft: a planner outage is reported (502), not crashed."""
+    try:
+        parsed = planner.plan_intent(req.request)
+    except Exception as exc:  # noqa: BLE001 -- qwen unreachable / bad response
+        raise HTTPException(502, f"planner (qwen) parse failed: {type(exc).__name__}: {exc}") from exc
+    resolved = intent.resolve(parsed)
+    out: dict = {"intent": parsed, "resolved": resolved}
+    if resolved["declined"]:
+        return {**out, "declined": True, "decline_reasons": resolved["decline_reasons"]}
+    if req.build:
+        try:
+            program = intent.to_program(resolved)
+            out["program"] = program
+            out["check"] = dsl.check(program)
+            if out["check"]["ok"]:
+                out["signature"] = dsl.program_signature(program)
+        except Exception as exc:  # noqa: BLE001
+            out["build_error"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
 @app.post("/intent/resolve")
 def intent_resolve(req: IntentReq) -> dict:
     """Intent layer: resolve an under-specified intent into a canonical, provenance-tracked form (ambiguity

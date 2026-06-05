@@ -191,6 +191,74 @@ a=A a_joint="right" b=B b_joint="left" offset=[10,0]. Keep parts from overlappin
 >= the gap you want. Respond with ONLY the JSON spec."""
 
 
+# INTENT schema (the design front-end): the model emits a structured INTENT, not geometry. `kind` is a
+# FREE STRING on purpose — so it can name a part we don't have (synchronizer, helical_gear) and the
+# deterministic resolver honestly DECLINES it, rather than the schema forcing a wrong-but-valid substitution.
+INTENT_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["entities"],
+    "properties": {
+        "entities": {
+            "type": "array", "minItems": 1,
+            "items": {
+                "type": "object", "additionalProperties": False, "required": ["id", "kind", "requirements"],
+                "properties": {
+                    "id": {"type": "string"}, "kind": {"type": "string"},
+                    "requirements": {"type": "object"}, "designation": {"type": "string"},
+                },
+            },
+        },
+        "interfaces": {
+            "type": "array",
+            "items": {
+                "type": "object", "additionalProperties": False, "required": ["a", "b", "relation"],
+                "properties": {"a": {"type": "string"}, "b": {"type": "string"},
+                               "relation": {"enum": ["seat_on", "insert", "fasten", "mesh"]}},
+            },
+        },
+    },
+}
+
+# The parse rules MEASURED to take the intent path's assembly score 6/12 -> 12/12 (fixed-base-first,
+# interface direction, encode negations). Same doctrine as plan(): qwen for semantics, kernel for the rest.
+SYSTEM_INTENT = """You convert a natural-language part/assembly request into a structured design INTENT (NOT geometry).
+
+An intent lists ENTITIES (parts/subsystems) and INTERFACES (how they connect). For each entity:
+- id: a short unique name.
+- kind: a part type you know, OR — if you have NO matching type — the REAL name of the thing
+  (e.g. "synchronizer", "helical_gear", "tapered_bearing", "shift_fork"). NEVER substitute a different
+  part for one you lack; name it honestly and it will be declined downstream.
+- requirements: ONLY the values the user explicitly stated; OMIT anything unstated (defaults fill downstream).
+  Use these param names (mm): spacer{outer_d,bore_d,height}; spur_gear{module,teeth,width,bore_d};
+  plate{width,depth,thick,boss_d,boss_h,bolt_d,bolt_circle,bolt_count}; shaft{diameter,length};
+  washer{outer_d,bore_d,thick}; nut{af,height,bore_d}; bolt{shank_d,length,head_d,head_h};
+  panel{width,depth,height}; link{length,width,thickness}; housing{width,depth,height,wall,bore_d};
+  sheet_bracket{thickness,base_length,flange_length,width}; bearing{outer_d,bore_d,width};
+  ring_gear{module,teeth,width,rim_width}; planetary_gearset{module,sun_teeth,planet_teeth,width,n_planets}.
+  For a standard part add "designation" (e.g. "M6x1").
+
+INTERFACES connect entities; relation in [seat_on, insert, fasten, mesh].
+
+RULES:
+(1) List the FIXED BASE entity FIRST — the part others attach to (a plate, a housing, the ground/largest part).
+(2) In an interface, "a" is that base/target and "b" is the part placed onto it (a plate is "a", the
+    gear/bolt/washer seated on it is "b"; for fasten the holed part like the plate is "a", the fastener is "b").
+(3) Capture EVERY stated number, and encode negations/explicit values: "no bore"/"solid" -> bore_d:0.
+
+Examples:
+- "a gear" -> {"entities":[{"id":"g","kind":"spur_gear","requirements":{}}],"interfaces":[]}
+- "a solid spacer, 20mm OD, 10mm tall, no bore" -> {"entities":[{"id":"s","kind":"spacer","requirements":{"outer_d":20,"bore_d":0,"height":10}}],"interfaces":[]}
+- "a 24-tooth m1 gear seated on a plate's boss" -> {"entities":[{"id":"plate","kind":"plate","requirements":{}},{"id":"g","kind":"spur_gear","requirements":{"module":1,"teeth":24}}],"interfaces":[{"a":"plate","b":"g","relation":"seat_on"}]}
+- "a synchronizer ring" -> {"entities":[{"id":"s","kind":"synchronizer","requirements":{}}],"interfaces":[]}
+
+Respond with ONLY the JSON intent."""
+
+
+def plan_intent(request: str, *, url: str | None = None, model: str | None = None,
+                timeout: float = 120.0) -> dict:
+    """NL -> structured design INTENT (the parse stage of the intent layer), on the resident qwen model."""
+    return _chat(SYSTEM_INTENT, request, INTENT_SCHEMA, url, model, timeout)
+
+
 def _chat(system: str, request: str, schema: dict, url: str | None, model: str | None,
           timeout: float) -> dict:
     url = (url or os.environ.get("PLANNER_URL", "http://localhost:8000/v1")).rstrip("/")
