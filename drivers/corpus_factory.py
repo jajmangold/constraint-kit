@@ -105,52 +105,79 @@ def _match(a, b, tol=0.02):
     return a.get("n_faces") == b.get("n_faces")     # topology must match -> the SAME part, faithfully reproduced
 
 
-def _pool_build(programs, workers):
-    ctx = mp.get_context("spawn")                    # spawn, never fork (OCC threads already loaded)
+def _build_sigs(ex, programs):
+    """Build many programs on a PERSISTENT executor (workers import cadquery once, then build many)."""
     out = [None] * len(programs)
-    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as ex:
-        for idx, sig, _err in ex.map(_build_and_sig, list(enumerate(programs))):
-            out[idx] = sig
+    for idx, sig, _err in ex.map(_build_and_sig, list(enumerate(programs))):
+        out[idx] = sig
     return out
+
+
+def bench_specs(n):
+    """n DISTINCT programs cycling the part types at varied params (cache-miss => real builds) — a
+    representative corpus mix for sustained-throughput measurement on a WARM pool."""
+    progs = []
+    for i in range(n):
+        k = i % 5
+        if k == 0:
+            p = {"type": "spacer", "params": {"outer_d": 12 + i % 40, "bore_d": 5, "height": 4 + i % 14}}
+        elif k == 1:
+            p = {"type": "washer", "params": {"outer_d": 14 + i % 20, "bore_d": 6, "thick": 1 + i % 4}}
+        elif k == 2:
+            p = {"type": "shaft", "params": {"diameter": 6 + i % 18, "length": 20 + i % 90}}
+        elif k == 3:
+            p = {"type": "panel", "params": {"width": 20 + i % 80, "depth": 20 + i % 40, "height": 4 + i % 12}}
+        else:
+            p = {"type": "spur_gear", "params": {"module": 1, "teeth": 12 + i % 36, "width": 5, "bore_d": 6}}
+        progs.append({"parts": [{"id": "p", **p}], "mates": []})
+    return progs
 
 
 def main():
     if not KEY:
         print("DEEPSEEK_API_KEY not set"); return
     workers = int(sys.argv[1]) if len(sys.argv) > 1 else 32
+    bench_n = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
     refs = reference_specs()
-    print(f"reference parts: {len(refs)} | build workers: {workers}")
+    print(f"reference parts: {len(refs)} | build workers: {workers} | bench n: {bench_n}")
+    ctx = mp.get_context("spawn")                    # spawn, never fork (OCC threads already loaded)
 
-    # ground-truth signatures (also measures the build pool)
-    t = time.time()
-    ref_sigs = _pool_build([{"parts": [{"id": "p", "type": tp, "params": pp}], "mates": []} for tp, pp in refs], workers)
-    rt = time.time() - t
-    print(f"reference build: {len(refs)} parts in {rt:.1f}s -> {len(refs)/rt:.1f} builds/sec")
+    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as ex:   # ONE persistent warm pool
+        # ground-truth signatures (COLD — this first map pays the one-time worker startup/import)
+        t = time.time()
+        ref_sigs = _build_sigs(ex, [{"parts": [{"id": "p", "type": tp, "params": pp}], "mates": []} for tp, pp in refs])
+        print(f"reference build (cold, incl. startup): {len(refs)} in {time.time()-t:.1f}s")
 
-    # caption + generate (DeepSeek, the LANGUAGE side, concurrent)
-    t = time.time()
-    with ThreadPoolExecutor(max_workers=32) as ex:
-        caps = list(ex.map(caption, refs))
-    with ThreadPoolExecutor(max_workers=32) as ex:
-        progs = list(ex.map(generate, caps))
-    cand = [(i, caps[i], progs[i]) for i in range(len(refs)) if caps[i] and progs[i]]
-    print(f"caption+generate: {len(cand)} candidates in {time.time()-t:.1f}s")
+        # caption + generate (DeepSeek, the LANGUAGE side, concurrent)
+        t = time.time()
+        with ThreadPoolExecutor(max_workers=32) as tex:
+            caps = list(tex.map(caption, refs))
+        with ThreadPoolExecutor(max_workers=32) as tex:
+            progs = list(tex.map(generate, caps))
+        cand = [(i, caps[i], progs[i]) for i in range(len(refs)) if caps[i] and progs[i]]
+        print(f"caption+generate: {len(cand)} candidates in {time.time()-t:.1f}s")
 
-    # build candidates on the pool + verify vs reference signature
-    t = time.time()
-    cand_sigs = _pool_build([c[2] for c in cand], workers)
-    bt = time.time() - t
-    kept = 0
-    with open(CORPUS, "a") as fh:
-        for j, (ri, cap, prog) in enumerate(cand):
-            if _match(cand_sigs[j], ref_sigs[ri]):
-                fh.write(json.dumps({"description": cap, "program": prog,
-                                     "signature": cand_sigs[j], "source": "factory"}) + "\n")
-                kept += 1
-    print("\n=== factory ===")
-    print(f"candidate build: {len(cand)} in {bt:.1f}s -> {len(cand)/bt:.1f} builds/sec ({workers} workers)")
-    print(f"verified pairs kept: {kept}/{len(cand)} ({100*kept//max(len(cand),1)}% yield)")
-    print(f"corpus total: {sum(1 for _ in open(CORPUS))}")
+        # build candidates on the WARM pool + verify vs reference signature
+        t = time.time()
+        cand_sigs = _build_sigs(ex, [c[2] for c in cand])
+        bt = time.time() - t
+        kept = 0
+        with open(CORPUS, "a") as fh:
+            for j, (ri, cap, prog) in enumerate(cand):
+                if _match(cand_sigs[j], ref_sigs[ri]):
+                    fh.write(json.dumps({"description": cap, "program": prog,
+                                         "signature": cand_sigs[j], "source": "factory"}) + "\n")
+                    kept += 1
+        print(f"\ncandidate build (warm): {len(cand)} in {bt:.1f}s -> {len(cand)/max(bt,1e-9):.0f} builds/sec")
+        print(f"verified pairs kept: {kept}/{len(cand)} ({100*kept//max(len(cand),1)}% yield) | corpus total: {sum(1 for _ in open(CORPUS))}")
+
+        # SUSTAINED throughput on the warm pool (representative part mix, distinct params)
+        t = time.time()
+        bsigs = _build_sigs(ex, bench_specs(bench_n))
+        dt = time.time() - t
+        ok = sum(1 for s in bsigs if s)
+        print(f"\n=== sustained throughput (WARM, {workers} workers) ===")
+        print(f"  {ok}/{bench_n} parts in {dt:.1f}s -> {ok/max(dt,1e-9):.0f} builds/sec (mixed: spacer/washer/shaft/panel/gear)")
 
 
 if __name__ == "__main__":
