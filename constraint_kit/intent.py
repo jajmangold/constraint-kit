@@ -70,6 +70,24 @@ _REQ_ALIASES = {
 }
 
 
+def _load_learned_aliases():
+    """Merge in aliases LEARNED by the autonomous fixer (drivers/autofix.py) — kept as DATA in a tracked
+    JSON, never edited code, so each learned mapping is a reviewable, reversible diff and the resolver picks
+    them up on a fresh import. Fail-soft if the file is absent/garbled."""
+    import json
+    import os
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "learned_aliases.json")) as f:
+            learned = json.load(f)
+        _KIND_ALIASES.update({str(k).strip().lower(): str(v) for k, v in (learned.get("kind") or {}).items()})
+        _REQ_ALIASES.update({str(k).strip().lower(): str(v) for k, v in (learned.get("req") or {}).items()})
+    except Exception:  # noqa: BLE001 -- missing/garbled learned file just means no learned aliases
+        pass
+
+
+_load_learned_aliases()
+
+
 def _alias_req_key(key: str, defaults: dict) -> str:
     """Map a stated requirement key to the chosen kind's param name where possible (exact, then a guarded
     synonym, then a unique substring match). Returns the key unchanged if nothing fits — which then surfaces
