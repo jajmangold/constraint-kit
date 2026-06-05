@@ -42,6 +42,9 @@ def _gen_key(ptype: str, params: dict) -> str:
 # standard metric coarse-thread pitch (mm) -> turns a bare size like "M5" into the catalog's "M5-0.8"
 _COARSE_PITCH = {"M2": 0.4, "M2.5": 0.45, "M3": 0.5, "M4": 0.7, "M5": 0.8, "M6": 1.0,
                  "M8": 1.25, "M10": 1.5, "M12": 1.75, "M16": 2.0, "M20": 2.5}
+# params that are legitimately STRING-typed (designations/enums) -> never numeric-coerce these
+_STRING_PARAMS = {"rail_size", "size", "nps", "kind", "material", "designation", "identifier",
+                  "bearing_type", "fastener_type", "hand", "name"}
 
 
 def _coerce_params(ptype: str, params: dict) -> dict:
@@ -67,6 +70,15 @@ def _coerce_params(ptype: str, params: dict) -> dict:
                      flags=re.I).strip()                       # '2"', "2-inch", "2 inch" -> "2"
         if nps:
             p["nps"] = nps
+    # generic: a numeric param the LLM sent as a string ("12.7", "10mm") -> a number (int if whole). Measured
+    # from the census: the top build-failure was sprocket chain_pitch/bore_d arriving as strings. String-typed
+    # params (designations/enums) are excluded so e.g. flange nps "2" stays "2".
+    for k, v in list(p.items()):
+        if k not in _STRING_PARAMS and isinstance(v, str):
+            m = re.fullmatch(r"\s*(-?\d+(?:\.\d+)?)\s*(?:mm|millimet(?:er|re)s?)?\s*", v, flags=re.I)
+            if m:
+                num = float(m.group(1))
+                p[k] = int(num) if num.is_integer() else num
     return p
 
 

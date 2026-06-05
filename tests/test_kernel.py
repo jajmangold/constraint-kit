@@ -1596,6 +1596,13 @@ def test_param_value_coercion():
     assert builder._coerce_params("flange", {"nps": "2-inch"})["nps"] == "2"
     assert builder._coerce_params("flange", {"nps": '2"'})["nps"] == "2"
     assert builder._coerce_params("spacer", {"outer_d": 20})["outer_d"] == 20      # untouched passthrough
+    # numeric strings (the census's top build-failure: sprocket chain_pitch/bore_d as strings) -> numbers,
+    # but string-typed params (nps, size, rail_size, material) are left alone
+    sc = builder._coerce_params("sprocket", {"num_teeth": "16", "chain_pitch": "12.7", "bore_d": "10mm"})
+    assert sc["num_teeth"] == 16 and sc["chain_pitch"] == 12.7 and sc["bore_d"] == 10
+    assert builder._coerce_params("flange", {"nps": "2", "material": "steel"})["nps"] == "2"   # stays string
+    wp2, _a2 = builder._generate("sprocket", {"num_teeth": 16, "chain_pitch": "12.7", "thickness": 4, "bore_d": "10"})
+    assert wp2.val().Volume() > 0                                                  # the census bug, fixed
     # end to end: a part the LLM mis-formats now builds instead of raising
     wp, _anch = builder._generate("extrusion", {"rail_size": "2020", "length": 60})
     assert wp.val().Volume() > 0
