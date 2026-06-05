@@ -45,7 +45,7 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   rules.py             # design-rule + strength checks [E9/T4.3]: engagement/fit/clearance, beam-bending, bolt-preload
   validate.py          # interference/clash check: bbox prefilter + exact OCC boolean (world solids) [Phase C]
   synthesis.py         # SMT design synthesis (Z3): discrete/mixed-int constraint solving -> design to a spec
-  dsl.py               # the DSL recipe layer: validate() diagnostics (LSP backend) + verify() geometric-equivalence SIGNATURE (volume+area+sorted-bbox+topology counts) vs reference
+  dsl.py               # the DSL recipe layer: validate() two-tier diagnostics (static + geometry/anchor tier that catches bad anchors & build errors before compile) + verify() geometric-equivalence SIGNATURE (volume+area+sorted-bbox+topology) vs reference
   planner.py           # qwen27b, schema-enforced specs: plan() [3D] + plan_layout() [2D]
   store.py             # atlas persistence (Neo4j); FAIL-SOFT. Also CkSpecResolution work-breadcrumbs
   qa.py                # qwen27b vision QA

@@ -1491,6 +1491,20 @@ def test_dsl_validate_and_verify():
     assert not res["ok"]
     assert {"unknown-part-type", "duplicate-id", "unknown-part-ref", "bad-mate-type"} <= codes
     assert all({"severity", "code", "message", "path"} <= set(d) for d in res["diagnostics"])  # LSP-shaped
+    # geometry tier (the measured check<->compile gap): a mate referencing a non-existent anchor must be
+    # caught STATICALLY (a bolt has seat/tip/head_top, not 'shank') — previously this passed check then
+    # died at compile with KeyError.
+    anchor_bad = {"parts": [{"id": "plate", "type": "plate", "params": {}},
+                            {"id": "b", "type": "bolt", "params": {"shank_d": 5, "length": 16}}],
+                  "mates": [{"a": "plate", "a_joint": "bolt0", "b": "b", "b_joint": "shank",
+                             "type": "coincident"}]}
+    ares = dsl.check(anchor_bad)
+    assert not ares["ok"] and any(d["code"] == "unknown-anchor" for d in ares["diagnostics"])
+    assert dsl.check(anchor_bad, geometry=False)["ok"]                      # pure-static tier doesn't catch it
+    # build-error tier: params that crash the generator surface as a diagnostic, not an exception
+    assert any(d["code"] == "part-build-error" for d in
+               dsl.check({"parts": [{"id": "s", "type": "spacer",
+                                     "params": {"outer_d": -5, "bore_d": 0, "height": 10}}]})["diagnostics"])
     # verify: geometric-equivalence SIGNATURE vs a known reference (solid cylinder spacer)
     ref_params = {"outer_d": 20, "bore_d": 0, "height": 10}
     ref_sig = dsl.reference_signature("spacer", ref_params)

@@ -24,10 +24,22 @@ def _pid(p: dict):
     return p.get("id") or p.get("name")
 
 
-def validate(program: dict) -> list[dict]:
-    """STATIC validation (no geometry kernel): structure, known part types, resolvable mate references,
-    valid mate type/intent, required frames. Returns LSP-shaped diagnostics ([] = clean). This is the
-    fast tier an LSP runs on every edit and an LLM loop reads to self-correct."""
+def _part_anchor_names(part_type: str, params: dict) -> set:
+    """Anchor/frame names a part actually exposes (authored anchors + derived ports), by generating it
+    (cached, T3.1). Lets the checker reject mates that reference a non-existent anchor — the measured
+    failure mode (a bolt has seat/tip/head_top, not 'shank')."""
+    from . import builder
+    wp, anchors = builder._generate(part_type, params)
+    return set(mate_intent.available_frames({"wp": wp, "anchors": anchors}))
+
+
+def validate(program: dict, geometry: bool = True) -> list[dict]:
+    """Validation → LSP-shaped diagnostics ([] = clean). Two tiers: pure-static (structure, known part
+    types, resolvable mate refs, valid type/intent) always; and — when `geometry=True` (default) — an
+    anchor tier that GENERATES each part (cached) to confirm every explicit mate's a_joint/b_joint actually
+    exists on its part and that the part's params produce buildable geometry. The geometry tier is what
+    catches the check↔compile gap (a statically-valid program that fails to build); an LSP can pass
+    geometry=False for instant keystroke feedback."""
     d: list[dict] = []
 
     def err(code, msg, path):
@@ -69,6 +81,18 @@ def validate(program: dict) -> list[dict]:
             ids.append(pid)
 
     idset = set(ids)
+    # geometry tier: generate each known part (cached) to get its real anchor set + catch param/build errors
+    anchors_by_id: dict = {}
+    if geometry:
+        for i, p in enumerate(parts):
+            pid, t = _pid(p), p.get("type")
+            if pid and t in ALL_PART_GENS:
+                try:
+                    anchors_by_id[pid] = _part_anchor_names(t, p.get("params") or {})
+                except Exception as exc:  # noqa: BLE001 -- bad params -> generator raises; that's an error
+                    err("part-build-error", f"part {pid!r} ({t}) fails to build: "
+                        f"{type(exc).__name__}: {exc}", f"parts[{i}].params")
+
     known_intents = set(mate_intent.INTENT_SYNONYMS)
     for j, m in enumerate(program.get("mates", []) or []):
         path = f"mates[{j}]"
@@ -84,9 +108,13 @@ def validate(program: dict) -> list[dict]:
         else:
             if m.get("type") not in mates.MATE_TYPES:
                 err("bad-mate-type", f"type {m.get('type')!r} not in {list(mates.MATE_TYPES)}", f"{path}.type")
-            for jk in ("a_joint", "b_joint"):
-                if jk not in m and m.get("type") not in ("contact",):
-                    warn("missing-joint", f"explicit mate without {jk} (ok only if a derived/contact mate)", f"{path}.{jk}")
+            for jk, side in (("a_joint", "a"), ("b_joint", "b")):
+                if jk not in m:
+                    if m.get("type") not in ("contact",):
+                        warn("missing-joint", f"explicit mate without {jk} (ok only if a derived/contact mate)", f"{path}.{jk}")
+                elif m.get(side) in anchors_by_id and m[jk] not in anchors_by_id[m[side]]:
+                    err("unknown-anchor", f"part {m[side]!r} has no anchor {m[jk]!r}; "
+                        f"available: {sorted(anchors_by_id[m[side]])}", f"{path}.{jk}")
     return d
 
 
@@ -105,9 +133,10 @@ def _check_part(p, path, err):
         err("bad-params", "'params' must be an object", f"{path}.params")
 
 
-def check(program: dict) -> dict:
-    """Convenience wrapper: {ok, diagnostics, n_errors}. `ok` = no error-severity diagnostics."""
-    diags = validate(program)
+def check(program: dict, geometry: bool = True) -> dict:
+    """Convenience wrapper: {ok, diagnostics, n_errors}. `ok` = no error-severity diagnostics. `geometry`
+    enables the anchor/build tier (default on; pass False for instant pure-static LSP feedback)."""
+    diags = validate(program, geometry=geometry)
     n_err = sum(1 for x in diags if x["severity"] == "error")
     return {"ok": n_err == 0, "diagnostics": diags, "n_errors": n_err}
 
