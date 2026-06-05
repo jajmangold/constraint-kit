@@ -1613,6 +1613,31 @@ def test_coupling_part():
 
 
 @test
+def test_verify_against_mesh_reference():
+    """Cross-representation verify: a part's MESH signature (volume+area+bbox, no topology) matches its
+    B-rep build within a tessellation tolerance — so OpenSCAD/STL ground truth is usable via the EXISTING
+    partial-reference verify. Proves the mesh-vs-solid concern is just a which-fields + tolerance detail.
+    Hermetic (cadquery + trimesh; no OpenSCAD)."""
+    import os
+    import tempfile
+    import cadquery as cq
+    import trimesh
+    from constraint_kit import builder, dsl
+    params = {"outer_d": 20, "bore_d": 8, "height": 10}
+    wp, _ = builder._generate("spacer", params)
+    f = tempfile.mktemp(suffix=".stl")
+    cq.exporters.export(wp, f, tolerance=0.01, angularTolerance=0.05)
+    mesh_ref = dsl.mesh_signature(f)
+    os.remove(f)
+    assert set(mesh_ref) == {"volume", "area", "bbox_sorted"}            # representation-independent only
+    prog = {"parts": [{"id": "s", "type": "spacer", "params": params}], "mates": []}
+    assert dsl.verify(prog, mesh_ref, tol_frac=0.02)["match"] is True    # B-rep build matches mesh ground truth
+    wrong = {"parts": [{"id": "s", "type": "spacer",
+                        "params": {"outer_d": 20, "bore_d": 8, "height": 14}}], "mates": []}
+    assert dsl.verify(wrong, mesh_ref, tol_frac=0.02)["match"] is False  # wrong geometry still rejected
+
+
+@test
 def test_param_value_coercion():
     """Param-VALUE normalization (gauntlet cascade): the build chokepoint canonicalizes common human/LLM
     value formats so a catalog generator that wants 'M5-0.8' still builds from 'M5'. Helps every path."""

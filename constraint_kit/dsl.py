@@ -205,6 +205,18 @@ def reference_signature(part_type: str, params: dict) -> dict:
     return signature(wp)
 
 
+def mesh_signature(stl_path: str) -> dict:
+    """Representation-INDEPENDENT signature (volume + surface area + sorted bbox) of a MESH (STL) — for
+    verifying a B-rep build against MESH ground truth (e.g. an OpenSCAD/BOSL2 part). Deliberately omits the
+    topology counts (mesh triangles are not B-rep faces); the geometric fields match a solid to <0.01% at
+    fine tessellation, so `verify` — which compares only the reference's present fields — matches across
+    representations with a small tessellation tolerance."""
+    import trimesh
+    m = trimesh.load(stl_path)
+    return {"volume": round(float(m.volume), 4), "area": round(float(m.area), 4),
+            "bbox_sorted": sorted(round(float(x), 4) for x in (m.bounds[1] - m.bounds[0]))}
+
+
 def program_signature(program: dict) -> dict:
     """Compile a whole program (part OR assembly) and return its geometric signature — so a reference can
     be an authored PROGRAM, not just a single part (lets us verify assemblies too)."""
