@@ -25,19 +25,40 @@ _PRELUDE = ("include <BOSL2/std.scad>\ninclude <BOSL2/ball_bearings.scad>\n"
 
 
 def _stl_to_solid(stl_path: str) -> cq.Shape:
-    """Read an STL mesh into a watertight cadquery SOLID (sew the triangle faces -> shell -> solid), so a
-    rendered vitamin is a first-class cq.Shape (transformable, exportable, Volume/Area-measurable)."""
+    """Read an STL mesh into watertight cadquery geometry: sew the triangle faces, then make a SOLID from
+    each resulting shell — so MULTI-BODY parts (a hinge = two leaves + a pin) become a compound of solids,
+    not a crash. Single-body parts return one solid. A first-class cq.Shape (transformable, measurable)."""
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid, BRepBuilderAPI_Sewing
     from OCP.StlAPI import StlAPI_Reader
-    from OCP.TopoDS import TopoDS, TopoDS_Shape
+    from OCP.TopAbs import TopAbs_SHELL
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS, TopoDS_Builder, TopoDS_Compound, TopoDS_Shape
     sh = TopoDS_Shape()
     StlAPI_Reader().Read(sh, stl_path)
     sew = BRepBuilderAPI_Sewing(1e-4)
     sew.Add(sh)
     sew.Perform()
-    mk = BRepBuilderAPI_MakeSolid()
-    mk.Add(TopoDS.Shell_s(sew.SewedShape()))
-    return cq.Shape(mk.Solid())
+    sewed = sew.SewedShape()
+    shells = []
+    exp = TopExp_Explorer(sewed, TopAbs_SHELL)
+    while exp.More():
+        shells.append(TopoDS.Shell_s(exp.Current()))
+        exp.Next()
+    if not shells:                                        # sewed may itself be a single shell
+        shells = [TopoDS.Shell_s(sewed)]
+    solids = []
+    for shell in shells:
+        mk = BRepBuilderAPI_MakeSolid()
+        mk.Add(shell)
+        solids.append(mk.Solid())
+    if len(solids) == 1:
+        return cq.Shape(solids[0])
+    comp = TopoDS_Compound()                              # multi-body -> a compound of solids
+    bld = TopoDS_Builder()
+    bld.MakeCompound(comp)
+    for s in solids:
+        bld.Add(comp, s)
+    return cq.Shape(comp)
 
 
 # library vitamins keyed by canonical name: aliases the LLM might use -> a BOSL2 scad template + defaults.
@@ -49,6 +70,23 @@ VITAMIN_CATALOG = {
                     "nema23", "nema_23", "nema14", "nema_14", "servo_motor"],
         "scad": "nema_stepper_motor(size={size}, h={h}, shaft_len={shaft_len});",
         "defaults": {"size": 17, "h": 40, "shaft_len": 20},
+    },
+    "hinge": {                                            # census top OOV; BOSL2 knuckle_hinge (render-verified)
+        "aliases": ["hinge", "door_hinge", "butt_hinge", "knuckle_hinge", "hinge_leaf", "piano_hinge"],
+        "exclude": ["living", "flexure", "concealed", "european", "spring"],   # not a knuckle hinge -> decline
+        "scad": "knuckle_hinge(length={length}, segs={segs}, offset={offset}, knuckle_diam={knuckle_diam}, pin_diam={pin_diam});",
+        "defaults": {"length": 60, "segs": 5, "offset": 5, "knuckle_diam": 6, "pin_diam": 3},
+    },
+    "gear_rack": {                                        # a linear rack (we have no native rack)
+        "aliases": ["rack", "gear_rack", "linear_rack", "rack_gear"],
+        "scad": "rack(pitch={pitch}, teeth={teeth}, height={height}, thickness={thickness});",
+        "defaults": {"pitch": 5, "teeth": 12, "height": 8, "thickness": 6},
+    },
+    "worm": {                                             # a worm screw (no native worm); not the meshing wheel
+        "aliases": ["worm", "worm_screw", "worm_drive", "worm_shaft"],
+        "exclude": ["gear", "wheel"],                     # worm_gear/worm_wheel is the mating gear -> decline
+        "scad": "worm(circ_pitch={circ_pitch}, d={d}, l={l});",
+        "defaults": {"circ_pitch": 5, "d": 30, "l": 40},
     },
 }
 
@@ -63,6 +101,8 @@ def vitamin_for(kind, requirements=None):
     k = kind.strip().lower()
     req = requirements or {}
     for cname, spec in VITAMIN_CATALOG.items():
+        if any(x in k for x in spec.get("exclude", [])):  # an unmodeled variant -> don't route (honest decline)
+            continue
         if not any(a in k for a in spec["aliases"]):
             continue
         p = dict(spec["defaults"])
