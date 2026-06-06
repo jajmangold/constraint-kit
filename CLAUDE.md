@@ -45,7 +45,9 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   rules.py             # design-rule + strength checks [E9/T4.3]: engagement/fit/clearance, beam-bending, bolt-preload
   validate.py          # interference/clash check: bbox prefilter + exact OCC boolean (world solids) [Phase C]
   synthesis.py         # SMT design synthesis (Z3): discrete/mixed-int constraint solving -> design to a spec
-  dsl.py               # the DSL recipe layer: validate() two-tier diagnostics (static + geometry/anchor tier that catches bad anchors & build errors before compile) + verify() geometric-equivalence SIGNATURE (volume+area+sorted-bbox+topology) vs reference
+  dsl.py               # the DSL recipe layer: validate() two-tier diagnostics (static + geometry/anchor tier that catches bad anchors & build errors before compile) + verify() geometric-equivalence SIGNATURE (volume+area+sorted-bbox+topology) vs reference; mesh_signature() (representation-independent {vol,area,bbox} from an STL -> verify vs MESH ground truth, ~2% tessellation tol); overlap_fraction() pile-up guard (max pairwise bbox overlap of world-placed parts; gate >0.5)
+  vitamins.py          # OpenSCAD 'vitamins' tier (coverage scale-up): render a BOSL2 module headless -> STL -> WATERTIGHT cq solid (sew + per-shell make-solid, multi-body -> compound) -> first-class part with bbox-DERIVED anchors, TAGGED tier=vitamin (approximate mounting, never precise press-fit). VITAMIN_CATALOG (nema_motor/hinge/gear_rack/worm/bevel_gear, render-verified, per-entry variant `exclude`) + vitamin_for(): intent.resolve routes an OOV kind here at the DECLINE boundary. Cached by (scad,fn) via T3.1
+  reference_signatures.json  # ground-truth catalog: BOSL2 (BSD-2) mesh reference signatures + native-vs-real cross-verify deltas (our bearing +36-39% vs real 608; our spur_gear +0.5% vs BOSL2's)
   intent.py            # intent layer (design front-end): resolve() under-specified intent -> canonical PROVENANCE-tracked form (defaults from generator sigs + standards from spec compiler); kind-name normalization (+ learned_aliases.json); honest decline on unknown kind, UNEXPRESSIBLE feature, or unmodeled VARIANT (variant_mismatch); to_program() lowers to DSL
   learned_aliases.json # DATA the autonomous auto-fixer (drivers/autofix.py) writes — verified kind/param aliases the resolver merges on import (never edited code)
   planner.py           # qwen27b, schema-enforced: plan() [3D] + plan_layout() [2D] + plan_intent() [NL->INTENT]
@@ -78,6 +80,20 @@ drivers/autofix.py     # AUTONOMOUS LOOP slice 2 (verified): consume the census 
 drivers/reference_verify.py  # known-good parts we didn't make (bd_warehouse) -> reference SIGNATURES (ground
                        #   truth) + native-vs-real cross-verify DELTA (e.g. our `bearing` is +39% volume vs a
                        #   real 608). Breaks the verify-against-our-own-generators circularity.
+drivers/corpus_factory.py  # the NL<->CAD data factory: DeepSeek captions reference parts + generates programs;
+                       #   a PERSISTENT 32-worker spawn pool builds; verifier keeps faithful pairs. Measured:
+                       #   ~98 builds/s sustained (mixed parts, warm; ~1000/s simple), 95-97% yield
+drivers/scad_reference.py  # BOSL2 ground-truth recorder: render module -> STL -> mesh signature (watertight-
+                       #   gated, render-to-verify) -> reference_signatures.json + native-vs-real deltas
+drivers/visual_qa.py   # VISUAL census: sample diverse corpus entries -> build -> tools/render_part.py render
+                       #   -> qwen27b verdict. Every NO gets eyeball+geometry ARBITRATION (the VLM is a second
+                       #   opinion). Found the origin-pile class (40 poisoned corpus entries) the signatures
+                       #   couldn't see -> dsl.overlap_fraction gate + builder AUTO-LAYOUT of unmated parts
+                       #   (a "set of N" lays out in a row; under-mated assemblies become visible kits, never
+                       #   deceptive piles; reported per-part as auto_laid_out)
+tools/render_part.py   # CAD-QA renderer: Blender WORKBENCH studio + CAVITY + outline, elev 30, CPU-only —
+                       #   parts are legible (teeth/grooves/bores) vs the old flat-silhouette preset. Used by
+                       #   phase0 + visual_qa
 drivers/dsl_experiment.py / dsl_compare.py / target_gauntlet.py  # measurement drivers (direct-vs-intent, gauntlet)
 ```
 

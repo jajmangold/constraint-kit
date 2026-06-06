@@ -22,7 +22,9 @@ CADKIT = os.environ.get("CADKIT_URL", "http://127.0.0.1:8195")
 VLM = os.environ.get("VLM_URL", "http://localhost:8000/v1")
 VLM_MODEL = os.environ.get("MODEL_VLM", "qwen27b")
 BLENDER_IMAGE = os.environ.get("BLENDER_IMAGE", "vrm-automation-blender:4.2.0")
-RENDER_SCRIPT = "/srv/nvme-data/containers/placement/scripts/render_glb.py"
+# CAD-QA renderer (constraint-kit local): WORKBENCH studio + cavity + outline -> features (teeth,
+# grooves, bores) are actually legible. The old placement preset rendered parts as flat silhouettes.
+RENDER_SCRIPT = "/srv/nvme-data/containers/constraint-kit/tools/render_part.py"
 CONTAINERS = "/srv/nvme-data/containers"
 
 DEFAULT_REQUEST = ("a 60mm square 6mm-thick aluminum mounting plate with a centered boss, and a "
@@ -51,6 +53,10 @@ def build(request: str) -> dict:
 
 
 def render(glb: str, preset: str = "three_quarter", res: int = 800) -> str:
+    # render_part.py takes (glb, png, res, azim, elev); keep the preset names as view aliases
+    views = {"three_quarter": ("-35", "30"), "three_quarter_right": ("35", "30"),
+             "hero": ("-25", "18"), "top": ("0", "85"), "front": ("0", "5")}
+    azim, elev = views.get(preset, ("-35", "30"))
     png = os.path.splitext(glb)[0] + f"_{preset}.png"
     print(f"[2/4] render via {BLENDER_IMAGE} (reused) -> {png}")
     cmd = [
@@ -60,7 +66,7 @@ def render(glb: str, preset: str = "three_quarter", res: int = 800) -> str:
         "-v", f"{CONTAINERS}:{CONTAINERS}",
         BLENDER_IMAGE,
         "blender", "--background", "--python", RENDER_SCRIPT, "--",
-        glb, png, str(res), preset,
+        glb, png, str(res), azim, elev,
     ]
     res_proc = subprocess.run(cmd, capture_output=True, text=True)
     if res_proc.returncode != 0 or not os.path.exists(png):
