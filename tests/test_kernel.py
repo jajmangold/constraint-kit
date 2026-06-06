@@ -1252,10 +1252,13 @@ def test_reedit_rebuilds_only_affected_subtree():
 def test_interference_detects_overlap():
     """Two coincident solids overlap -> a clash; the axle (clearance fits) is clean."""
     from constraint_kit import assembly, validate
-    # two shafts both at the origin (the 2nd has no mate) -> full overlap
+    # two shafts EXPLICITLY mated onto the same frame -> full overlap. (Unmated parts no longer pile at the
+    # origin — the builder auto-lays them out — so the clash must be constructed via a mate.)
     clash_defs = {"clash": {"parts": [
         {"id": "a", "type": "shaft", "params": {"diameter": 10, "length": 20}},
-        {"id": "b", "type": "shaft", "params": {"diameter": 10, "length": 20}}], "ports": {}}}
+        {"id": "b", "type": "shaft", "params": {"diameter": 10, "length": 20}}],
+        "mates": [{"a": "a", "a_joint": "base", "b": "b", "b_joint": "base", "type": "coincident"}],
+        "ports": {}}}
     res = assembly.check_interference("clash", clash_defs)
     assert res["ok"] is False and len(res["clashes"]) == 1
     assert res["clashes"][0]["overlap_volume_mm3"] > 100      # large overlap (two Ø10×20 coincident)
@@ -1648,17 +1651,25 @@ def test_verify_against_mesh_reference():
 
 @test
 def test_overlap_pileup_guard():
-    """The visual census found multi-part programs with missing mates build as ORIGIN-PILES (4 gears in the
-    same space, rendering as one part) and 'succeed'. overlap_fraction must flag piles (~1.0) while passing
-    legitimately mated assemblies (~0) and single parts (0)."""
-    from constraint_kit import dsl
-    pile = {"parts": [{"id": f"g{i}", "type": "spur_gear",
-                       "params": {"module": 1.25, "teeth": t, "width": 10, "bore_d": 8}}
-                      for i, t in enumerate((20, 40))], "mates": []}
+    """The visual census found multi-part programs with missing mates built as ORIGIN-PILES (4 gears in the
+    same space, rendering as one part). Two-layer fix: the builder AUTO-LAYS-OUT unmated parts in a row
+    (correct for 'a set of N'; an under-mated assembly becomes a visibly-unassembled kit, reported per-part)
+    and overlap_fraction still flags genuinely-stacked geometry from explicit mates."""
+    from constraint_kit import builder, dsl
+    unmated_set = {"parts": [{"id": f"g{i}", "type": "spur_gear",
+                              "params": {"module": 1.25, "teeth": t, "width": 10, "bore_d": 8}}
+                             for i, t in enumerate((20, 40))], "mates": []}
+    assert dsl.overlap_fraction(unmated_set) < 0.2               # auto-laid-out, no longer a pile
+    _, rep = builder.build_assembly(unmated_set)
+    assert any(e.get("auto_laid_out") for e in rep)              # and it is REPORTED, not silent
+    # genuinely stacked via explicit mates (two gears landed on the same frame) -> still flagged
+    stacked = {"parts": unmated_set["parts"],
+               "mates": [{"a": "g0", "a_joint": "bore_base", "b": "g1", "b_joint": "bore_base",
+                          "type": "coincident"}]}
+    assert dsl.overlap_fraction(stacked) > 0.5
     mated = {"parts": [{"id": "plate", "type": "plate", "params": {}},
                        {"id": "g", "type": "spur_gear", "params": {"module": 1, "teeth": 24, "width": 6, "bore_d": 12}}],
              "mates": [{"a": "plate", "b": "g", "intent": "seat_on"}]}
-    assert dsl.overlap_fraction(pile) > 0.5                      # origin pile -> flagged
     assert dsl.overlap_fraction(mated) < 0.2                     # real assembly -> passes
     assert dsl.overlap_fraction({"parts": [{"id": "s", "type": "spacer",
                                             "params": {"outer_d": 20, "bore_d": 6, "height": 10}}],

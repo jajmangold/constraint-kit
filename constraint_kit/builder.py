@@ -291,6 +291,27 @@ def build_assembly(spec: dict):
         positioned.add(b)
         placed.add(b)
 
+    # AUTO-LAYOUT (visual-census fix): a part never referenced by ANY mate would sit at the origin, so a
+    # multi-part program with missing mates built an overlapping PILE that renders as one part. Lay such
+    # free parts out in a row along +X beside the placed content instead — correct for "a set of N parts",
+    # and an under-mated assembly becomes a visibly-unassembled KIT rather than a deceptive pile. Parts that
+    # appear only as a mate's 'a' anchor a chain and are left where they are. Reported per-part as
+    # `auto_laid_out` so nothing is silent.
+    mate_refs = {m["a"] for m in resolved_mates} | {m["b"] for m in resolved_mates}
+    free = [pid for pid in parts if pid not in positioned and pid not in mate_refs]
+    auto_laid_out: set[str] = set()
+    if free:
+        anchored = [pid for pid in parts if pid not in free]
+        xmax = max((_shape(parts[pid]["wp"]).moved(locs[pid]).BoundingBox().xmax for pid in anchored),
+                   default=0.0)
+        for pid in free:
+            bb = _shape(parts[pid]["wp"]).BoundingBox()
+            gap = max(5.0, 0.15 * max(bb.xlen, bb.ylen, bb.zlen))
+            dx = xmax + gap - bb.xmin
+            locs[pid] = cq.Location(cq.Vector(dx, 0, 0))
+            xmax = dx + bb.xmax
+            auto_laid_out.add(pid)
+
     assy = cq.Assembly()
     report_parts = []
     for pid, p in parts.items():
@@ -302,6 +323,8 @@ def build_assembly(spec: dict):
             "volume_mm3": round(vol, 2), "mass_g": round(vol * density, 2),
             "placed": pid in placed, "gear_fallback": p["fallback"],
         }
+        if pid in auto_laid_out:
+            entry["auto_laid_out"] = True     # transparency: this part had no mate and was laid out, not piled
         if p.get("finish") is not None:
             entry["finish"] = p["finish"]
         report_parts.append(entry)
