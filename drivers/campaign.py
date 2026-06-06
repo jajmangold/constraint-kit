@@ -111,6 +111,25 @@ def geometry_grid():
     return G
 
 
+CAP_BATCH_SYS = ("You caption a known mechanical part as natural-language requests someone would type. {style} "
+                 "Write {k} DIVERSE variants (different wording/order/emphasis, all keeping the key numbers). "
+                 'The part (type + exact params, mm) follows. Output ONLY JSON: {{{{"captions": ["...", ...]}}}}.')
+
+
+def caption_batch(prog, style, k):
+    """K diverse captions in ONE request — multiplies effective concurrency (128 threads x k ≈ the 2500
+    figure) and amortizes input tokens. Moderate k only: one giant request serializes its decode and one
+    bad JSON would lose the whole batch (salvaged per-item here)."""
+    parts = [{"type": p["type"], "params": p.get("params", {})} for p in prog["parts"]]
+    try:
+        out = json.loads(_deepseek(CAP_BATCH_SYS.format(style=STYLES[style], k=k),
+                                   json.dumps(parts if len(parts) > 1 else parts[0]), 0.9))
+        caps = out.get("captions") if isinstance(out, dict) else None
+        return [c.strip() for c in caps if isinstance(c, str) and c.strip()][:k] if caps else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def caption_one(args):
     prog, style = args
     parts = [{"type": p["type"], "params": p.get("params", {})} for p in prog["parts"]]
@@ -174,22 +193,24 @@ def pilot(caps_per_geom=10):
         with open(f"{OUT}/campaign_geometries.jsonl", "w") as fh:
             for prog, sig in verified:
                 fh.write(json.dumps({"program": prog, "signature": sig}) + "\n")
-        # S2: caption multiplication (deduped), direct-paired with the verified program
+        # S2: caption multiplication via BATCHED requests (measured: +44% raw rate AND ~0% dupes vs 40%
+        # duplicate waste from independent singles -> ~2.5x effective unique-caption throughput; 128 threads
+        # x k-per-request ≈ the full 2500 in flight). Deduped, direct-paired with the verified program.
         k = max(1, caps_per_geom // len(styles))
-        jobs = [(gi, st) for gi in range(len(verified)) for st in styles for _ in range(k)]
-        t1 = time.time(); seen = set(); kept = 0
+        jobs = [(gi, st) for gi in range(len(verified)) for st in styles]
+        t1 = time.time(); seen = set(); kept = 0; attempted = 0
         with open(CORPUS, "a") as fh, ThreadPoolExecutor(max_workers=DS_WORKERS) as tex:
-            for gi, st, d in tex.map(lambda j: (j[0], j[1], caption_one((verified[j[0]][0], j[1]))), jobs):
-                if not d:
-                    continue
-                key = " ".join(d.lower().split())
-                if key in seen:
-                    continue
-                seen.add(key)
-                fh.write(json.dumps({"description": d, "program": verified[gi][0],
-                                     "signature": verified[gi][1], "style": st, "source": "campaign"}) + "\n")
-                kept += 1
-        print(f"S2: {kept} unique pairs in {time.time()-t1:.0f}s (deduped from {len(jobs)})")
+            for gi, st, caps in tex.map(lambda j: (j[0], j[1], caption_batch(verified[j[0]][0], j[1], k)), jobs):
+                attempted += k
+                for d in caps:
+                    key = " ".join(d.lower().split())
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    fh.write(json.dumps({"description": d, "program": verified[gi][0],
+                                         "signature": verified[gi][1], "style": st, "source": "campaign"}) + "\n")
+                    kept += 1
+        print(f"S2 (batched x{k}): {kept} unique pairs in {time.time()-t1:.0f}s (from {attempted} attempted)")
         # 1% round-trip AUDIT (drift alarm)
         rows = [json.loads(l) for l in open(CORPUS) if '"campaign"' in l]
         audit = random.Random(11).sample(rows, max(10, len(rows) // 100))
@@ -202,9 +223,47 @@ def pilot(caps_per_geom=10):
     print(f"corpus total: {sum(1 for _ in open(CORPUS))}")
 
 
+def bench(total=1000, k=20):
+    """Singles vs batch-of-k: captions/sec from THIS client, dedup rate, and a spot round-trip yield on the
+    batched output. Measure, don't assume — over-batching serializes decode; under-batching wastes slots."""
+    geoms = random.Random(3).sample(geometry_grid(), 50)
+    style_list = list(STYLES)
+
+    t0 = time.time()
+    jobs = [(geoms[i % 50], style_list[i % 5]) for i in range(total)]
+    with ThreadPoolExecutor(max_workers=DS_WORKERS) as tex:
+        singles = [c for c in tex.map(caption_one, jobs) if c]
+    t_single = time.time() - t0
+
+    t0 = time.time()
+    bjobs = [(geoms[i % 50], style_list[i % 5]) for i in range(total // k)]
+    with ThreadPoolExecutor(max_workers=DS_WORKERS) as tex:
+        batches = list(tex.map(lambda j: caption_batch(j[0], j[1], k), bjobs))
+    batched = [c for b in batches for c in b]
+    t_batch = time.time() - t0
+
+    def uniq(cs):
+        return len({" ".join(c.lower().split()) for c in cs})
+    print(f"singles : {len(singles)} captions in {t_single:.0f}s -> {len(singles)/t_single:.0f}/s "
+          f"(unique {uniq(singles)}/{len(singles)})")
+    print(f"batch{k:3}: {len(batched)} captions in {t_batch:.0f}s -> {len(batched)/t_batch:.0f}/s "
+          f"(unique {uniq(batched)}/{len(batched)})")
+    # spot round-trip yield on batched captions (faithfulness must survive batching)
+    sample = random.Random(5).sample(batched, min(40, len(batched)))
+    with ThreadPoolExecutor(max_workers=DS_WORKERS) as tex:
+        regs = [p for p in tex.map(generate_one, sample) if p]
+    with _pool() as ex:
+        sigs = list(ex.map(_build_and_sig, list(enumerate(regs))))
+    built = sum(1 for _i, s, _e in sigs if s)
+    print(f"batched spot-check: {len(regs)}/{len(sample)} regenerated, {built}/{len(regs)} built")
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "s0"
     if cmd == "s0":
         s0()
+    elif cmd == "bench":
+        bench(int(sys.argv[2]) if len(sys.argv) > 2 else 1000,
+              int(sys.argv[3]) if len(sys.argv) > 3 else 20)
     else:
         pilot(int(sys.argv[2]) if len(sys.argv) > 2 else 10)
