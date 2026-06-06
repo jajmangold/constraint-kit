@@ -372,38 +372,289 @@ def s6(n=800):
     print(f"s6: {len(rows)} trajectories | per class: {dict(by)} | spend: {spend()}")
 
 
+
+
+# ---- v1.1 issue-hunt additions --------------------------------------------------------------------------
+# The TRAINING system prompt — same at train and deploy. Includes the decline rule + vitamin forms + sets,
+# so decline/vitamin/set rows are coherent, and gold traces that reference "the instructions" refer to text
+# that is actually in context (60% of gold traces do).
+TRAIN_SYS = (ASM_GEN_SYS +
+    "\nHONESTY: if the request names a part, variant, or feature this vocabulary cannot express "
+    "(e.g. jaw/flexible coupling, living or concealed hinge, spiral bevel, worm WHEEL, tapered/needle/"
+    "thrust bearing, cam, spring, universal joint, keyway, spline, timing/GT2 pulley), do NOT substitute "
+    'a simpler part - output ONLY {"unsupported":"<what cannot be expressed>"}. '
+    "\nVITAMINS (rendered library parts) - emit {\"type\":\"vitamin\",\"params\":{\"scad\":\"<call>\",\"name\":...,\"fn\":48}} with: "
+    "nema_stepper_motor(size=17|23, h=<mm>, shaft_len=20); | rack(pitch=<mm>, teeth=N, height=8, thickness=6); | "
+    "worm(circ_pitch=5, d=30, l=40); | bevel_gear(teeth=N, mate_teeth=N, mod=M, face_width=8, spiral=0); | "
+    "union(){knuckle_hinge(length=L, segs=5, offset=5, knuckle_diam=6, in_place=true); zrot(180) knuckle_hinge(length=L, segs=5, offset=5, knuckle_diam=6, inner=true, in_place=true);} "
+    "\nA 'set/pack of N' identical parts = N parts and mates []. ")
+
+OOV_TAXONOMY = [
+    ("jaw coupling", "only a RIGID coupling is modeled; jaw/spider elastomer couplings are not"),
+    ("flexible beam coupling", "flexible couplings are not modeled"),
+    ("living hinge", "only knuckle hinges exist; a living hinge is a flexure, not expressible"),
+    ("concealed european hinge", "only knuckle hinges are modeled"),
+    ("spiral bevel gear", "only STRAIGHT bevel gears render; spiral/hypoid are not modeled"),
+    ("worm wheel", "only the worm SCREW is modeled, not the mating wheel"),
+    ("tapered roller bearing", "only deep-groove ball bearings are modeled"),
+    ("needle bearing", "not modeled"),
+    ("thrust bearing", "not modeled"),
+    ("cam and follower", "cams are not modeled"),
+    ("compression spring", "springs are not modeled"),
+    ("torsion spring", "springs are not modeled"),
+    ("universal joint", "not modeled"),
+    ("rod end bearing", "not modeled"),
+    ("o-ring", "seals/gaskets are not modeled"),
+    ("circlip retaining ring", "not modeled"),
+    ("GT2 timing pulley", "only smooth flanged pulleys are modeled; toothed/timing are not"),
+    ("keyed shaft with keyway", "shafts have no keyway feature"),
+    ("splined shaft", "splines are not modeled"),
+    ("cable gland", "not modeled"),
+]
+
+DECLINE_REQ = ('Write {k} varied, natural one-line requests asking for: {term}. Mix dimensioned and vague. '
+               'Output ONLY JSON: {{"requests":["..."]}}.')
+DECLINE_TRACE = ("You are a careful CAD assistant. The vocabulary CANNOT express the requested item ({reason}). "
+                 "Write a brief first-person reasoning (40-100 words): identify what is asked, note the closest "
+                 "modeled part and why substituting it would be wrong, conclude with declining. "
+                 'Output ONLY JSON: {{"trace":"..."}}.')
+
+
+def declines(n=2500):
+    per = max(1, n // len(OOV_TAXONOMY) // 20)
+    rows = []
+    with ThreadPoolExecutor(max_workers=DS_WORKERS) as tex:
+        def reqs(item):
+            term, reason = item
+            out = []
+            for _ in range(per):
+                try:
+                    _r, c = _ds(DECLINE_REQ.format(k=20, term=term), term, 0.9)
+                    out += [(q, term, reason) for q in json.loads(c).get("requests", []) if isinstance(q, str)]
+                except Exception:
+                    pass
+            return out
+        allreq = [r for batch in tex.map(reqs, OOV_TAXONOMY) for r in batch][:n]
+        def mk(j):
+            q, term, reason = j
+            try:
+                _r, c = _ds(DECLINE_TRACE.format(reason=reason), q, 0.5, max_tokens=400)
+                tr = (json.loads(c).get("trace") or "").strip()
+                return {"caption": q, "trace": tr, "decline": reason, "key": "oov:" + term} if tr else None
+            except Exception:
+                return None
+        rows = [r for r in tex.map(mk, allreq) if r]
+    with open(f"{DS_DIR}/declines.jsonl", "a") as fh:
+        for r in rows:
+            fh.write(json.dumps(r) + "\n")
+    print(f"declines: {len(rows)} rows | spend: {spend()}")
+
+
+AMBIG_CAP = ("Write a natural one-line request for this part mentioning ONLY the stated values below "
+             "(leave everything else unspecified, e.g. 'a spur gear with 24 teeth'). "
+             'Output ONLY JSON: {{"desc":"..."}}.')
+AMBIG_TRACE = ("Write brief first-person reasoning (50-120 words): the request states only {stated}; choose "
+               "sensible defaults for the rest ({defaults}) and map to the program params. "
+               'Output ONLY JSON: {{"trace":"..."}}.')
+
+
+def ambiguous(n=1500):
+    from constraint_kit import intent as ck_intent
+    kinds = ["spur_gear", "spacer", "washer", "shaft", "panel", "coupling", "pulley", "bolt", "nut", "link"]
+    rng = random.Random(31)
+    jobs = []
+    for _ in range(n):
+        k = rng.choice(kinds)
+        dfl = {a: b for a, b in ck_intent._param_defaults(k).items() if isinstance(b, (int, float))}
+        stated_keys = rng.sample(sorted(dfl), min(len(dfl), rng.choice((1, 2))))
+        stated = {sk: round(dfl[sk] * rng.choice((0.8, 1.0, 1.5, 2.0)), 1) for sk in stated_keys}
+        params = {**dfl, **stated}
+        prog = {"parts": [{"id": "p", "type": k, "material": "steel", "params": params}], "mates": []}
+        jobs.append((k, stated, dfl, prog))
+    with ThreadPoolExecutor(max_workers=DS_WORKERS) as tex:
+        def mk(j):
+            k, stated, dfl, prog = j
+            try:
+                _r, c = _ds(AMBIG_CAP, json.dumps({"type": k, "stated": stated}), 0.8)
+                cap = (json.loads(c).get("desc") or "").strip()
+                if not cap:
+                    return None
+                _r, c2 = _ds(AMBIG_TRACE.format(stated=json.dumps(stated),
+                                                defaults=json.dumps({a: b for a, b in dfl.items() if a not in stated})),
+                             cap, 0.4, max_tokens=400)
+                tr = (json.loads(c2).get("trace") or "").strip()
+                return {"caption": cap, "trace": tr, "program": prog, "tier": "ambiguous"} if tr else None
+            except Exception:
+                return None
+        rows = [r for r in tex.map(mk, jobs) if r]
+    with _pool() as ex:    # verify the default-resolved programs actually build
+        sigs = list(ex.map(_build_and_sig, [(i, rows[i]["program"]) for i in range(len(rows))]))
+    rows = [rows[i] for i, s, _e in sigs if s]
+    with open(f"{DS_DIR}/traces.jsonl", "a") as fh:
+        for r in rows:
+            fh.write(json.dumps(r) + "\n")
+    print(f"ambiguous: {len(rows)} rows | spend: {spend()}")
+
+
+def vitamins_sets(n_vit=600, n_set=300):
+    from constraint_kit.vitamins import VITAMIN_CATALOG
+    rng = random.Random(37)
+    vit_progs = []
+    for cname, spec in VITAMIN_CATALOG.items():
+        for _ in range(6):
+            p = dict(spec["defaults"])
+            for key in list(p):
+                if isinstance(p[key], (int, float)) and key not in ("segs", "fn"):
+                    p[key] = round(p[key] * rng.choice((0.8, 1.0, 1.4)))
+            try:
+                scad = spec["scad"].format(**p)
+            except Exception:
+                continue
+            vit_progs.append((cname, {"parts": [{"id": "v", "type": "vitamin", "material": "steel",
+                                                 "params": {"scad": scad, "name": cname, "fn": 48}}], "mates": []}))
+    set_progs = []
+    for _ in range(60):
+        k = rng.choice(["spur_gear", "spacer", "washer", "bolt", "link"])
+        nn = rng.choice((2, 3, 4, 5))
+        base = rng.choice(geometry_grid())
+        if base["parts"][0]["type"] != k:
+            continue
+        pp = base["parts"][0]["params"]
+        set_progs.append((f"set of {nn} {k}", {"parts": [{"id": f"p{i}", "type": k, "material": "steel",
+                                                          "params": pp} for i in range(nn)], "mates": []}))
+    with _pool() as ex:
+        vsig = list(ex.map(_build_and_sig, [(i, vit_progs[i][1]) for i in range(len(vit_progs))]))
+        vit_ok = [vit_progs[i] for i, s, _e in vsig if s]
+        ssig = list(ex.map(_build_and_sig, [(i, set_progs[i][1]) for i in range(len(set_progs))]))
+        set_ok = [set_progs[i] for i, s, _e in ssig if s]
+    rows = []
+    with ThreadPoolExecutor(max_workers=DS_WORKERS) as tex:
+        def mkv(j):
+            label, prog = j
+            try:
+                _r, c = _ds(CAP_ASM.format(style=STYLES[random.choice(list(STYLES))]),
+                            structure_summary(prog), 0.8)
+                cap = (json.loads(c).get("desc") or "").strip()
+                if not cap:
+                    return None
+                facts = "; ".join(deterministic_facts(prog)) or "none"
+                _r, c2 = _ds(TRACE_B.format(facts=facts),
+                             json.dumps({"request": cap, "program": prog}), 0.4, max_tokens=700)
+                tr = (json.loads(c2).get("trace") or "").strip()
+                return {"caption": cap, "trace": tr, "program": prog, "tier": "vitamin"} if tr else None
+            except Exception:
+                return None
+        per_v = max(1, n_vit // max(len(vit_ok), 1))
+        vrows = [r for r in tex.map(mkv, [v for v in vit_ok for _ in range(per_v)]) if r]
+        per_s = max(1, n_set // max(len(set_ok), 1))
+        srows = [r for r in tex.map(mkv, [s for s in set_ok for _ in range(per_s)]) if r]
+        for r in srows:
+            r["tier"] = "set"
+        rows = vrows + srows
+    with open(f"{DS_DIR}/traces.jsonl", "a") as fh:
+        for r in rows:
+            fh.write(json.dumps(r) + "\n")
+    print(f"vitamins+sets: {len(vrows)} vitamin, {len(srows)} set rows | spend: {spend()}")
+
+
+def directs(n=8000):
+    from campaign import caption_batch
+    geoms = geometry_grid() + assembly_grid()
+    rng = random.Random(41)
+    jobs = [(rng.choice(geoms), rng.choice(list(STYLES))) for _ in range(max(1, n // 20))]
+    rows = []
+    with ThreadPoolExecutor(max_workers=DS_WORKERS) as tex:
+        with _pool() as ex:
+            sig_cache = {}
+            for (prog, _st), caps in zip(jobs, tex.map(lambda j: caption_batch(j[0], j[1], 20), jobs)):
+                key = json.dumps(prog, sort_keys=True)
+                for c in caps:
+                    rows.append({"description": c, "program": prog})
+    with open(f"{DS_DIR}/directs.jsonl", "a") as fh:
+        for r in rows:
+            fh.write(json.dumps(r) + "\n")
+    print(f"directs: {len(rows)} rows | spend: {spend()}")
+
+
+def extras():
+    declines()
+    ambiguous()
+    vitamins_sets()
+    directs()
+
+
+def _geom_key(r):
+    if "decline" in r:
+        return r["key"]
+    return json.dumps(r.get("program", {}), sort_keys=True)
+
+
 def assemble():
-    traces = [json.loads(l) for l in open(f"{DS_DIR}/traces.jsonl")] if os.path.exists(f"{DS_DIR}/traces.jsonl") else []
-    trajs = [json.loads(l) for l in open(f"{DS_DIR}/trajectories.jsonl")] if os.path.exists(f"{DS_DIR}/trajectories.jsonl") else []
-    direct = [json.loads(l) for l in open(f"{OUT}/dsl_corpus.jsonl")]
+    """v2 (issue-hunt fixes): the SAME system prompt on every row (so 'the instructions' references in 60%
+    of gold traces are coherent + decline/vitamin/set behavior is anchored); geometry-KEYED ~5% val split
+    (random row split leaked near-duplicates of train geometries into val -> memorization metric); declines
+    + direct top-up included; honest stats incl. unique-geometry count."""
+    def load(p):
+        return [json.loads(l) for l in open(p)] if os.path.exists(p) else []
+    traces = load(f"{DS_DIR}/traces.jsonl")
+    trajs = load(f"{DS_DIR}/trajectories.jsonl")
+    decls = load(f"{DS_DIR}/declines.jsonl")
+    direct = load(f"{OUT}/dsl_corpus.jsonl") + load(f"{DS_DIR}/directs.jsonl")
     rows = []
     for t in traces:
         rows.append({"messages": [
+            {"role": "system", "content": TRAIN_SYS},
             {"role": "user", "content": t["caption"]},
             {"role": "assistant", "content": f"<think>\n{t['trace']}\n</think>\n\n{json.dumps(t['program'])}"}],
-            "meta": {"kind": "reasoning", "tier": t["tier"]}})
+            "meta": {"kind": "reasoning", "tier": t["tier"]}, "_key": _geom_key(t)})
     for t in trajs:
-        rows.append({"messages": t["messages"], "loss_mask_turns": t["loss_mask_turns"],
-                     "meta": {"kind": "trajectory", **t["meta"]}})
-    n_reason = len(rows)
-    max_direct = n_reason // 3                               # ceil to the 75/25 rule
-    rng = random.Random(23)
-    for d in rng.sample(direct, min(max_direct, len(direct))):
+        msgs = [{"role": "system", "content": TRAIN_SYS}] + t["messages"]
+        masks = [i + 1 for i in t["loss_mask_turns"]]        # shift for the prepended system turn
+        rows.append({"messages": msgs, "loss_mask_turns": masks,
+                     "meta": {"kind": "trajectory", **t["meta"]},
+                     "_key": _geom_key({"program": json.loads(t["messages"][-1]["content"].split("</think>")[-1].strip())})})
+    for dterm in decls:
         rows.append({"messages": [
+            {"role": "system", "content": TRAIN_SYS},
+            {"role": "user", "content": dterm["caption"]},
+            {"role": "assistant", "content": f"<think>\n{dterm['trace']}\n</think>\n\n"
+                                             + json.dumps({"unsupported": dterm["decline"]})}],
+            "meta": {"kind": "decline"}, "_key": dterm["key"]})
+    n_reason = len(rows)
+    rng = random.Random(23)
+    seen_caps = set()
+    direct_rows = []
+    for d in rng.sample(direct, len(direct)):
+        c = " ".join(d["description"].lower().split())
+        if c in seen_caps:
+            continue
+        seen_caps.add(c)
+        direct_rows.append({"messages": [
+            {"role": "system", "content": TRAIN_SYS},
             {"role": "user", "content": d["description"]},
             {"role": "assistant", "content": f"<think>\n\n</think>\n\n{json.dumps(d['program'])}"}],
-            "meta": {"kind": "direct"}})
-    rng.shuffle(rows)
-    cut = max(1, len(rows) // 50)                            # 2% val
+            "meta": {"kind": "direct"}, "_key": _geom_key(d)})
+        if len(direct_rows) >= n_reason // 3:                # the 75/25 rule
+            break
+    rows += direct_rows
+    # geometry-keyed split: hold out ~5% of KEYS entirely (no leakage of a geometry across the split)
+    keys = sorted({r["_key"] for r in rows})
+    rng.shuffle(keys)
+    val_keys = set(keys[:max(1, len(keys) // 20)])
+    train, val = [], []
+    for r in rows:
+        (val if r.pop("_key") in val_keys else train).append(r)
+    rng.shuffle(train)
     with open(f"{DS_DIR}/val.jsonl", "w") as fh:
-        for r in rows[:cut]:
+        for r in val:
             fh.write(json.dumps(r) + "\n")
     with open(f"{DS_DIR}/train.jsonl", "w") as fh:
-        for r in rows[cut:]:
+        for r in train:
             fh.write(json.dumps(r) + "\n")
     kinds = Counter(r["meta"]["kind"] for r in rows)
-    print(f"assemble: {len(rows)} rows -> train {len(rows)-cut} / val {cut} | mix: {dict(kinds)} "
-          f"({100*(kinds['reasoning']+kinds['trajectory'])//len(rows)}% reasoning)")
+    n_r = kinds["reasoning"] + kinds["trajectory"] + kinds["decline"]
+    print(f"assemble v2: {len(rows)} rows -> train {len(train)} / val {len(val)} (split by {len(keys)} geometry keys, "
+          f"{len(val_keys)} held out) | mix: {dict(kinds)} ({100*n_r//len(rows)}% reasoning)")
 
 
 if __name__ == "__main__":
@@ -414,5 +665,7 @@ if __name__ == "__main__":
         s5(int(sys.argv[2]) if len(sys.argv) > 2 else 2000)
     elif cmd == "s6":
         s6(int(sys.argv[2]) if len(sys.argv) > 2 else 800)
+    elif cmd == "extras":
+        extras()
     elif cmd == "assemble":
         assemble()
