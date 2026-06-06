@@ -139,6 +139,11 @@ def main():
                 for c in detail:
                     build_fail[_norm_err(c)] += 1
             elif outcome == "built":
+                # pile-up gate (visual-census finding): a multi-part program whose parts overlap massively
+                # was built with missing mates (everything at the origin) — NOT a faithful pair, don't keep.
+                if d.get("overlap_fraction", 0) > 0.5:
+                    counts["built-but-piled"] += 1
+                    continue
                 fh.write(json.dumps({"description": req, "program": d.get("program"),
                                      "signature": d.get("signature")}) + "\n")
                 kept += 1

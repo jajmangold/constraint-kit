@@ -579,6 +579,8 @@ def intent_design(req: IntentDesignReq) -> dict:
             out["check"] = dsl.check(program)
             if out["check"]["ok"]:
                 out["signature"] = dsl.program_signature(program)
+                if len(program.get("parts", [])) > 1:    # pile-up guard signal (visual-census finding)
+                    out["overlap_fraction"] = dsl.overlap_fraction(program)
         except Exception as exc:  # noqa: BLE001
             out["build_error"] = f"{type(exc).__name__}: {exc}"
     return out
@@ -612,7 +614,10 @@ def dsl_signature(req: DslCheckReq) -> dict:
     if not res["ok"]:
         return {"ok": False, "diagnostics": res["diagnostics"]}
     try:
-        return {"ok": True, "signature": dsl.program_signature(req.program)}
+        out = {"ok": True, "signature": dsl.program_signature(req.program)}
+        if len(req.program.get("parts", [])) > 1:        # pile-up guard signal (visual-census finding)
+            out["overlap_fraction"] = dsl.overlap_fraction(req.program)
+        return out
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "reason": f"compile-error: {type(exc).__name__}: {exc}"}
 

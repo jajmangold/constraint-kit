@@ -217,6 +217,40 @@ def mesh_signature(stl_path: str) -> dict:
             "bbox_sorted": sorted(round(float(x), 4) for x in (m.bounds[1] - m.bounds[0]))}
 
 
+def overlap_fraction(program: dict) -> float:
+    """Max pairwise bbox-overlap fraction (of the smaller part) across the WORLD-PLACED parts of a built
+    program. ~1.0 means parts are piled on top of each other — the visual census found multi-part programs
+    with missing mates build as ORIGIN-PILES (4 gears occupying the same space, rendering as one), which
+    'build successfully' and poison the corpus. Mated/contacting parts overlap only slightly (a gear seated
+    on a plate, meshing teeth), so a threshold ~0.5 separates piles from legitimate assemblies. 0.0 for
+    single-part programs."""
+    built = compile_program(program)
+    assy = built[0] if isinstance(built, tuple) else built["cq_assembly"]
+    boxes = []
+    for child in assy.children:
+        obj = child.obj
+        shape = obj.val() if hasattr(obj, "val") else obj
+        bb = shape.moved(child.loc).BoundingBox() if child.loc is not None else shape.BoundingBox()
+        boxes.append(((bb.xmin, bb.ymin, bb.zmin), (bb.xmax, bb.ymax, bb.zmax)))
+    worst = 0.0
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            (a0, a1), (b0, b1) = boxes[i], boxes[j]
+            inter = 1.0
+            for k in range(3):
+                d = min(a1[k], b1[k]) - max(a0[k], b0[k])
+                if d <= 0:
+                    inter = 0.0
+                    break
+                inter *= d
+            if inter <= 0:
+                continue
+            va = (a1[0]-a0[0]) * (a1[1]-a0[1]) * (a1[2]-a0[2])
+            vb = (b1[0]-b0[0]) * (b1[1]-b0[1]) * (b1[2]-b0[2])
+            worst = max(worst, inter / max(min(va, vb), 1e-9))
+    return round(worst, 4)
+
+
 def program_signature(program: dict) -> dict:
     """Compile a whole program (part OR assembly) and return its geometric signature — so a reference can
     be an authored PROGRAM, not just a single part (lets us verify assemblies too)."""

@@ -1647,6 +1647,25 @@ def test_verify_against_mesh_reference():
 
 
 @test
+def test_overlap_pileup_guard():
+    """The visual census found multi-part programs with missing mates build as ORIGIN-PILES (4 gears in the
+    same space, rendering as one part) and 'succeed'. overlap_fraction must flag piles (~1.0) while passing
+    legitimately mated assemblies (~0) and single parts (0)."""
+    from constraint_kit import dsl
+    pile = {"parts": [{"id": f"g{i}", "type": "spur_gear",
+                       "params": {"module": 1.25, "teeth": t, "width": 10, "bore_d": 8}}
+                      for i, t in enumerate((20, 40))], "mates": []}
+    mated = {"parts": [{"id": "plate", "type": "plate", "params": {}},
+                       {"id": "g", "type": "spur_gear", "params": {"module": 1, "teeth": 24, "width": 6, "bore_d": 12}}],
+             "mates": [{"a": "plate", "b": "g", "intent": "seat_on"}]}
+    assert dsl.overlap_fraction(pile) > 0.5                      # origin pile -> flagged
+    assert dsl.overlap_fraction(mated) < 0.2                     # real assembly -> passes
+    assert dsl.overlap_fraction({"parts": [{"id": "s", "type": "spacer",
+                                            "params": {"outer_d": 20, "bore_d": 6, "height": 10}}],
+                                 "mates": []}) == 0.0
+
+
+@test
 def test_param_value_coercion():
     """Param-VALUE normalization (gauntlet cascade): the build chokepoint canonicalizes common human/LLM
     value formats so a catalog generator that wants 'M5-0.8' still builds from 'M5'. Helps every path."""
