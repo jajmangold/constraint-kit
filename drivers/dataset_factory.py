@@ -657,6 +657,159 @@ def assemble():
           f"{len(val_keys)} held out) | mix: {dict(kinds)} ({100*n_r//len(rows)}% reasoning)")
 
 
+# ---- Gemma 4 pivot --------------------------------------------------------------------------------------
+# Emission is STRUCTURED (separate `reasoning` field + per-message `train` flags), NOT baked template
+# tokens: the training script applies the official `gemma-4-thinking` chat template, so template details
+# (<|think|> forms) live in ONE place. Trajectory bad-turns carry train:false (Unsloth/Axolotl honor it).
+def _g4_row(user_content, reasoning, answer, kind, key, extra_msgs=None):
+    msgs = [{"role": "system", "content": TRAIN_SYS}]
+    if extra_msgs:
+        msgs += extra_msgs
+    msgs.append({"role": "user", "content": user_content})
+    msgs.append({"role": "assistant", "reasoning": reasoning or "", "content": answer, "train": True})
+    return {"messages": msgs, "meta": {"kind": kind}, "_key": key}
+
+
+def assemble_gemma():
+    def load(p):
+        return [json.loads(l) for l in open(p)] if os.path.exists(p) else []
+    rows = []
+    for t in load(f"{DS_DIR}/traces.jsonl"):
+        rows.append(_g4_row(t["caption"], t["trace"], json.dumps(t["program"]),
+                            "reasoning", _geom_key(t)))
+        rows[-1]["meta"]["tier"] = t["tier"]
+    for t in load(f"{DS_DIR}/trajectories.jsonl"):
+        m = t["messages"]
+        prog = m[-1]["content"].split("</think>")[-1].strip()
+        bad = m[1]["content"].split("</think>")[-1].strip()
+        fix_think = m[-1]["content"].split("<think>")[-1].split("</think>")[0].strip()
+        msgs = [{"role": "system", "content": TRAIN_SYS},
+                {"role": "user", "content": m[0]["content"]},
+                {"role": "assistant", "reasoning": "", "content": bad, "train": False},  # masked bad attempt
+                {"role": "user", "content": m[2]["content"]},
+                {"role": "assistant", "reasoning": fix_think, "content": prog, "train": True}]
+        rows.append({"messages": msgs, "meta": {"kind": "trajectory", **t.get("meta", {})},
+                     "_key": _geom_key({"program": json.loads(prog)})})
+    for d in load(f"{DS_DIR}/declines.jsonl"):
+        rows.append(_g4_row(d["caption"], d["trace"], json.dumps({"unsupported": d["decline"]}),
+                            "decline", d["key"]))
+    n_reason = len(rows)
+    rng = random.Random(23)
+    seen, n_direct = set(), 0
+    for d in rng.sample(load(f"{OUT}/dsl_corpus.jsonl") + load(f"{DS_DIR}/directs.jsonl"), 99999)[:len(load(f"{OUT}/dsl_corpus.jsonl") + load(f"{DS_DIR}/directs.jsonl"))]:
+        c = " ".join(d["description"].lower().split())
+        if c in seen or n_direct >= n_reason // 3:
+            continue
+        seen.add(c)
+        rows.append(_g4_row(d["description"], "", json.dumps(d["program"]), "direct", _geom_key(d)))
+        n_direct += 1
+    for v in load(f"{DS_DIR}/visual_rows.jsonl"):                 # S7 multimodal (image content arrays)
+        v["_key"] = v["meta"].get("key", "visual")
+        rows.append(v)
+    keys = sorted({r["_key"] for r in rows})
+    rng.shuffle(keys)
+    val_keys = set(keys[:max(1, len(keys) // 20)])
+    train = [r for r in rows if r["_key"] not in val_keys]
+    val = [r for r in rows if r["_key"] in val_keys]
+    for r in rows:
+        r.pop("_key", None)
+    rng.shuffle(train)
+    with open(f"{DS_DIR}/train_g4.jsonl", "w") as fh:
+        for r in train:
+            fh.write(json.dumps(r) + "\n")
+    with open(f"{DS_DIR}/val_g4.jsonl", "w") as fh:
+        for r in val:
+            fh.write(json.dumps(r) + "\n")
+    kinds = Counter(r["meta"]["kind"] for r in rows)
+    print(f"assemble_gemma: {len(rows)} rows -> train {len(train)} / val {len(val)} | mix: {dict(kinds)}")
+
+
+# ---- S7: multimodal render-pairs + visual-correction trajectories (ZERO DeepSeek, pure CPU) --------------
+def s7_worklist(n_pairs=800, n_corr=300):
+    """Build + export GLBs for distinct geometries (reusing existing captions/traces) + param-MUTATED
+    variants for visual corrections (a visible wrong build + the deterministic diff). Host then renders
+    (drivers/render_batch.py); s7_rows assembles the multimodal rows."""
+    from constraint_kit import builder
+    rng = random.Random(43)
+    by_key = {}
+    for l in open(f"{DS_DIR}/traces.jsonl"):
+        t = json.loads(l)
+        if t["tier"] in ("gold", "backfill") and "program" in t:
+            by_key.setdefault(_geom_key(t), t)
+    picks = rng.sample(sorted(by_key), min(n_pairs + n_corr, len(by_key)))
+    items = []
+    for i, k in enumerate(picks):
+        t = by_key[k]
+        item = {"id": f"s7_{i}", "caption": t["caption"], "trace": t["trace"], "program": t["program"]}
+        if i < n_corr:                                       # mutate a VISIBLE param for the correction set
+            mut = json.loads(json.dumps(t["program"]))
+            pp = mut["parts"][0].get("params", {})
+            tweaked = None
+            for cand, fac in (("teeth", None), ("outer_d", 1.5), ("length", 1.6), ("width", 2.0), ("height", 1.8)):
+                if cand in pp and isinstance(pp[cand], (int, float)):
+                    old = pp[cand]
+                    pp[cand] = (old + 8) if cand == "teeth" else round(old * fac, 1)
+                    tweaked = (cand, old, pp[cand])
+                    break
+            if tweaked:
+                item["mutant"] = mut
+                item["diff"] = f"the built part has {tweaked[0]}={tweaked[2]} but the target shows {tweaked[0]}={tweaked[1]}"
+        items.append(item)
+    ok = 0
+    with open(f"{DS_DIR}/s7_worklist.jsonl", "w") as fh:
+        for it in items:
+            try:
+                assy, _rep = builder.build_assembly(it["program"])
+                builder.export(assy, f"{OUT}/{it['id']}")
+                it["glb"] = f"{OUT}/{it['id']}.glb"
+                if "mutant" in it:
+                    massy, _r2 = builder.build_assembly(it["mutant"])
+                    builder.export(massy, f"{OUT}/{it['id']}_bad")
+                    it["mutant_glb"] = f"{OUT}/{it['id']}_bad.glb"
+                fh.write(json.dumps(it) + "\n")
+                ok += 1
+            except Exception:  # noqa: BLE001
+                continue
+    print(f"s7_worklist: {ok}/{len(items)} exported (renders next: drivers/render_batch.py)")
+
+
+def s7_rows():
+    """Assemble multimodal rows from rendered worklist: image->CAD pairs + visual-correction trajectories
+    (deterministic diff text; reuses the existing trace as the reasoning)."""
+    rows = []
+    for l in open(f"{DS_DIR}/s7_worklist.jsonl"):
+        it = json.loads(l)
+        png = it.get("png")
+        if not png or not os.path.exists(png):
+            continue
+        prog = json.dumps(it["program"])
+        key = _geom_key(it)
+        rows.append({"messages": [
+            {"role": "system", "content": TRAIN_SYS},
+            {"role": "user", "content": [{"type": "image", "image": png},
+                                         {"type": "text", "text": f"Reproduce this rendered part as a program. {it['caption']}"}]},
+            {"role": "assistant", "reasoning": it["trace"], "content": prog, "train": True}],
+            "meta": {"kind": "visual_pair", "key": key}})
+        bpng = it.get("mutant_png")
+        if bpng and os.path.exists(bpng) and "diff" in it:
+            rows.append({"messages": [
+                {"role": "system", "content": TRAIN_SYS},
+                {"role": "user", "content": [{"type": "image", "image": png},
+                                             {"type": "text", "text": f"Reproduce this rendered part as a program. {it['caption']}"}]},
+                {"role": "assistant", "reasoning": "", "content": json.dumps(it["mutant"]), "train": False},
+                {"role": "user", "content": [{"type": "image", "image": bpng},
+                                             {"type": "text", "text": f"[RENDER OF YOUR BUILD] It does not match the target: {it['diff']}. Fix the program."}]},
+                {"role": "assistant",
+                 "reasoning": f"The rendered build differs from the target: {it['diff']}. I correct that parameter and keep everything else.",
+                 "content": prog, "train": True}],
+                "meta": {"kind": "visual_correction", "key": key}})
+    with open(f"{DS_DIR}/visual_rows.jsonl", "w") as fh:
+        for r in rows:
+            fh.write(json.dumps(r) + "\n")
+    k = Counter(r["meta"]["kind"] for r in rows)
+    print(f"s7_rows: {len(rows)} multimodal rows | {dict(k)}")
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "s0asm"
     if cmd == "s0asm":
@@ -667,5 +820,11 @@ if __name__ == "__main__":
         s6(int(sys.argv[2]) if len(sys.argv) > 2 else 800)
     elif cmd == "extras":
         extras()
+    elif cmd == "s7_worklist":
+        s7_worklist()
+    elif cmd == "s7_rows":
+        s7_rows()
+    elif cmd == "assemble_gemma":
+        assemble_gemma()
     elif cmd == "assemble":
         assemble()
