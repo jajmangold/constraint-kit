@@ -68,6 +68,18 @@ def gen_requests(cat, n):
         return []
 
 
+def is_build_request(text: str) -> bool:
+    """Reject NON-BUILD requests (the visual census caught an advice question — 'What type of bolts are
+    best…?' — entering the corpus as a build pair). Interrogatives/advice aren't design intents."""
+    t = (text or "").strip().lower()
+    if not t or t.endswith("?"):
+        return False
+    if t.split()[0] in ("what", "which", "how", "why", "when", "where", "who",
+                        "is", "are", "can", "could", "should", "do", "does", "would"):
+        return False
+    return not any(p in t for p in ("best for", "recommend", "advice", "which one", "what kind"))
+
+
 def design(req):
     return _post(f"{CADKIT}/intent/design", {"request": req, "build": True}, {})
 
@@ -103,13 +115,17 @@ def main():
     # 1) generate a diverse request stream (concurrent across categories) + dedupe
     print(f"generating ~{n*len(CATEGORIES)} requests across {len(CATEGORIES)} categories...")
     requests, seen = [], set()
+    filtered = 0
     with ThreadPoolExecutor(max_workers=len(CATEGORIES)) as ex:
         for reqs in ex.map(lambda c: gen_requests(c, n), CATEGORIES):
             for r in reqs:
+                if not is_build_request(r):
+                    filtered += 1
+                    continue
                 k = r.strip().lower()
                 if k not in seen:
                     seen.add(k); requests.append(r)
-    print(f"  -> {len(requests)} unique requests")
+    print(f"  -> {len(requests)} unique build requests ({filtered} non-build filtered)")
 
     # 2) run through /intent/design concurrently (cadkit build = the governor)
     counts = Counter()
