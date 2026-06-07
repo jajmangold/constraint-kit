@@ -29,6 +29,13 @@ truth programs).
    if the reasoning channel renders empty, fix `to_template_messages()` (one place).
 4. `python train_gemma4.py --text-only` (rung 1) → eval → full multimodal run (rung 2).
 
+## Rung-1 RESULT (2026-06-07, geometric ground truth on 90 held-out probes)
+Gemma 4 12B LoRA r=16, 2 epochs, ~40k text rows, final loss ~0.22-0.25, ~10.5h on RTX PRO 6000 (~$7):
+**GEOMETRY-VERIFIED 56/60 build probes (93%)** (vol+bbox within 2% of held-out targets) ·
+**decline-honest 26/30 (87%)** · 0 wrong-declines · 0 format failures · 0 build errors —
+first-shot, no prompt scaffold, no correction loop. In prompted-DeepSeek's band (90-97%) from a local
+12B with auditable reasoning traces. Artifacts: training/lora_rung1/ (251MB adapter) + Q6_K_XL GGUF.
+
 ## Eval (back home)
 Serve the LoRA (vLLM `--enable-lora` or merged) and point the existing harness at it: the gauntlet
 (`drivers/target_gauntlet.py`), census (`drivers/census.py`), and `/dsl/verify` measure built%, decline
