@@ -42,28 +42,35 @@ def serialize(user_text):
 
 
 def main():
+    # SIGNAL-DENSE mix for GRPO (measure-and-fix: the v1 mix was 90% zero-variance easy builds — no
+    # gradient). RL wants prompts where the model is UNCERTAIN: the measured failure mass (declines +
+    # silent-drop classes) and only HARD builds (multi-part assemblies + gears, where params/mates drift).
     rng = random.Random(7)
     rows = []
-    traces = [json.loads(l) for l in open(f"{ROOT}/cadkit/output/dataset/traces.jsonl")]
-    build_pool = [t for t in traces if t["tier"] in ("gold", "backfill", "ambiguous") and "program" in t]
-    rng.shuffle(build_pool)
     from constraint_kit import dsl
+    traces = [json.loads(l) for l in open(f"{ROOT}/cadkit/output/dataset/traces.jsonl")]
+    # HARD builds only: multi-part programs or gears (zero-variance easy single parts excluded)
+    hard = [t for t in traces if t["tier"] in ("gold", "backfill", "ambiguous") and "program" in t
+            and (len(t["program"].get("parts", [])) > 1
+                 or any(p.get("type", "").endswith("gear") for p in t["program"].get("parts", [])))]
+    rng.shuffle(hard)
     kept = 0
-    for t in build_pool:
-        if kept >= 1200:
+    for t in hard:
+        if kept >= 300:
             break
         try:
-            sig = dsl.program_signature(t["program"])         # cached -> fast
+            sig = dsl.program_signature(t["program"])
         except Exception:  # noqa: BLE001
             continue
         rows.append({"prompt": serialize(t["caption"]), "decline_expected": False,
                      "ref": json.dumps({"volume": sig["volume"], "bbox_sorted": sig["bbox_sorted"]})})
         kept += 1
+    # DECLINES dominate (the failure mass): full taxonomy + the measured silent-drop classes weighted hard
     decls = [json.loads(l) for l in open(f"{ROOT}/cadkit/output/dataset/declines.jsonl")]
     rng.shuffle(decls)
-    for d in decls[:320]:
+    for d in decls[:500]:
         rows.append({"prompt": serialize(d["caption"]), "decline_expected": True, "ref": ""})
-    for cap, _why in EXTRA_DECLINES * 10:                     # weight up the measured silent-drop classes
+    for cap, _why in EXTRA_DECLINES * 25:                     # the keyway/shoulder/head-style silent drops
         rows.append({"prompt": serialize(cap), "decline_expected": True, "ref": ""})
     rng.shuffle(rows)
     with open(f"{ROOT}/training/grpo_prompts.jsonl", "w") as fh:
