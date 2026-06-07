@@ -124,14 +124,30 @@ def main():
             r = rows[i]
             return build_example(chat_tok, r, args.text_only)
 
-    from trl import SFTConfig, SFTTrainer
-    trainer = SFTTrainer(
-        model=model, processing_class=tokenizer, train_dataset=DS(),
-        args=SFTConfig(output_dir=args.out, num_train_epochs=args.epochs, learning_rate=args.lr,
-                       per_device_train_batch_size=1, gradient_accumulation_steps=8,
-                       lr_scheduler_type="cosine", optim="adamw_8bit", bf16=True,
-                       logging_steps=20, save_steps=500, dataset_kwargs={"skip_prepare_dataset": True},
-                       remove_unused_columns=False, max_length=args.max_seq))
+    # plain Trainer + explicit collator (TRL's SFT collator rejects pre-tokenized dicts)
+    import torch
+    pad_id = chat_tok.pad_token_id or 0
+
+    def collate(batch):
+        n = min(max(len(b["input_ids"]) for b in batch), args.max_seq)
+        ids = torch.full((len(batch), n), pad_id, dtype=torch.long)
+        lab = torch.full((len(batch), n), -100, dtype=torch.long)
+        att = torch.zeros((len(batch), n), dtype=torch.long)
+        for j, b in enumerate(batch):
+            k = min(len(b["input_ids"]), n)
+            ids[j, :k] = torch.tensor(b["input_ids"][:k])
+            lab[j, :k] = torch.tensor(b["labels"][:k])
+            att[j, :k] = 1
+        return {"input_ids": ids, "labels": lab, "attention_mask": att}
+
+    from transformers import Trainer, TrainingArguments
+    trainer = Trainer(
+        model=model, train_dataset=DS(), data_collator=collate,
+        args=TrainingArguments(output_dir=args.out, num_train_epochs=args.epochs, learning_rate=args.lr,
+                               per_device_train_batch_size=1, gradient_accumulation_steps=8,
+                               lr_scheduler_type="cosine", optim="adamw_8bit", bf16=True,
+                               logging_steps=20, save_steps=500, report_to="tensorboard",
+                               remove_unused_columns=False))
     trainer.train()
     model.save_pretrained(os.path.join(args.out, "lora_final"))
     print("done ->", os.path.join(args.out, "lora_final"))
