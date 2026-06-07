@@ -15,9 +15,27 @@ import json
 
 
 def strip_thought(text: str) -> str:
+    """Extract the answer JSON robustly. TRL decodes rollouts with special tokens STRIPPED, so the
+    <channel|>/<turn|> delimiters may be gone and the reasoning prose is prepended to the JSON. So:
+    split on the channel marker if present, then extract the LAST balanced {...} object (the program /
+    decline), ignoring any reasoning prose around it."""
     if "<channel|>" in text:
         text = text.split("<channel|>")[-1]
-    return text.split("<turn|>")[0].strip()
+    text = text.split("<turn|>")[0]
+    # find the last top-level balanced {...}
+    end = text.rfind("}")
+    if end == -1:
+        return text.strip()
+    depth = 0
+    for i in range(end, -1, -1):
+        c = text[i]
+        if c == "}":
+            depth += 1
+        elif c == "{":
+            depth -= 1
+            if depth == 0:
+                return text[i:end + 1].strip()
+    return text.strip()
 
 
 def score(completion: str, decline_expected: bool, ref: dict | None) -> float:
