@@ -696,7 +696,8 @@ def assemble_gemma():
     n_reason = len(rows)
     rng = random.Random(23)
     seen, n_direct = set(), 0
-    for d in rng.sample(load(f"{OUT}/dsl_corpus.jsonl") + load(f"{DS_DIR}/directs.jsonl"), 99999)[:len(load(f"{OUT}/dsl_corpus.jsonl") + load(f"{DS_DIR}/directs.jsonl"))]:
+    pool = load(f"{OUT}/dsl_corpus.jsonl") + load(f"{DS_DIR}/directs.jsonl")
+    for d in rng.sample(pool, len(pool)):
         c = " ".join(d["description"].lower().split())
         if c in seen or n_direct >= n_reason // 3:
             continue
