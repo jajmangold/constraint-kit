@@ -1677,6 +1677,49 @@ def test_overlap_pileup_guard():
 
 
 @test
+def test_constructive_tier():
+    """Imagination Phase 1: the constructive DSL compiles primitive-op programs to solids; decompiled
+    native parts are EQUIVALENT (volume-exact); spec_check verifies properties WITHOUT a reference and
+    catches violations; invalid ops/references RAISE (honest)."""
+    from constraint_kit import construct, dsl
+    from constraint_kit.parts import PART_GENS
+    spacer = {"construct": [
+        {"op": "cyl", "d": 20, "h": 12, "id": "body"},
+        {"op": "cyl", "d": 8, "h": 12, "id": "bore"},
+        {"op": "cut", "a": "body", "b": "bore", "id": "result"}]}
+    wp = construct.compile_construct(spacer)
+    v = construct.validity_report(wp)
+    assert v["ok"]
+    ref, _ = PART_GENS["spacer"](outer_d=20, bore_d=8, height=12)
+    rsig = dsl.signature(ref)
+    assert abs(v["signature"]["volume"] - rsig["volume"]) < 1e-6 * rsig["volume"]
+    assert v["signature"]["n_faces"] == rsig["n_faces"]
+    plate = {"construct": [
+        {"op": "box", "w": 60, "d": 60, "h": 6, "id": "base"},
+        {"op": "cyl", "d": 16, "h": 5, "at": [0, 0, 6], "id": "boss"},
+        {"op": "union", "a": "base", "b": "boss", "id": "plated"},
+        {"op": "cyl", "d": 5.2, "h": 6, "id": "drill"},
+        {"op": "polar", "of": "drill", "n": 4, "r": 22, "id": "bolts"},
+        {"op": "cut", "a": "plated", "b": "bolts", "id": "result"}]}
+    pw = construct.compile_construct(plate)
+    ok = construct.spec_check(pw, {"bbox_sorted": [11, 60, 60],
+                                   "holes": {"count": 4, "diameter": 5.2},
+                                   "mass_g": {"max": 80, "material": "aluminum"}})
+    assert ok["ok"], ok
+    assert not construct.spec_check(pw, {"holes": {"count": 6, "diameter": 5.2}})["ok"]   # catches violation
+    try:
+        construct.compile_construct({"construct": [{"op": "teleport"}]})
+        raise AssertionError("unknown op should raise")
+    except ValueError:
+        pass
+    try:
+        construct.compile_construct({"construct": [{"op": "cut", "a": "ghost", "b": "ghost2"}]})
+        raise AssertionError("unknown reference should raise")
+    except ValueError:
+        pass
+
+
+@test
 def test_param_value_coercion():
     """Param-VALUE normalization (gauntlet cascade): the build chokepoint canonicalizes common human/LLM
     value formats so a catalog generator that wants 'M5-0.8' still builds from 'M5'. Helps every path."""
