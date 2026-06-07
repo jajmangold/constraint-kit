@@ -11,9 +11,16 @@ truth programs).
 3. GRPO afterwards — Unsloth GRPO, colocated vLLM; reward = `constraint_kit.dsl` verifier **as a library**
    (`pip install cadquery`, no services): graded check-pass + builds + signature-proximity + exact bonus.
 
-## vast.ai recipe
-1. Rent: 1× A100-80GB or H100 (12B bf16 LoRA + activations is comfortable; 24GB works for `--text-only`).
-   Image: `unsloth/unsloth` (official). 100GB disk.
+## vast.ai recipe (battle-tested 2026-06-06 — every step below was a real failure first)
+0. **SSH key is `~/.ssh/vast_gpu_falcon`** — every ssh/rsync needs `-i ~/.ssh/vast_gpu_falcon`.
+   Endpoint: `vastai ssh-url <id>`. Destroy needs `yes | vastai destroy instance <id>` (else "Aborted.").
+1. Rent: Blackwell RTX PRO 6000 (97.9GB, often ~$0.69/hr) or A100-80GB; 24GB works for `--text-only`.
+   Image: `pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel` — **NOT `unsloth/unsloth` (its sshd is broken
+   under vast ssh-mode)** — with onstart:
+   `pip install -q unsloth unsloth_zoo trl peft bitsandbytes tensorboard; touch /root/PROVISIONED`.
+   After boot: fix DNS if name resolution fails (`echo 'nameserver 8.8.8.8' > /etc/resolv.conf`), and
+   install transformers from git main (Gemma 4 needs `gemma4_unified`, absent from releases ≤5.5.0):
+   `pip install git+https://github.com/huggingface/transformers.git`.
 2. `git clone` this repo; copy `cadkit/output/dataset/` (train_g4/val_g4.jsonl + the S7 PNGs it references —
    `rsync -a cadkit/output/dataset/ <box>:.../dataset/` plus `cadkit/output/s7_*png`; image paths in rows are
    absolute `/srv/nvme-data/...` — keep the same mount path or sed the prefix).
