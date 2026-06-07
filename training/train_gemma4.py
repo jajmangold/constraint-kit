@@ -34,10 +34,23 @@ def build_example(tokenizer, row, text_only=False):
                 for part in content:
                     if part.get("type") == "image":
                         images.append(part["image"])
-        # template the conversation prefix up to and including this message, take the suffix tokens
-        prefix = tokenizer.apply_chat_template(msgs[: i], tokenize=True) if i else []
-        upto = tokenizer.apply_chat_template(msgs[: i + 1], tokenize=True)
-        seg = upto[len(prefix):]
+        if m["role"] == "assistant":
+            # MANUAL assistant-turn rendering: both available templates only STRIP provided reasoning
+            # (serving templates) — so we serialize the model family's canonical thought-channel form
+            # ourselves (verbatim from the official template's serialization branch).
+            text = "<|turn>model\n"
+            if m.get("reasoning"):
+                text += "<|channel>thought\n" + m["reasoning"] + "\n<channel|>\n"
+            ctext = content if isinstance(content, str) else " ".join(
+                p.get("text", "") for p in m["content"] if p.get("type") == "text")
+            text += ctext + "<turn|>\n"
+            seg = tokenizer(text, add_special_tokens=False).input_ids
+        else:
+            # system/user turns: incremental template rendering (suffix of the templated prefix)
+            kw = {"tokenize": True, "enable_thinking": True}
+            prefix = tokenizer.apply_chat_template(msgs[: i], **kw) if i else []
+            upto = tokenizer.apply_chat_template(msgs[: i + 1], **kw)
+            seg = upto[len(prefix):]
         train_seg = m["role"] == "assistant" and m.get("train", True)
         input_ids += seg
         labels += seg if train_seg else [-100] * len(seg)
@@ -87,11 +100,14 @@ def main():
             row = next((r for r in rows if r["meta"]["kind"] == kind), None)
             if not row:
                 continue
-            ex = build_example(chat_tok, {"messages": to_template_messages(row), **row}, args.text_only)
+            ex = build_example(chat_tok, row, args.text_only)
             toks = chat_tok.convert_ids_to_tokens(ex["input_ids"])
             print(f"\n=== {kind} ({len(toks)} tokens) — '|' marks trained segments ===")
+            trained = sum(1 for l in ex["labels"] if l != -100)
             out = "".join(("|" + t) if l != -100 else t for t, l in zip(toks, ex["labels"]))
-            print(out[:1800])
+            print(f"trained tokens: {trained}/{len(toks)} ({100*trained//max(len(toks),1)}%)")
+            print("--- tail (assistant turns) ---")
+            print(out[-2200:])
         return
 
     model = FastVisionModel.get_peft_model(
@@ -106,7 +122,7 @@ def main():
 
         def __getitem__(self, i):
             r = rows[i]
-            return build_example(chat_tok, {"messages": to_template_messages(r), **r}, args.text_only)
+            return build_example(chat_tok, r, args.text_only)
 
     from trl import SFTConfig, SFTTrainer
     trainer = SFTTrainer(
