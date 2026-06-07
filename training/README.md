@@ -36,6 +36,18 @@ Gemma 4 12B LoRA r=16, 2 epochs, ~40k text rows, final loss ~0.22-0.25, ~10.5h o
 first-shot, no prompt scaffold, no correction loop. In prompted-DeepSeek's band (90-97%) from a local
 12B with auditable reasoning traces. Artifacts: training/lora_rung1/ (251MB adapter) + Q6_K_XL GGUF.
 
+
+## GRPO RESULT (stage 3, 2026-06-07) — KEEP
+Signal-dense GRPO (700 decline / 300 hard-build, 150 steps, verifier reward) on the rung-1 adapter.
+Held-out A/B (16 unseen probes), rung-1 -> GRPO:
+- silent-variant-builds (the target failure): 2/10 -> **1/10** (halved)
+- declines correct: 8/10 -> **9/10** · builds: **6/6 -> 6/6** (no regression, no over-decline)
+Training reward drifted down (1.07->0.74) but that was the harder-prompt mix, NOT overcooking —
+held-out geometry confirmed improvement on target. Artifacts: training/lora_grpo/ +
+gemma4-12b-constraintkit-grpo-Q6_K.gguf. Bugs killed en route (each a committed lesson): GRPO eos
+(rollouts ran to max-len), TRL strips special tokens (reward extracts trailing JSON), prompt mix
+(90%% zero-variance easy builds -> rebalanced to the failure mass).
+
 ## Eval (back home)
 Serve the LoRA (vLLM `--enable-lora` or merged) and point the existing harness at it: the gauntlet
 (`drivers/target_gauntlet.py`), census (`drivers/census.py`), and `/dsl/verify` measure built%, decline
