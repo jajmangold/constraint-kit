@@ -1677,6 +1677,20 @@ def test_overlap_pileup_guard():
 
 
 @test
+def test_plate_no_boss():
+    """Regression (found by recon_factory): plate with boss_d=0 must build — a zero-radius boss circle
+    extruded -> degenerate face -> 'wires not planar'. No-boss plate builds; mount anchor on the top face."""
+    from constraint_kit.parts import PART_GENS
+    wp, anchors = PART_GENS["plate"](width=50, depth=50, thick=4, boss_d=0, boss_h=0,
+                                     bolt_d=5, bolt_circle=34, bolt_count=4)
+    assert wp.val().Volume() > 0
+    assert abs(anchors["mount"].toTuple()[0][2] - 2.0) < 1e-6      # top face, not floating at +boss_h
+    wp2, _ = PART_GENS["plate"](width=60, depth=60, thick=6, boss_d=16, boss_h=5,
+                                bolt_d=5, bolt_circle=44, bolt_count=4)
+    assert wp2.val().Volume() > wp.val().Volume()                  # boss variant still works
+
+
+@test
 def test_constructive_tier():
     """Imagination Phase 1: the constructive DSL compiles primitive-op programs to solids; decompiled
     native parts are EQUIVALENT (volume-exact); spec_check verifies properties WITHOUT a reference and

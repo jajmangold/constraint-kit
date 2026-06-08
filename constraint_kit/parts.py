@@ -36,7 +36,8 @@ def plate(width: float = 60.0, depth: float = 60.0, thick: float = 6.0,
     """
     bolt_count = int(bolt_count)
     wp = cq.Workplane("XY").box(width, depth, thick)
-    wp = wp.faces(">Z").workplane().circle(boss_d / 2.0).extrude(boss_h)
+    if boss_d > 0 and boss_h > 0:                 # boss optional: a zero-d/zero-h circle extrudes to a
+        wp = wp.faces(">Z").workplane().circle(boss_d / 2.0).extrude(boss_h)   # degenerate face ("wires not planar")
     if bolt_count > 0 and bolt_d > 0:
         holes = (cq.Workplane("XY")
                  .polarArray(bolt_circle / 2.0, 0, 360, bolt_count)
@@ -44,7 +45,7 @@ def plate(width: float = 60.0, depth: float = 60.0, thick: float = 6.0,
                  .extrude(thick * 2.0, both=True))
         wp = wp.cut(holes)
     anchors = {
-        "mount": _loc(0, 0, thick / 2.0 + boss_h),
+        "mount": _loc(0, 0, thick / 2.0 + (boss_h if boss_d > 0 else 0.0)),
         "base":  _loc(0, 0, -thick / 2.0),
         "boss_axis": _loc(0, 0, thick / 2.0),
     }
