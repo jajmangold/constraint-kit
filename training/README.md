@@ -48,6 +48,15 @@ gemma4-12b-constraintkit-grpo-Q6_K.gguf. Bugs killed en route (each a committed 
 (rollouts ran to max-len), TRL strips special tokens (reward extracts trailing JSON), prompt mix
 (90%% zero-variance easy builds -> rebalanced to the failure mass).
 
+
+## RUNG-2 (multimodal image->CAD): NEGATIVE (2026-06-08)
+Two LoRA vision-SFT runs (Gemma-4-12b, ~1325 distinct renders x8, answer-free bbox-only prompts).
+Held-out, images VERIFIED fed: image+bbox 52% vs bbox-only 47%; feature-rich (bbox non-discriminating)
+16/27 == 16/27. The model ignores the render — bbox+priors carry everything. image->CAD via vision-LoRA
+at this data scale does not work. Path forward (untested): 10-100x more distinct renders + full
+vision-tower FT. Eval gotcha: use the PROCESSOR (proc.apply_chat_template(...,return_dict=True)) — not
+the inner text tokenizer, which silently drops images (no pixel_values).
+
 ## Eval (back home)
 Serve the LoRA (vLLM `--enable-lora` or merged) and point the existing harness at it: the gauntlet
 (`drivers/target_gauntlet.py`), census (`drivers/census.py`), and `/dsl/verify` measure built%, decline
