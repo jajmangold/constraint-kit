@@ -3,7 +3,7 @@
 **Describe a mechanism in plain English. Get exact, manufacturable CAD back: STEP files, real B-rep geometry,
 not a mesh an AI guessed at.**
 
-![Assemblies built by constraint-kit: a planetary gearset, an exploded gearbox, a plate with a gear seated on its boss, a meshing gear pair](docs/images/hero.png)
+![Assemblies built by constraint-kit: a planetary gearset, a gearbox mounted on a V-slot column, a gear seated on a plate boss, a helical gear](docs/images/hero.png)
 
 ```text
 "a plate with a spacer and a 24-tooth gear stacked on its boss"
@@ -43,10 +43,10 @@ an error path.
 
 | | | |
 |:-:|:-:|:-:|
-| ![Planetary gearset](docs/images/planetary.png) | ![Exploded gearbox](docs/images/gearbox_exploded.png) | ![Assembled gearbox](docs/images/gearbox_assembled.png) |
-| Planetary gearset: sun, three planets, ring | Gearbox, exploded view | Same gearbox, assembled |
-| ![Meshing spur gears](docs/images/gear_pair.png) | ![Gear on a shaft through a housing](docs/images/shaft_housing.png) | ![Four-bar linkage](docs/images/four_bar.png) |
-| Spur pair at the exact center distance | Gear on a shaft through a housing | Four-bar linkage |
+| ![Planetary gearbox bolted to a plate](docs/images/gearbox_assembled.png) | ![Meshing spur gears](docs/images/gear_pair.png) | ![NEMA stepper motor](docs/images/stepper_motor.png) |
+| Planetary gearbox: ring, sun and three planets, screwed to a plate | Spur pair at the exact center distance | NEMA stepper, a BOSL2 library "vitamin" |
+| ![Angle bracket on V-slot extrusion](docs/images/bracket_rail.png) | ![Gear bolted to a plate](docs/images/fastened.png) | ![Larger planetary gearset](docs/images/planetary_large.png) |
+| Angle bracket bolted to a V-slot 2020 extrusion | Gear seated on a plate, four bolts through it | A second planetary gearset, larger planets |
 
 Every image above is a real build, rendered in Blender straight from the GLB that constraint-kit exported. The geometry is untouched; only materials and lighting were added. The development pipeline has built more than
 1,400 verified assemblies.
