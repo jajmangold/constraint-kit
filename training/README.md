@@ -1,5 +1,7 @@
 # Training — Gemma 4 12B on the constraint-kit dataset (vast.ai)
 
+**Released model:** [jajmangold/gemma-4-12b-constraintkit-GGUF](https://huggingface.co/jajmangold/gemma-4-12b-constraintkit-GGUF) (GRPO Q6_K GGUF + LoRA adapter + training system prompt).
+
 The dataset teaches: NL → reasoning → exact DSL program; honest DECLINE; diagnostic-driven
 self-correction (bad attempts loss-masked); **and the multimodal moat — render-image → program pairs +
 visual-correction trajectories** that only this stack can mint (verified geometry + own renderer + ground-
@@ -27,7 +29,7 @@ Gemma 4 12B LoRA r=16, 2 epochs, ~40k text rows, final loss ~0.22-0.25, ~10.5h o
 **GEOMETRY-VERIFIED 56/60 build probes (93%)** (vol+bbox within 2% of held-out targets) ·
 **decline-honest 26/30 (87%)** · 0 wrong-declines · 0 format failures · 0 build errors —
 first-shot, no prompt scaffold, no correction loop. In prompted-DeepSeek's band (90-97%) from a local
-12B with auditable reasoning traces. Artifacts: training/lora_rung1/ (251MB adapter) + Q6_K_XL GGUF.
+12B with auditable reasoning traces. Artifacts (not in git): training/lora_rung1/ (251MB adapter) + Q6_K GGUF.
 
 
 ## GRPO RESULT (stage 3, 2026-06-07) — KEEP
@@ -37,7 +39,7 @@ Held-out A/B (16 unseen probes), rung-1 -> GRPO:
 - declines correct: 8/10 -> **9/10** · builds: **6/6 -> 6/6** (no regression, no over-decline)
 Training reward drifted down (1.07->0.74) but that was the harder-prompt mix, NOT overcooking —
 held-out geometry confirmed improvement on target. Artifacts: training/lora_grpo/ +
-gemma4-12b-constraintkit-grpo-Q6_K.gguf. Bugs killed en route (each a committed lesson): GRPO eos
+gemma4-12b-constraintkit-grpo-Q6_K.gguf, both published at [Hugging Face](https://huggingface.co/jajmangold/gemma-4-12b-constraintkit-GGUF). Bugs killed en route (each a committed lesson): GRPO eos
 (rollouts ran to max-len), TRL strips special tokens (reward extracts trailing JSON), prompt mix
 (90%% zero-variance easy builds -> rebalanced to the failure mass).
 
@@ -62,4 +64,4 @@ baseline (90-97% on generation) before scaling anything.
 - Known Unsloth/Gemma-4 gotchas (their docs): grad-accum loss inflation (fixed in current unsloth),
   `use_cache=False` gibberish (fixed), 26B/31B `num_kv_shared_layers` IndexError (fixed) — pin a recent
   unsloth.
-- Gemma license: read it once before shipping anything external (not Apache-2.0).
+- License: Gemma 4 is Apache-2.0, and so is the released fine-tune.

@@ -1,6 +1,68 @@
 # constraint-kit
 
-Generate **exact parametric CAD assemblies** from natural language. An LLM plans parts + parameters + mates, parametric generators emit B-rep geometry, a deterministic mate kernel assembles them, and the result is rendered + QA'd.
+**Describe a mechanism in plain English. Get exact, manufacturable CAD back: STEP files, real B-rep geometry,
+not a mesh an AI guessed at.**
+
+![Assemblies built by constraint-kit: a planetary gearset, an exploded gearbox, a plate with a gear seated on its boss, a meshing gear pair](docs/images/hero.png)
+
+```text
+"a plate with a spacer and a 24-tooth gear stacked on its boss"
+```
+→ e.g. a 100×100 mm aluminum plate with a 4-bolt circle, a spacer on the boss, and a module-2 24-tooth steel spur
+gear seated on the spacer with **zero gap** (a real run; the planner picks sensible values). Out come STEP + GLB, mass properties, a BOM, and a render.
+
+## Why it's different
+
+Most text-to-CAD asks a model to produce geometry, then hopes. constraint-kit splits the job:
+
+> **The AI handles meaning. Deterministic math handles geometry.** The LLM only decides *which* parts, *which*
+> parameters, and *what connects to what*. Parametric generators build exact B-rep solids, and a
+> deterministic mate kernel puts every part in place. The model never places a single vertex.
+
+So the results can be **checked**, not just looked at:
+
+- **Gears actually mesh.** Center distances come from module × teeth, not from eyeballing.
+- **Parts actually seat.** Mates are solved against named joint frames that survive parameter changes.
+- **Collisions are caught.** A bounding-box prefilter is followed by an exact OpenCascade boolean clash check.
+- **Mechanisms are solved properly.** Planetary mobility uses Willis' equation, linkages use SolveSpace, and
+  gear-train and tolerance synthesis use a Z3 SMT solver.
+
+### It says "no" instead of guessing
+
+Ask for something outside its vocabulary and it declines, and says why:
+
+```text
+"Need a spiral bevel gear for a heavy-duty application."
+→ {"unsupported": "only straight bevel gears are modeled"}
+```
+
+A plausible-looking wrong part is worse than no part. Honest declines are a first-class, measured output, not
+an error path.
+
+## Gallery
+
+| | | |
+|:-:|:-:|:-:|
+| ![Planetary gearset](docs/images/planetary.png) | ![Exploded gearbox](docs/images/gearbox_exploded.png) | ![Assembled gearbox](docs/images/gearbox_assembled.png) |
+| Planetary gearset: sun, three planets, ring | Gearbox, exploded view | Same gearbox, assembled |
+| ![Meshing spur gears](docs/images/gear_pair.png) | ![Gear on a shaft through a housing](docs/images/shaft_housing.png) | ![Four-bar linkage](docs/images/four_bar.png) |
+| Spur pair at the exact center distance | Gear on a shaft through a housing | Four-bar linkage |
+
+Every image above is a real build, with STEP geometry behind it. The development pipeline has built more than
+1,400 verified assemblies.
+
+## A local model that knows when to decline
+
+[**gemma-4-12b-constraintkit**](https://huggingface.co/jajmangold/gemma-4-12b-constraintkit-GGUF) is a Gemma 4 12B fine-tune (SFT + GRPO with the geometry verifier as
+the reward) that writes constraint-kit programs directly from plain English, on one local GPU:
+
+| | Builds (geometry-verified) | Honest declines |
+|---|:-:|:-:|
+| SFT, held-out probes | **93%** | **87%** |
+| + GRPO | builds held at 6/6 | 9/10 (silent wrong builds halved) |
+
+It performs in the same range as a prompted frontier model, shows its reasoning, and runs as a 9.8 GB GGUF.
+It's optional: constraint-kit runs on a hosted LLM out of the box. Training scripts are in [`training/`](training/).
 
 ## Features
 
@@ -8,12 +70,11 @@ Generate **exact parametric CAD assemblies** from natural language. An LLM plans
 - **Four solver classes**: deterministic tree mates, analytical gear mobility (Willis), geometric loops (SolveSpace), discrete synthesis (Z3/SMT)
 - **Real engineering parts**: gears, extrusions, bearings, fasteners, plumbing via build123d/bd_warehouse
 - **First-class oriented joints**: named mate frames that survive parameter changes (no selector drift)
-- **Spec compiler**: on-demand engineering-fact resolution with provenance (threads, fits, bearings, materials)
+- **Spec compiler**: on-demand engineering-fact resolution with provenance (threads, ISO 286 fits, bearings, materials)
 - **Hierarchical assemblies**: recursive subassemblies with ports, BOM roll-ups, mass properties
 - **Top-down design**: requirements → derived parameters → geometry, with incremental re-solve
-- **Interference validation**: bbox prefilter + exact OCC boolean clash detection
-- **2D layout → DXF**: deterministic in-plane solve for laser/CNC
-- **76 tests**, all geometric ground truth (not VLM-dependent)
+- **Engineering drawings**: 2D drawing sets (DXF + SVG), exploded views, 2D layouts → DXF for laser/CNC
+- **113 regression tests**, every one checked against geometry, never against a vision model's opinion
 
 ## Quick start
 
@@ -77,7 +138,8 @@ curl -X POST http://127.0.0.1:8195/build \
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │  LLM Plan   │────▶│ Parametric Gen   │────▶│  Mate Kernel    │
-│  (qwen)     │     │ (cadquery/b123d) │     │ (deterministic) │
+│ (DeepSeek / │     │ (cadquery/b123d) │     │ (deterministic) │
+│  local LLM) │     │                  │     │                 │
 └─────────────┘     └──────────────────┘     └────────┬────────┘
                                                        │
                     ┌──────────────────┐     ┌─────────▼────────┐
@@ -180,11 +242,11 @@ All endpoints on `127.0.0.1:8195` (host-only by default).
 # Inside the cadkit container:
 tests/run.sh
 
-# Or directly:
-python -m pytest tests/ -v
+# Or directly (needs cadquery + build123d):
+python3 tests/test_kernel.py
 ```
 
-76 tests, all geometric ground truth verified (seating zero-gap, gear center distances, mass vs density, STEP/GLB export, DXF validity, atlas round-trip).
+113 tests, all verified against geometric ground truth (seating zero-gap, gear center distances, mass vs density, STEP/GLB export, DXF validity, atlas round-trip).
 
 ## Project structure
 
