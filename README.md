@@ -17,6 +17,12 @@ Generate **exact parametric CAD assemblies** from natural language. An LLM plans
 
 ## Quick start
 
+The planner and vision QA default to [DeepSeek's API](https://api-docs.deepseek.com/), so you need a key:
+
+```bash
+export DEEPSEEK_API_KEY=sk-...
+```
+
 ### With Docker (recommended)
 
 ```bash
@@ -54,8 +60,11 @@ curl -X POST http://127.0.0.1:8195/build \
 
 | Variable | Default | Description |
 |---|---|---|
-| `QWEN_BASE_URL` | `http://localhost:8000/v1` | OpenAI-compatible LLM endpoint for planning/QA |
-| `QWEN_MODEL` | `qwen2.5-vl-72b` | Model name for the planner/VLM |
+| `DEEPSEEK_API_KEY` | — | **Required** for the default DeepSeek backend (`LLM_API_KEY` also works) |
+| `LLM_BASE_URL` | `https://api.deepseek.com` | OpenAI-compatible LLM endpoint for planning + vision QA. Set to a local vLLM / llama.cpp URL (e.g. `http://localhost:8000/v1`) to self-host |
+| `MODEL_PLANNER` | `deepseek-v4-pro` | Model that turns requests into assembly specs |
+| `MODEL_VLM` | `deepseek-flash` | Vision model for render QA and table extraction (must accept images) |
+| `PLANNER_URL` / `VLM_URL` | `LLM_BASE_URL` | Optional per-role endpoint overrides |
 | `SPEC_SEARCH_URL` | `http://localhost:8080` | SearXNG instance for spec compiler discovery |
 | `CK_WORK_DIR` | `/tmp/constraint-kit` | Working directory for outputs and caches |
 | `NEO4J_PASS` | `changeme` | Neo4j password (optional, for atlas persistence) |

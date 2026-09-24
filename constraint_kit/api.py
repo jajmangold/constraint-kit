@@ -17,7 +17,7 @@ import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from . import (assembly, bom, builder, drawing, dsl, intent, layout, library, linkage, planner, planetary,
+from . import (assembly, bom, builder, drawing, dsl, intent, layout, library, linkage, llm, planner, planetary,
                rules, spec_compiler, spec_db, spec_sources, store, synthesis, tolerance)
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "cadkit/output"))
@@ -76,7 +76,7 @@ def _do_layout(spec: dict, name: str | None, request: str | None) -> dict:
     dxf = layout.export_dxf(solved, os.path.join(OUTPUT_DIR, name + ".dxf"))
     png = layout.export_png(solved, os.path.join(OUTPUT_DIR, name + ".png"))
     stored = store.record_layout(name, request, spec, rep, dxf, png,
-                                 os.environ.get("MODEL_PLANNER", "qwen27b"))
+                                 llm.planner_model())
     return {"name": name, "spec": spec, "dxf": dxf, "png": png, "stored": stored, **rep}
 
 
@@ -90,7 +90,7 @@ def _do_assemble(spec: dict, name: str | None, request: str | None = None) -> di
     # persist everything to atlas (fail-soft: never break a build over storage)
     result["stored"] = store.record_build(
         name, request, spec, parts, exported,
-        os.environ.get("MODEL_PLANNER", "qwen27b"))
+        llm.planner_model())
     return result
 
 

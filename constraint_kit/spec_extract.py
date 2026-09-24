@@ -1,4 +1,4 @@
-"""Fetch + extraction. Deterministic first (HTML tables / PDF text); qwen27b VLM ONLY for visual tables
+"""Fetch + extraction. Deterministic first (HTML tables / PDF text); the vision model ONLY for visual tables
 or when deterministic confidence is low. Everything is fail-soft (no internet/PDF/VLM -> structured error,
 never a crash). The VLM result is NOT ground truth — it must still pass schema/unit/sanity/provenance
 downstream.
@@ -12,8 +12,6 @@ import os
 import re
 from datetime import datetime, timezone
 
-QWEN_BASE_URL = os.environ.get("QWEN_BASE_URL", "http://localhost:8000/v1")
-QWEN_MODEL = os.environ.get("QWEN_MODEL", "qwen27b")
 
 
 def _now() -> str:
@@ -185,15 +183,15 @@ def extract_pdf_tables(pdf_path: str, page: int | None = None) -> dict:
 def extract_with_qwen_vlm(image_or_page_path: str, schema: dict, prompt: str,
                           base_url: str | None = None, model: str | None = None,
                           timeout: float = 120.0) -> dict:
-    """Extract structured values from a table/figure IMAGE using qwen27b (OpenAI-compatible, json_schema,
+    """Extract structured values from a table/figure IMAGE using the vision model (see llm.py; json output,
     thinking disabled). Returns {ok, data} or {ok:false, error}. FAIL-SOFT. The data is NOT trusted until
     it passes schema/unit/sanity validation upstream."""
-    base = (base_url or QWEN_BASE_URL).rstrip("/")
-    model = model or QWEN_MODEL
+    from . import llm
+    base = base_url or llm.base_url("vlm")
+    model = model or llm.vlm_model()
     try:
         with open(image_or_page_path, "rb") as fh:
             b64 = base64.b64encode(fh.read()).decode()
-        import httpx
         body = {
             "model": model,
             "messages": [{"role": "user", "content": [
@@ -206,9 +204,7 @@ def extract_with_qwen_vlm(image_or_page_path: str, schema: dict, prompt: str,
                                 "json_schema": {"name": "extraction", "schema": schema, "strict": True}},
             "chat_template_kwargs": {"enable_thinking": False},
         }
-        r = httpx.post(f"{base}/chat/completions", json=body, timeout=timeout)
-        r.raise_for_status()
-        content = r.json()["choices"][0]["message"].get("content") or "{}"
-        return {"ok": True, "data": json.loads(content), "extractor": "qwen27b-vlm"}
+        content = llm.chat(body, url=base, timeout=timeout)["choices"][0]["message"].get("content") or "{}"
+        return {"ok": True, "data": json.loads(content), "extractor": f"{model}-vlm"}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}

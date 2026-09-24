@@ -14,12 +14,12 @@ proposes; exact geometry + the mate kernel dispose. The GPU-heavy models are REU
 
 | stage | how | reused? |
 |---|---|---|
-| plan (parts+params+mates) | `qwen27b` VLM (via QWEN_BASE_URL), **`response_format` json_schema** | reused |
+| plan (parts+params+mates) | `deepseek-v4-pro` via `constraint_kit/llm.py` (LLM_BASE_URL; json_schema locally, json_object + schema-in-prompt on DeepSeek) | hosted |
 | generate (params → B-rep) | cadquery + cq_gears, in `cadkit` | new (CPU) |
 | assemble (deterministic mate) | pure-Python kernel, in `cadkit` | new (CPU) |
 | persist (all work) | **atlas** = shared `n4j_atlas` Neo4j (`bolt://127.0.0.1:7687`) | reused |
 | render (for QA) | Blender image + render script | reused |
-| QA / verify | render → `qwen27b` vision **+ geometric ground truth** | reused |
+| QA / verify | render → vision model (`deepseek-flash` default) **+ geometric ground truth** | reused |
 
 `cadkit` is **CPU-only** (OpenCASCADE is CPU) → it never contends with the comfy/LLM GPU instances.
 
@@ -50,15 +50,16 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   reference_signatures.json  # ground-truth catalog: BOSL2 (BSD-2) mesh reference signatures + native-vs-real cross-verify deltas (our bearing +36-39% vs real 608; our spur_gear +0.5% vs BOSL2's)
   intent.py            # intent layer (design front-end): resolve() under-specified intent -> canonical PROVENANCE-tracked form (defaults from generator sigs + standards from spec compiler); kind-name normalization (+ learned_aliases.json); honest decline on unknown kind, UNEXPRESSIBLE feature, or unmodeled VARIANT (variant_mismatch); to_program() lowers to DSL
   learned_aliases.json # DATA the autonomous auto-fixer (drivers/autofix.py) writes — verified kind/param aliases the resolver merges on import (never edited code)
-  planner.py           # qwen27b, schema-enforced: plan() [3D] + plan_layout() [2D] + plan_intent() [NL->INTENT]
+  llm.py               # shared OpenAI-compatible client; DeepSeek default, auth + json_schema->json_object adaptation
+  planner.py           # LLM via llm.py, schema-enforced: plan() [3D] + plan_layout() [2D] + plan_intent() [NL->INTENT]
   store.py             # atlas persistence (Neo4j); FAIL-SOFT. Also CkSpecResolution work-breadcrumbs
-  qa.py                # qwen27b vision QA
+  qa.py                # vision QA (llm.py)
   spec_compiler.py     # SPEC COMPILER core: preseed, trust scoring, fact build, validate, resolve()
   iso286.py            # ISO 286 limits&fits: IT-grade + fundamental-deviation formulas (real µm tolerances)
   spec_graph.py        # LangGraph orchestration of the spec-compilation flow (13 nodes)
   spec_db.py           # SQLite durable spec store (resolutions/facts/sources/links/cache) — NOT atlas
   spec_sources.py      # SearXNG discovery + rule-based source ranking (snippets are NOT facts)
-  spec_extract.py      # fetch + deterministic HTML/PDF extraction + qwen27b VLM (visual tables only); hardened parse/confirm [T5.3]; pdf_oxide layout-aware PDF reader [durable]
+  spec_extract.py      # fetch + deterministic HTML/PDF extraction + vision-model extraction (visual tables only); hardened parse/confirm [T5.3]; pdf_oxide layout-aware PDF reader [durable]
   spec_cache.py        # optional JSON artifact dump (debug/export) under SPEC_CACHE_DIR
   api.py               # FastAPI (port 8195)
 cadkit/                # Dockerfile + docker-compose.yaml + README + output/
@@ -261,7 +262,7 @@ need fact -> check SQLite cache -> (miss) SearXNG discovery -> rank -> fetch sou
   pypdf, which flattens these visual tables. t is undefined ≤24mm; u/v subdivide 18-30 finer than the IT
   steps. Letters x/y/z… stay honest **class-only + warning** (not yet extracted, never faked); no nominal →
   class-only + "give a size" warning. 3 < D ≤ 500 mm.
-- Env: `SPEC_SEARCH_URL`, `SPEC_DB_PATH`, `SPEC_CACHE_DIR`, `QWEN_BASE_URL`, `QWEN_MODEL` (compose).
+- Env: `SPEC_SEARCH_URL`, `SPEC_DB_PATH`, `SPEC_CACHE_DIR`, `LLM_BASE_URL`, `MODEL_VLM`, `DEEPSEEK_API_KEY` (compose).
 - **Wired into the builder (opt-in):** a build spec with `"resolve_specs": true` resolves each screw/
   thread part's nominal-diameter+pitch via the spec compiler and attaches `spec`
   `{designation, nominal_diameter_mm, pitch_mm, confidence, source_refs}` to that part's report —

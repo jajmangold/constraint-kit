@@ -24,22 +24,20 @@ services:
       PYTHONPATH: ${CK_WORK_DIR:-/tmp/constraint-kit}
       PYTHONUNBUFFERED: "1"
       OUTPUT_DIR: ${CK_WORK_DIR:-/tmp/constraint-kit}/cadkit/output
-      # Planner URL and model.
-      PLANNER_URL: "http://localhost:8000/v1"
-      MODEL_PLANNER: "qwen27b"
-      # VLM QA: qwen27b per the standing "use the VLM for vision" instruction.
-      VLM_URL: "http://localhost:8000/v1"
-      MODEL_VLM: "qwen27b"
+      # LLM backend: DeepSeek by default. Set LLM_BASE_URL to a local OpenAI-compatible server to self-host.
+      LLM_BASE_URL: "${LLM_BASE_URL:-https://api.deepseek.com}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      MODEL_PLANNER: "${MODEL_PLANNER:-deepseek-v4-pro}"
+      # vision QA + table extraction need an image-capable model
+      MODEL_VLM: "${MODEL_VLM:-deepseek-flash}"
       # atlas (shared n4j_atlas Neo4j) -- persist all work. Reachable via host net namespace.
       NEO4J_URL: "bolt://127.0.0.1:7687"
       NEO4J_USER: "neo4j"
       NEO4J_PASS: "${NEO4J_PASS:-changeme}"
-      # spec compiler (engineering-fact resolution): SQLite store + SearXNG discovery + qwen27b VLM
+      # spec compiler (engineering-fact resolution): SQLite store + SearXNG discovery + vision model
       SPEC_SEARCH_URL: "http://localhost:8080"
       SPEC_DB_PATH: "${CK_WORK_DIR:-/tmp/constraint-kit}/cadkit/output/specs.sqlite"
       SPEC_CACHE_DIR: "${CK_WORK_DIR:-/tmp/constraint-kit}/cadkit/output/spec_cache"
-      QWEN_BASE_URL: "http://localhost:8000/v1"
-      QWEN_MODEL: "qwen27b"
       # design-version provenance (T8.1): .git is NOT bind-mounted, so pass the host SHA through.
       # Set it at up-time: CK_GIT_SHA=$(git rev-parse --short HEAD) docker compose ... up -d
       CK_GIT_SHA: "${CK_GIT_SHA:-}"

@@ -1,15 +1,14 @@
-"""LLM planner -- REUSES the resident qwen model (no new model spun up).
+"""LLM planner -- DeepSeek by default, or any OpenAI-compatible server (see llm.py).
 
-Turns a natural-language request into a strict assembly spec via vLLM guided-JSON, so the model
-*must* return valid structure (the doctrine: AI for semantics, deterministic geometry for the rest).
-qwen3.6 is a reasoning model -> we disable thinking, or the answer lands in the `reasoning` field.
+Turns a natural-language request into a strict assembly spec via structured JSON output, so the model
+returns a fixed structure (the doctrine: AI for semantics, deterministic geometry for the rest).
+Thinking is disabled, or the answer lands in the `reasoning` field instead of `content`.
 """
 from __future__ import annotations
 
 import json
-import os
 
-import httpx
+from . import llm
 
 # JSON Schema the model is constrained to. Keep the vocabulary tight; expand with PART_GENS.
 SPEC_SCHEMA = {
@@ -219,7 +218,7 @@ INTENT_SCHEMA = {
 }
 
 # The parse rules MEASURED to take the intent path's assembly score 6/12 -> 12/12 (fixed-base-first,
-# interface direction, encode negations). Same doctrine as plan(): qwen for semantics, kernel for the rest.
+# interface direction, encode negations). Same doctrine as plan(): the LLM for semantics, kernel for the rest.
 SYSTEM_INTENT = """You convert a natural-language part/assembly request into a structured design INTENT (NOT geometry).
 
 An intent lists ENTITIES (parts/subsystems) and INTERFACES (how they connect). For each entity:
@@ -270,14 +269,14 @@ Respond with ONLY the JSON intent."""
 
 def plan_intent(request: str, *, url: str | None = None, model: str | None = None,
                 timeout: float = 120.0) -> dict:
-    """NL -> structured design INTENT (the parse stage of the intent layer), on the resident qwen model."""
+    """NL -> structured design INTENT (the parse stage of the intent layer), on the planner model."""
     return _chat(SYSTEM_INTENT, request, INTENT_SCHEMA, url, model, timeout)
 
 
 def _chat(system: str, request: str, schema: dict, url: str | None, model: str | None,
           timeout: float) -> dict:
-    url = (url or os.environ.get("PLANNER_URL", os.environ.get("QWEN_BASE_URL", "http://localhost:8000/v1"))).rstrip("/")
-    model = model or os.environ.get("MODEL_PLANNER", "qwen27b")
+    url = url or llm.base_url("planner")
+    model = model or llm.planner_model()
     body = {
         "model": model,
         "messages": [{"role": "system", "content": system},
@@ -287,9 +286,7 @@ def _chat(system: str, request: str, schema: dict, url: str | None, model: str |
                             "json_schema": {"name": "spec", "schema": schema, "strict": True}},
         "chat_template_kwargs": {"enable_thinking": False},
     }
-    r = httpx.post(f"{url}/chat/completions", json=body, timeout=timeout)
-    r.raise_for_status()
-    return json.loads(r.json()["choices"][0]["message"]["content"])
+    return json.loads(llm.chat(body, url=url, timeout=timeout)["choices"][0]["message"]["content"])
 
 
 def plan_layout(request: str, *, url: str | None = None, model: str | None = None,
@@ -299,8 +296,8 @@ def plan_layout(request: str, *, url: str | None = None, model: str | None = Non
 
 def plan(request: str, *, url: str | None = None, model: str | None = None,
          timeout: float = 120.0) -> dict:
-    url = (url or os.environ.get("PLANNER_URL", os.environ.get("QWEN_BASE_URL", "http://localhost:8000/v1"))).rstrip("/")
-    model = model or os.environ.get("MODEL_PLANNER", "qwen27b")
+    url = url or llm.base_url("planner")
+    model = model or llm.planner_model()
     body = {
         "model": model,
         "messages": [
@@ -317,7 +314,5 @@ def plan(request: str, *, url: str | None = None, model: str | None = None,
         },
         "chat_template_kwargs": {"enable_thinking": False},
     }
-    r = httpx.post(f"{url}/chat/completions", json=body, timeout=timeout)
-    r.raise_for_status()
-    content = r.json()["choices"][0]["message"]["content"]
+    content = llm.chat(body, url=url, timeout=timeout)["choices"][0]["message"]["content"]
     return json.loads(content)
