@@ -48,7 +48,7 @@ an error path.
 | ![Meshing spur gears](docs/images/gear_pair.png) | ![Gear on a shaft through a housing](docs/images/shaft_housing.png) | ![Four-bar linkage](docs/images/four_bar.png) |
 | Spur pair at the exact center distance | Gear on a shaft through a housing | Four-bar linkage |
 
-Every image above is a real build, with STEP geometry behind it. The development pipeline has built more than
+Every image above is a real build, rendered in Blender straight from the GLB that constraint-kit exported. The geometry is untouched; only materials and lighting were added. The development pipeline has built more than
 1,400 verified assemblies.
 
 ## A local model that knows when to decline
