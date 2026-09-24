@@ -61,6 +61,16 @@ the reward) that writes constraint-kit programs directly from plain English, on 
 | SFT, held-out probes | **93%** | **87%** |
 | + GRPO | builds held at 6/6 | 9/10 (silent wrong builds halved) |
 
+```mermaid
+flowchart LR
+    prompt(["Request"]) --> policy["Gemma 4 12B<br/>LoRA policy"]
+    policy --> prog["Reasoning + program<br/>or decline"]
+    prog --> verifier["constraint-kit verifier<br/>checks pass? builds?<br/>geometry signature match?"]
+    verifier -->|reward| policy
+```
+
+No reward model and no LLM judge. The reward is whether the CAD actually checks out.
+
 It performs in the same range as a prompted frontier model, shows its reasoning, and runs as a 9.8 GB GGUF.
 It's optional: constraint-kit runs on a hosted LLM out of the box. Training scripts are in [`training/`](training/).
 
@@ -135,18 +145,31 @@ curl -X POST http://127.0.0.1:8195/build \
 
 ## Architecture
 
+```mermaid
+flowchart TD
+    req(["Plain-English request"]) --> llm["LLM planner<br/>DeepSeek or local Gemma"]
+    llm -->|outside the vocabulary| no(["unsupported: reason"])
+    llm -->|parts, params, mates| check["Static check<br/>/dsl/check"]
+    spec[("Spec compiler<br/>threads, ISO 286 fits,<br/>bearings, materials")] -.->|"values + provenance"| gen
+    check --> gen["Parametric generators<br/>cadquery / build123d<br/>exact B-rep solids"]
+    gen --> kernel["Mate kernel<br/>named joint frames"]
+    kernel <--> solvers["Solvers<br/>Willis mobility,<br/>SolveSpace loops,<br/>Z3 synthesis"]
+    kernel --> verify["Verification<br/>interference, mass,<br/>seating, mesh distance"]
+    verify --> out(["STEP / GLB, BOM,<br/>DXF / SVG drawings"])
+    out --> qa["Render + vision QA<br/>second opinion only"]
+
+    classDef ai fill:#ede7f6,stroke:#5e35b1,color:#1a1a1a
+    classDef exact fill:#e3f2fd,stroke:#1e88e5,color:#1a1a1a
+    classDef stop fill:#fff3e0,stroke:#fb8c00,color:#1a1a1a
+    class llm,qa ai
+    class check,gen,kernel,solvers,verify,spec,out exact
+    classDef io fill:#f5f5f5,stroke:#757575,color:#1a1a1a
+    class req io
+    class no stop
 ```
-┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  LLM Plan   │────▶│ Parametric Gen   │────▶│  Mate Kernel    │
-│ (DeepSeek / │     │ (cadquery/b123d) │     │ (deterministic) │
-│  local LLM) │     │                  │     │                 │
-└─────────────┘     └──────────────────┘     └────────┬────────┘
-                                                       │
-                    ┌──────────────────┐     ┌─────────▼────────┐
-                    │  Render + QA     │◀────│  Export STEP/GLB │
-                    │  (Blender/VLM)   │     │  + Mass + BOM    │
-                    └──────────────────┘     └──────────────────┘
-```
+
+Purple is where the AI makes a judgment. Blue is deterministic and reproducible: the same program gives the
+same geometry every time. Vision QA can flag a render, but it never overrides the geometric checks.
 
 **Doctrine**: AI for semantics, deterministic geometry for placement. The LLM proposes; exact geometry + the mate kernel dispose.
 
