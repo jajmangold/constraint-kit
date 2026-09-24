@@ -2,26 +2,25 @@
 
 Generate **exact parametric CAD assemblies** from natural language: an LLM plans parts+params+mates,
 parametric generators emit B-rep geometry, a deterministic mate kernel assembles them, and the result
-is rendered + QA'd. The CAD analog of the parametric pipeline, with parametric generation replacing
-placement's fidelity-limited SAM3D mesh-lift stage. Thesis: `README.md`.
+is rendered + QA'd. Thesis: `README.md`.
 
 Working dir: `CK_WORK_DIR` env var (default: `/tmp/constraint-kit`).
 
-## ⭐ Architecture — reuse the resident models, add one CPU service
+## ⭐ Architecture — hosted LLM for semantics, one CPU service for geometry
 
 The doctrine: **AI for semantics, deterministic geometry for placement.** The LLM
-proposes; exact geometry + the mate kernel dispose. The GPU-heavy models are REUSED, never duplicated:
+proposes; exact geometry + the mate kernel dispose.
 
-| stage | how | reused? |
+| stage | how | where |
 |---|---|---|
 | plan (parts+params+mates) | `deepseek-v4-pro` via `constraint_kit/llm.py` (LLM_BASE_URL; json_schema locally, json_object + schema-in-prompt on DeepSeek) | hosted |
 | generate (params → B-rep) | cadquery + cq_gears, in `cadkit` | new (CPU) |
 | assemble (deterministic mate) | pure-Python kernel, in `cadkit` | new (CPU) |
-| persist (all work) | **atlas** = shared `n4j_atlas` Neo4j (`bolt://127.0.0.1:7687`) | reused |
-| render (for QA) | Blender image + render script | reused |
-| QA / verify | render → vision model (`deepseek-flash` default) **+ geometric ground truth** | reused |
+| persist (all work) | **atlas** = Neo4j (`bolt://127.0.0.1:7687`, optional, fail-soft) | external |
+| render (for QA) | Blender image + render script | external |
+| QA / verify | render → vision model (`deepseek-flash` default) **+ geometric ground truth** | hosted |
 
-`cadkit` is **CPU-only** (OpenCASCADE is CPU) → it never contends with the comfy/LLM GPU instances.
+`cadkit` is **CPU-only** (OpenCASCADE is CPU) → it never contends with GPU workloads.
 
 ## Layout
 
@@ -66,7 +65,7 @@ cadkit/                # Dockerfile + docker-compose.yaml + README + output/
 drivers/phase0.py      # 3D orchestrator: plan -> build -> Blender render -> QA -> persist
 drivers/phase1.py      # 2D orchestrator: plan_layout -> solve+DXF+PNG -> QA -> persist (no Blender)
 drivers/showcase.py    # FULL-STACK demo: SMT-synthesize a planetary gearbox -> hierarchy + fasteners +
-                       #   frame -> BOM/mass -> interference -> thread provenance -> render -> qwen27b QA
+                       #   frame -> BOM/mass -> interference -> thread provenance -> render -> vision QA
 drivers/capstone_gearbox.py  # CAPSTONE: the whole stack with solvers CROSS-VALIDATING — SMT designs the
                        #   ratio, Willis independently confirms it; build (parallel prewarm) -> interference
                        #   -> BOM/mass/CG -> exploded + 2D drawing + BOM doc -> render+QA (fail-soft). Hermetic
@@ -87,7 +86,7 @@ drivers/corpus_factory.py  # the NL<->CAD data factory: DeepSeek captions refere
 drivers/scad_reference.py  # BOSL2 ground-truth recorder: render module -> STL -> mesh signature (watertight-
                        #   gated, render-to-verify) -> reference_signatures.json + native-vs-real deltas
 drivers/visual_qa.py   # VISUAL census: sample diverse corpus entries -> build -> tools/render_part.py render
-                       #   -> qwen27b verdict. Every NO gets eyeball+geometry ARBITRATION (the VLM is a second
+                       #   -> vision-model verdict. Every NO gets eyeball+geometry ARBITRATION (the VLM is a second
                        #   opinion). Found the origin-pile class (40 poisoned corpus entries) the signatures
                        #   couldn't see -> dsl.overlap_fraction gate + builder AUTO-LAYOUT of unmated parts
                        #   (a "set of N" lays out in a row; under-mated assemblies become visible kits, never
@@ -142,9 +141,9 @@ image only when changing `cadkit/Dockerfile` (deps).
   parts along `axis` (default +Z), offset each by rank·factor → one STEP+GLB of the separated assembly
 - `POST /assembly/drawing {defs,root,plane?,height?,views?,name?}` — **[E7/T7.2]** 2D drawing set: cross-section
   DXF (cut on plane) + orthographic projection SVGs + overall dims (exact OCC geometry; no GD&T frames)
-- `POST /intent/design {request, build?}` — **[intent layer]** NL → qwen parse (`plan_intent`) → resolve →
+- `POST /intent/design {request, build?}` — **[intent layer]** NL → LLM parse (`plan_intent`) → resolve →
   honest decline (OOV) OR lower to DSL + build + signature. The validated intent path end-to-end on the
-  RESIDENT qwen model (parse rules: fixed-base-first, interface direction, encode negations — measured to
+  planner model (parse rules: fixed-base-first, interface direction, encode negations — measured to
   beat direct NL→DSL on assemblies). Fail-soft on planner outage (502)
 - `POST /intent/resolve {intent, build?}` — **[intent layer]** resolve a (pre-parsed) intent → canonical
   provenance-tracked form (defaults/standards/decline); `build:true` lowers to a DSL program + check + signature
@@ -222,7 +221,7 @@ orchestrated by **LangGraph** (`spec_graph.py`, 13 nodes), all fail-soft:
 need fact -> check SQLite cache -> (miss) SearXNG discovery -> rank -> fetch source
           -> deterministic extraction: HTML tables | PDF via pdf_oxide LAYOUT (extract_pdf/_pdf_tables,
              Rust, recovers dense-table cells pypdf scrambles) -> confirm values -> (only if unconfirmed)
-             qwen27b VLM last resort
+             vision-model last resort
           -> normalize units/schema -> rule-based trust score -> validate -> persist SQLite
           -> optional JSON artifact -> return  (provenance attached to EVERY value)
 ```
@@ -236,7 +235,7 @@ need fact -> check SQLite cache -> (miss) SearXNG discovery -> rank -> fetch sou
   (official 1.0 / manufacturer 0.9 / distributor 0.75 / handbook 0.7 / preseed 0.85 / webpage 0.25 /
   forum 0.1) + modifiers (structured table +0.2, 2nd-source confirm +0.2, edition/date +0.1, unit +0.1,
   preseed +0.05, OCR −0.2, VLM-only −0.15, conflict −0.3, missing edition −0.2).
-- **VLM/LLM are NOT ground truth.** qwen27b assists visual-table extraction only; its output is accepted
+- **VLM/LLM are NOT ground truth.** the vision model assists visual-table extraction only; its output is accepted
   only after schema + unit + value-match + provenance checks (a VLM value that doesn't match the
   deterministic designation is discarded).
 - **Hardened extraction/confirmation (T5.3):** `spec_extract.value_confirmed` gates "a source confirms this
@@ -376,8 +375,8 @@ parameter values (idempotent; a parametric edit creates a new linked version). `
 
 - **`cq_gears` is GitHub-only**, not on PyPI → `pip install "cq_gears @ git+https://github.com/meadiode/cq_gears.git"` (needs `git` in the image).
 - **cadquery `Location.inverse` is a PROPERTY**, not a method (`loc.inverse`, never `loc.inverse()`).
-- **This vLLM ignores top-level `guided_json`** → use OpenAI-standard `response_format:{type:"json_schema",...}` (honored). qwen3.6 is a reasoning model → send `chat_template_kwargs:{enable_thinking:false}` or the answer lands in `reasoning` and `content` is null.
-- **`cadkit` needs `network_mode: host`** — the planner/VLM and comfy services bind `127.0.0.1`, unreachable via port-mapping.
+- **Structured output:** local vLLM ignores top-level `guided_json` → use OpenAI-standard `response_format:{type:"json_schema",...}`. DeepSeek only accepts `json_object`, so `llm.py` downgrades and puts the schema in the prompt. Reasoning models must have thinking disabled or the answer lands in `reasoning` and `content` is null.
+- **`cadkit` uses `network_mode: host`** so it can reach services bound to `127.0.0.1` (a local LLM server, Neo4j, SearXNG).
 - **`OUTPUT_DIR` is the shared host path** mounted identically in the container, so returned glb/step paths are valid on the host for the Blender render step (no path translation).
 - **cadquery `Assembly.save` is deprecated** (FutureWarning) but works; GLB export falls back to STL→trimesh→GLB if native GLTF fails.
 - **Parallel builds use PROCESSES, not threads** (T3.3): cq_gears' involute math is Python-heavy and OCC holds the GIL, so a thread pool gives NO speedup (measured ~slower); a process pool does. Two entry points: `builder.build_assemblies_parallel` (batch of flat specs, geometry crosses as BREP) and **`assembly.build_tree(..., prewarm=True)`** — the recursive-tree integration (R-T3.3 resolved): `prewarm_cache` generates the tree's DISTINCT parts in a pool and populates the T3.1 cache, so the recursive build + the validated density-weighted mass-props run UNCHANGED against a warm cache (sidesteps the per-leaf-shape problem entirely; prewarmed tree == serial tree, exact).
@@ -395,22 +394,15 @@ size, DXF validity (ezdxf audit), and the atlas round-trip (or fail-soft when th
 tests/run.sh            # docker exec into cadkit; exit 0 = all pass (gates changes)
 ```
 
-76 tests, all passing. Add a test alongside any new part/mate (assert the invariant, not just "it runs").
-Lesson baked into the suite: verify with **geometry** (anchor/bbox math), not the VLM — qwen27b is a
+113 tests, all passing. Add a test alongside any new part/mate (assert the invariant, not just "it runs").
+Lesson baked into the suite: verify with **geometry** (anchor/bbox math), not the VLM — a vision model is a
 categorical second opinion that misreads counts/angles (it called a bolted plate "no gear" from a `hero`
 angle, then "2 bolts, yes gear" from `three_quarter`); the deterministic tests are ground truth.
 
-## trailmark (standing instruction: use it for code-structure work)
-
-`~/.local/bin/trailmark analyze constraint_kit --summary | entrypoints | --complexity N | diff <before> <after>`.
-Snapshot before a change (`cp -r constraint_kit /tmp/ckit_baseline`) to get a real structural diff after.
-Current: 8 API entrypoints (all `untrusted_external/high`, host-only bound); hotspot
-`builder.build_assembly` (complexity 11).
-
 ## Phases
 
-- **Phase 0 — 3D assembly** ✅ plate/spur_gear/spacer, coincident+contact mates, STEP+GLB, Blender render, qwen27b QA, atlas.
-- **Phase 1 — 2D layout → DXF** ✅ rect_panel/disc/bracket, coincident+offset, DXF (per-part layers) + PNG preview, qwen27b QA, atlas.
+- **Phase 0 — 3D assembly** ✅ plate/spur_gear/spacer, coincident+contact mates, STEP+GLB, Blender render, VLM QA, atlas.
+- **Phase 1 — 2D layout → DXF** ✅ rect_panel/disc/bracket, coincident+offset, DXF (per-part layers) + PNG preview, VLM QA, atlas.
 - **Phase 2 (cadquery-native) — engineering parts & mates.** ✅ `mesh` gear-mate (exact involute center
   distance), native fasteners (bolt/nut/washer) + per-hole plate anchors, simplified bearing, multi-gear
   trains (chained mesh).
@@ -427,7 +419,7 @@ Current: 8 API entrypoints (all `untrusted_external/high`, host-only bound); hot
   `shaft` part (off-axis `key` marker so rotation is testable); `sprocket`/`flange`/`pipe` catalog wrappers
   (plumbing + chain drive). LLM builds a shaft journalled in a block bore with a sprocket on top. 29 tests.
   Planner now told to anchor the first mate on the fixed base part.
-## Three solver classes (by loop type)
+## Solver classes (by loop type; SMT synthesis is the fourth, above)
 
 constraint-kit honestly uses the RIGHT solver for each topology — that's the design, not a limitation:
 
@@ -468,7 +460,5 @@ progress); SolveSpace is the honest geometric DOF solver. FreeCAD remains option
 B-rep assembly editing is ever wanted.
 
 Deferred / lower-leverage: real-thread fasteners, more bd_warehouse wrappers, 2D nesting.
-- **Phase 3 — FreeCAD container** — closed kinematic loops (planetary/linkage) need a DOF solver; the
-  kernel here solves assembly *trees* deterministically.
 - **Backlog:** 2D non-overlap packing/nesting (an optimizer, not the deterministic kernel); central-column
   contact seat (vs bbox) for overhanging parts; STEP/STL re-import for retrieval-to-CAD.

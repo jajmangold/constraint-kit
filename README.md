@@ -45,8 +45,8 @@ an error path.
 |:-:|:-:|:-:|
 | ![Planetary gearbox bolted to a plate](docs/images/gearbox_assembled.png) | ![Meshing spur gears](docs/images/gear_pair.png) | ![NEMA stepper motor](docs/images/stepper_motor.png) |
 | Planetary gearbox: ring, sun and three planets, screwed to a plate | Spur pair at the exact center distance | NEMA stepper, a BOSL2 library "vitamin" |
-| ![Angle bracket on V-slot extrusion](docs/images/bracket_rail.png) | ![Gear bolted to a plate](docs/images/fastened.png) | ![Larger planetary gearset](docs/images/planetary_large.png) |
-| Angle bracket bolted to a V-slot 2020 extrusion | Gear seated on a plate, four bolts through it | A second planetary gearset, larger planets |
+| ![Flanged pulley](docs/images/pulley.png) | ![Gear bolted to a plate](docs/images/fastened.png) | ![Larger planetary gearset](docs/images/planetary_large.png) |
+| Flanged pulley, added after the census found it among the most-requested missing parts | Gear seated on a plate, four bolts through it | A second planetary gearset, larger planets |
 
 Every image above is a real build, rendered in Blender straight from the GLB that constraint-kit exported. The geometry is untouched; only materials and lighting were added. The development pipeline has built more than
 1,400 verified assemblies.
