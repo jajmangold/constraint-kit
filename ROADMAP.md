@@ -83,4 +83,4 @@ walls/floors/openings (extrude 2D layouts — have the 2D layout solver) · mate
 ## Non-negotiable foundations (apply to every phase)
 - Deterministic geometry + the LLM only proposes; **provenance on every value**; **fail-soft** everywhere.
 - **No dead code, no silent truncation, tests with each capability** (geometry verified by math, not the VLM).
-- Reuse the resident models; one CPU service; SQLite for spec data, atlas for work-tracking.
+- A hosted (or local) LLM for semantics; one CPU service; SQLite for spec data, atlas for work-tracking.

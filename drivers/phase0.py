@@ -2,9 +2,9 @@
 """Phase-0 end-to-end driver (host side, stdlib only).
 
 Proves the whole reuse wiring on one wire:
-  qwen27b plan  ->  cadkit generate+assemble+export  ->  Blender render (reused image)  ->  qwen27b VLM QA.
+  LLM plan  ->  cadkit generate+assemble+export  ->  Blender render  ->  VLM QA.
 
-It calls the resident services; it spins up nothing new except the one-shot Blender render container
+It calls the cadkit API; it spins up nothing new except the one-shot Blender render container
 (the same Blender image used for rendering).
 
     python3 drivers/phase0.py "a 60mm steel mounting plate with a 20-tooth module-1 gear seated on its boss"

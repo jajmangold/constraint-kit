@@ -9,12 +9,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # cadquery pulls cadquery-ocp (OpenCASCADE) as a manylinux wheel -> no source compilation on CPU.
 # cq_gears is GitHub-only (involute gear generator, deps cadquery+numpy).
+# Versions are PINNED: build123d >=0.12 adds a Shape.material registry that rejects bd_warehouse Pipe's
+# schedule material ("steel"), breaking pipe builds; ocp_gordon >=0.2 needs OCP 7.9 (OCP.collections).
 # build123d + bd_warehouse: co-resolve with cadquery on the SAME cadquery-ocp 7.8.1.1 (verified, no
 # conflict) -> real threaded fasteners, aluminum extrusions, pipe/flange plumbing, ball bearings.
 RUN pip install --no-cache-dir \
-        cadquery \
-        build123d \
-        bd_warehouse \
+        "cadquery==2.7.0" \
+        "build123d==0.10.0" \
+        "ocp_gordon==0.1.18" \
+        "bd_warehouse==0.2.0" \
         "cq_gears @ git+https://github.com/meadiode/cq_gears.git" \
         numpy \
         trimesh \

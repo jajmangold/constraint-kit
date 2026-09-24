@@ -24,8 +24,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "cadquery",
-    "build123d",
+    "cadquery==2.7.0",
+    "build123d==0.10.0",
+    "ocp_gordon==0.1.18",
     "numpy",
     "trimesh",
     "ezdxf",
@@ -43,11 +44,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest"]
 gear = ["cq-gears @ git+https://github.com/meadiode/cq_gears.git"]
-catalog = ["bd-warehouse"]
+catalog = ["bd-warehouse==0.2.0"]
 pdf = ["pdf-oxide"]
 solver = ["python-solvespace"]
 training = ["unsloth", "trl", "peft", "bitsandbytes"]
-all = ["constraint-kit[gear,catalog,pdf,solver,training,dev]"]
+all = ["constraint-kit[gear,catalog,pdf,solver,dev]"]  # training (GPU) is separate: pip install -e ".[training]"
 
 [project.urls]
 Homepage = "https://github.com/jajmangold/constraint-kit"

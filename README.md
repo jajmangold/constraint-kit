@@ -3,7 +3,7 @@
 **Describe a mechanism in plain English. Get exact, manufacturable CAD back: STEP files, real B-rep geometry,
 not a mesh an AI guessed at.**
 
-![Assemblies built by constraint-kit: a planetary gearset, a gearbox mounted on a V-slot column, a gear seated on a plate boss, a helical gear](docs/images/hero.png)
+![Assemblies built by constraint-kit: a planetary gearset the Z3 solver designed to exactly 4:1, a three-gear train on a plate, a gear seated on a plate boss, a helical gear](docs/images/hero.png)
 
 ```text
 "a plate with a spacer and a 24-tooth gear stacked on its boss"
@@ -43,13 +43,16 @@ an error path.
 
 | | | |
 |:-:|:-:|:-:|
-| ![Planetary gearbox bolted to a plate](docs/images/gearbox_assembled.png) | ![Meshing spur gears](docs/images/gear_pair.png) | ![NEMA stepper motor](docs/images/stepper_motor.png) |
-| Planetary gearbox: ring, sun and three planets, screwed to a plate | Spur pair at the exact center distance | NEMA stepper, a BOSL2 library "vitamin" |
-| ![Flanged pulley](docs/images/pulley.png) | ![Gear bolted to a plate](docs/images/fastened.png) | ![Larger planetary gearset](docs/images/planetary_large.png) |
-| Flanged pulley, added after the census found it among the most-requested missing parts | Gear seated on a plate, four bolts through it | A second planetary gearset, larger planets |
+| ![Bearing block on a V-slot extrusion](docs/images/block_rail.png) | ![M8 threaded rod with nuts and washers](docs/images/threaded_rod.png) | ![Four-bar linkage](docs/images/four_bar_links.png) |
+| *"a pillow bearing block bolted to the side of a 100 mm 20x20 aluminum V-slot extrusion with two M5 socket head screws, a 608 ball bearing pressed into the block's bore, and a 60 mm long 8 mm steel shaft through the bearing"* | *"an M8 threaded rod 80 mm long with a steel washer and hex nut near each end"*. The thread is real helical geometry | Four-bar linkage from link lengths 100 / 35 / 90 / 70 mm, closed by the SolveSpace solver |
+| ![NEMA stepper motor](docs/images/stepper_motor.png) | ![Flanged pulley](docs/images/pulley.png) | ![Meshing spur gears](docs/images/gear_pair.png) |
+| NEMA stepper, placed as a BOSL2 library "vitamin" | Flanged pulley, added after the census found it among the most-requested missing parts | Spur pair at the exact center distance, *m·(z₁+z₂)/2* |
 
-Every image above is a real build, rendered in Blender straight from the GLB that constraint-kit exported. The geometry is untouched; only materials and lighting were added. The development pipeline has built more than
-1,400 verified assemblies.
+Every image on this page is a real constraint-kit build, rendered in Blender straight from the exported GLB.
+The geometry is untouched; only materials and lighting were added. Quoted captions are the exact sentences
+that were typed in: the planner (DeepSeek, the default backend) wrote the program, and constraint-kit built
+it. The Z3 planetary in the banner was designed by the SMT solver to exactly 4:1. The banner's three-gear
+train had its mesh angles set by hand so the train folds onto the plate.
 
 ## A local model that knows when to decline
 

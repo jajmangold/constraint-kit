@@ -1,4 +1,4 @@
-"""Persist all constraint-kit work to atlas (the shared n4j_atlas Neo4j, bolt 127.0.0.1:7687).
+"""Persist all constraint-kit work to atlas (an optional Neo4j at bolt 127.0.0.1:7687; fail-soft).
 
 Graph model (all nodes namespaced with `Ck*` labels + project="constraint-kit" so we never collide
 with other tenants of the shared DB):

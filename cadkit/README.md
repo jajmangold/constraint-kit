@@ -1,9 +1,8 @@
 # cadkit — constraint-kit's CPU geometry + planning service
 
 Phase 0 of constraint-kit (see `../README.md` for the thesis). A FastAPI service that turns a
-natural-language request into an exact parametric CAD assembly, **reusing the resident models from
-the model server** (qwen27b planner/VLM, the Blender render image) — it spins up nothing new and uses
-no GPU.
+natural-language request into an exact parametric CAD assembly, calling a hosted LLM for
+planning (DeepSeek by default, or any OpenAI-compatible server) — the service itself uses no GPU.
 
 ## Stack
 cadquery 2.7 + cadquery-ocp (OpenCASCADE) + cq_gears (involute gears) + build123d 0.10 + bd_warehouse 0.2
@@ -18,8 +17,8 @@ cd ${CK_WORK_DIR:-/tmp/constraint-kit}
 HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose -f cadkit/docker-compose.yaml up -d --build
 curl -s http://127.0.0.1:8195/health
 ```
-`network_mode: host` is required — the planner/VLM and comfy services bind `127.0.0.1`, so cadkit must
-share the host net namespace to reach them.
+`network_mode: host` lets cadkit reach optional local services bound to `127.0.0.1` (a local LLM server,
+Neo4j, SearXNG).
 
 ## API (`127.0.0.1:8195`)
 - `GET  /health`

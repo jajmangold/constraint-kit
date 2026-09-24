@@ -562,7 +562,7 @@ class IntentDesignReq(BaseModel):
 def intent_design(req: IntentDesignReq) -> dict:
     """The intent layer end to end: natural language -> qwen parse -> deterministic resolve (+provenance) ->
     honest decline (OOV) OR lower to DSL + build. The production form of the validated intent path, with
-    parse on the RESIDENT qwen model. Fail-soft: a planner outage is reported (502), not crashed."""
+    parse on the planner LLM. Fail-soft: a planner outage is reported (502), not crashed."""
     try:
         parsed = planner.plan_intent(req.request)
     except Exception as exc:  # noqa: BLE001 -- qwen unreachable / bad response
