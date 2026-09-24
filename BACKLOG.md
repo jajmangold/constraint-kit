@@ -48,15 +48,15 @@ queue; blocked items wait on their `BLOCKED_BY` research.
 docker exec cadkit python3 tools/seed_backlog.py
 
 # what's ready to pick up
-docker exec n4j_atlas cypher-shell -u neo4j -p microdrama-local \
+docker exec n4j_atlas cypher-shell -u neo4j -p $NEO4J_PASS \
   "MATCH (t:CkTask {status:'todo'}) RETURN t.id, t.title, t.detail"
 
 # what's blocked and why
-docker exec n4j_atlas cypher-shell -u neo4j -p microdrama-local \
+docker exec n4j_atlas cypher-shell -u neo4j -p $NEO4J_PASS \
   "MATCH (t:CkTask)-[:BLOCKED_BY]->(r:CkResearch) RETURN t.id, r.question"
 
 # an epic's tasks
-docker exec n4j_atlas cypher-shell -u neo4j -p microdrama-local \
+docker exec n4j_atlas cypher-shell -u neo4j -p $NEO4J_PASS \
   "MATCH (:CkEpic {id:'E1'})-[:HAS_TASK]->(t) RETURN t.id, t.status, t.title ORDER BY t.id"
 ```
 Long-term context: `ROADMAP.md` (screw→car→home). How the built parts work: `CLAUDE.md`.

@@ -276,7 +276,7 @@ def plan_intent(request: str, *, url: str | None = None, model: str | None = Non
 
 def _chat(system: str, request: str, schema: dict, url: str | None, model: str | None,
           timeout: float) -> dict:
-    url = (url or os.environ.get("PLANNER_URL", "http://localhost:8000/v1")).rstrip("/")
+    url = (url or os.environ.get("PLANNER_URL", os.environ.get("QWEN_BASE_URL", "http://localhost:8000/v1"))).rstrip("/")
     model = model or os.environ.get("MODEL_PLANNER", "qwen27b")
     body = {
         "model": model,
@@ -299,7 +299,7 @@ def plan_layout(request: str, *, url: str | None = None, model: str | None = Non
 
 def plan(request: str, *, url: str | None = None, model: str | None = None,
          timeout: float = 120.0) -> dict:
-    url = (url or os.environ.get("PLANNER_URL", "http://localhost:8000/v1")).rstrip("/")
+    url = (url or os.environ.get("PLANNER_URL", os.environ.get("QWEN_BASE_URL", "http://localhost:8000/v1"))).rstrip("/")
     model = model or os.environ.get("MODEL_PLANNER", "qwen27b")
     body = {
         "model": model,

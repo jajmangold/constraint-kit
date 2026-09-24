@@ -29,7 +29,7 @@ from campaign import STYLES, geometry_grid  # noqa: E402
 from corpus_factory import _build_and_sig, _match  # noqa: E402
 from dsl_experiment import SYSTEM as ASM_GEN_SYS  # noqa: E402  (the benchmark-validated NL->DSL prompt w/ mates)
 
-OUT = "/srv/nvme-data/containers/constraint-kit/cadkit/output"
+OUT = os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "cadkit/output")
 DS_DIR = f"{OUT}/dataset"
 os.makedirs(DS_DIR, exist_ok=True)
 KEY = os.environ.get("DEEPSEEK_API_KEY")

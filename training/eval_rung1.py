@@ -13,12 +13,13 @@ eval_generations.jsonl (pulled back with the LoRA). Run:  python eval_rung1.py [
 from __future__ import annotations
 
 import json
+import os
 import random
 import sys
 
-VAL = "/srv/nvme-data/containers/constraint-kit/cadkit/output/dataset/val_g4.jsonl"
-LORA = "/root/ckpt_rung1/lora_final"
-OUT = "/root/eval_generations.jsonl"
+VAL = os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "cadkit/output/dataset/val_g4.jsonl")
+LORA = os.environ.get("LORA_DIR", "/tmp/lora_final")
+OUT = os.environ.get("EVAL_OUT", "/tmp/eval_generations.jsonl")
 
 
 def strip_thought(text):

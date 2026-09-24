@@ -9,13 +9,14 @@ GRPO rollouts should see the honest prompt)."""
 from __future__ import annotations
 
 import json
+import os
 import random
 import sys
 
-sys.path.insert(0, "/srv/nvme-data/containers/constraint-kit/drivers")
+sys.path.insert(0, os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "drivers"))
 from dataset_factory import TRAIN_SYS  # noqa: E402
 
-ROOT = "/srv/nvme-data/containers/constraint-kit"
+ROOT = os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit")
 
 TRAIN_SYS_V2 = TRAIN_SYS + (
     " ALSO AVAILABLE: ring_gear{module,teeth,width,rim_width} (internal gear); "

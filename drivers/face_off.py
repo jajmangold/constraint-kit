@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from census import CATEGORIES, deepseek, gen_requests, is_build_request  # noqa: E402
 from quant_parity import gen as local_gen, strip_thought  # noqa: E402
 
-ROOT = "/srv/nvme-data/containers/constraint-kit"
+ROOT = os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit")
 GEN_SYS = open(f"{ROOT}/cadkit/output/train_sys.txt").read()   # SAME system prompt for both
 
 

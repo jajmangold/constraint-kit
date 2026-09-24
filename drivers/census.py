@@ -27,7 +27,7 @@ DEEPSEEK = "https://api.deepseek.com/chat/completions"
 MODEL = "deepseek-v4-flash"
 KEY = os.environ.get("DEEPSEEK_API_KEY")
 CADKIT = os.environ.get("CADKIT_URL", "http://127.0.0.1:8195")
-OUTDIR = "/srv/nvme-data/containers/constraint-kit/cadkit/output"
+OUTDIR = os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "cadkit/output")
 CORPUS = f"{OUTDIR}/dsl_corpus.jsonl"
 
 CATEGORIES = [

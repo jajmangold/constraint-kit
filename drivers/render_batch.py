@@ -10,16 +10,16 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-ROOT = "/srv/nvme-data/containers/constraint-kit"
+ROOT = os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit")
 WL = f"{ROOT}/cadkit/output/dataset/s7_worklist.jsonl"
-BLENDER = "vrm-automation-blender:4.2.0"
+BLENDER = os.environ.get("BLENDER_IMAGE", "blender:latest")
 
 
 def render(glb):
     png = os.path.splitext(glb)[0] + "_qa.png"
     if os.path.exists(png) and os.path.getsize(png) > 0:
         return png
-    r = subprocess.run(["docker", "run", "--rm", "-v", "/srv/nvme-data:/srv/nvme-data",
+    r = subprocess.run(["docker", "run", "--rm", "-v", f"{ROOT}:/tmp/constraint-kit",
                         "-e", "HOME=/tmp/blender-home", "-e", "XDG_CONFIG_HOME=/tmp/blender-config",
                         BLENDER, "blender", "--background", "--python", f"{ROOT}/tools/render_part.py",
                         "--", glb, png, "768"], capture_output=True, text=True, timeout=300)

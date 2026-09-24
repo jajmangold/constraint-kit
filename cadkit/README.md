@@ -2,7 +2,7 @@
 
 Phase 0 of constraint-kit (see `../README.md` for the thesis). A FastAPI service that turns a
 natural-language request into an exact parametric CAD assembly, **reusing the resident models from
-`../../placement`** (qwen27b planner/VLM, the Blender render image) — it spins up nothing new and uses
+the model server** (qwen27b planner/VLM, the Blender render image) — it spins up nothing new and uses
 no GPU.
 
 ## Stack
@@ -14,7 +14,7 @@ restart.
 
 ## Run
 ```bash
-cd /srv/nvme-data/containers/constraint-kit
+cd ${CK_WORK_DIR:-/tmp/constraint-kit}
 HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose -f cadkit/docker-compose.yaml up -d --build
 curl -s http://127.0.0.1:8195/health
 ```
@@ -34,7 +34,7 @@ Response includes per-part `mass_g`/`volume_mm3`, assembly `bbox`, and the artif
 ```bash
 python3 drivers/phase0.py "a 60mm aluminum plate with a centered boss and a 20-tooth module-1 steel gear seated on it"
 ```
-Renders via the reused `vrm-automation-blender:4.2.0` image and asks qwen27b to confirm seating.
+Renders via the reused Blender image and asks qwen27b to confirm seating.
 
 ## Part vocabulary (Phase 0)
 - `plate(width,depth,thick,boss_d,boss_h,bolt_d,bolt_circle,bolt_count)` — anchors `mount`,`base`,`boss_axis`

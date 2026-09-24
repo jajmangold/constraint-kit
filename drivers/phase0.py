@@ -5,7 +5,7 @@ Proves the whole reuse wiring on one wire:
   qwen27b plan  ->  cadkit generate+assemble+export  ->  Blender render (reused image)  ->  qwen27b VLM QA.
 
 It calls the resident services; it spins up nothing new except the one-shot Blender render container
-(the same vrm-automation-blender:4.2.0 image ../placement already uses).
+(the same Blender image used for rendering).
 
     python3 drivers/phase0.py "a 60mm steel mounting plate with a 20-tooth module-1 gear seated on its boss"
 """
@@ -19,13 +19,14 @@ import sys
 import urllib.request
 
 CADKIT = os.environ.get("CADKIT_URL", "http://127.0.0.1:8195")
-VLM = os.environ.get("VLM_URL", "http://localhost:8000/v1")
+VLM = os.environ.get("VLM_URL", os.environ.get("QWEN_BASE_URL", "http://localhost:8000/v1"))
 VLM_MODEL = os.environ.get("MODEL_VLM", "qwen27b")
-BLENDER_IMAGE = os.environ.get("BLENDER_IMAGE", "vrm-automation-blender:4.2.0")
+BLENDER_IMAGE = os.environ.get("BLENDER_IMAGE", "blender:latest")
 # CAD-QA renderer (constraint-kit local): WORKBENCH studio + cavity + outline -> features (teeth,
 # grooves, bores) are actually legible. The old placement preset rendered parts as flat silhouettes.
-RENDER_SCRIPT = "/srv/nvme-data/containers/constraint-kit/tools/render_part.py"
-CONTAINERS = "/srv/nvme-data/containers"
+CK_WORK_DIR = os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit")
+RENDER_SCRIPT = os.path.join(CK_WORK_DIR, "tools/render_part.py")
+CONTAINERS = os.path.join(os.path.dirname(CK_WORK_DIR), "containers")
 
 DEFAULT_REQUEST = ("a 60mm square 6mm-thick aluminum mounting plate with a centered boss, and a "
                    "20-tooth module-1 steel spur gear seated on the boss (match boss diameter to "

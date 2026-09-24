@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from . import (assembly, bom, builder, drawing, dsl, intent, layout, library, linkage, planner, planetary,
                rules, spec_compiler, spec_db, spec_sources, store, synthesis, tolerance)
 
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/srv/nvme-data/containers/constraint-kit/cadkit/output")
+OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "cadkit/output"))
 
 app = FastAPI(title="cadkit", version="0.2")
 

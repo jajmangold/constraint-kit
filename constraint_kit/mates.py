@@ -3,7 +3,7 @@
 A mate consumes two NAMED anchor frames (one on each part, already lifted to world space for the
 target) and returns the world cadquery.Location for the moving part B such that the requested
 relation holds. No optimization, no solver iteration -- closed form, applied in order. This is the
-domain-independent core extracted from ../placement/scripts (scale -> align -> coincident -> contact).
+domain-independent core extracted from the placement scripts (scale -> align -> coincident -> contact).
 
 Phase 0 implements COINCIDENT as a frame-to-frame map. Anchors carry orientation, so this already
 generalizes beyond pure translation: B is moved so b_anchor lands exactly on a_anchor.
@@ -48,8 +48,8 @@ def contact(a_anchor_world: cq.Location, b_wp: cq.Workplane) -> cq.Location:
     its lowest extent rests exactly on the a_anchor plane, centered in XY on a_anchor.
 
     Geometry-aware (needs B's solid, not just an anchor) -- this is the floor/crown-seat from
-    ../placement/scripts/scene_place.py + constraint_place.py, with bbox standing in for the
-    central-column trick (refine to central-column when overhangs appear, per ../README.md).
+    the placement scripts, with bbox standing in for the
+    central-column trick (refine to central-column when overhangs appear, per README.md).
     """
     bb = b_wp.val().BoundingBox()
     (ax, ay, az), _ = a_anchor_world.toTuple()

@@ -20,3 +20,5 @@ __pycache__/
 training/*.gguf
 training/lora_*/
 training/ckpt*/
+training/export/
+training/*.jsonl

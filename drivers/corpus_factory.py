@@ -21,7 +21,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 DEEPSEEK = "https://api.deepseek.com/chat/completions"
 KEY = os.environ.get("DEEPSEEK_API_KEY")
-CORPUS = "/srv/nvme-data/containers/constraint-kit/cadkit/output/dsl_corpus.jsonl"
+CORPUS = os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "cadkit/output/dsl_corpus.jsonl")
 
 GEN_SYS = (
     "Translate a part request into a constraint-kit DSL program. Output ONLY JSON: "

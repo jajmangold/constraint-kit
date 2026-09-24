@@ -10,7 +10,7 @@ mesh — wrong module params fail loudly and are logged, never faked. For parts 
 the signature is the acceptance TARGET a future authored generator must hit.
 
 Run in the container (openscad is a ground-truth GENERATION tool, not a runtime dep):
-  docker exec cadkit python3 /srv/nvme-data/containers/constraint-kit/drivers/scad_reference.py
+  docker exec cadkit python3 ${CK_WORK_DIR:-/tmp/constraint-kit}/drivers/scad_reference.py
 """
 import json
 import os
@@ -19,7 +19,7 @@ import tempfile
 
 from constraint_kit import builder, dsl
 
-OUT = "/srv/nvme-data/containers/constraint-kit/constraint_kit/reference_signatures.json"
+OUT = os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "constraint_kit/reference_signatures.json")
 PRELUDE = ("$fn=64;\ninclude <BOSL2/std.scad>\ninclude <BOSL2/gears.scad>\n"
            "include <BOSL2/hinges.scad>\ninclude <BOSL2/ball_bearings.scad>\n")
 

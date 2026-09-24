@@ -19,7 +19,7 @@ from constraint_kit import construct, dsl
 from constraint_kit.parts import PART_GENS
 
 KEY = os.environ.get("DEEPSEEK_API_KEY")
-OUT = "/srv/nvme-data/containers/constraint-kit/cadkit/output/recon_probe.jsonl"
+OUT = os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "cadkit/output/recon_probe.jsonl")
 N_ATTEMPTS = 4
 
 # (tier, name, generator-kwargs, one-line description) — spanning easy -> hard

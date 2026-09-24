@@ -18,7 +18,7 @@ DEFAULT_Q = ("This is a render of a CAD assembly: a mounting plate with a spur g
 
 def ask(image_path: str, question: str = DEFAULT_Q, *,
         url: str | None = None, model: str | None = None, timeout: float = 120.0) -> str:
-    url = (url or os.environ.get("VLM_URL", "http://localhost:8000/v1")).rstrip("/")
+    url = (url or os.environ.get("VLM_URL", os.environ.get("QWEN_BASE_URL", "http://localhost:8000/v1"))).rstrip("/")
     model = model or os.environ.get("MODEL_VLM", "qwen27b")
     with open(image_path, "rb") as fh:
         b64 = base64.b64encode(fh.read()).decode()

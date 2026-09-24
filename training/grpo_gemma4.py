@@ -2,7 +2,7 @@
 """GRPO on the rung-1 LoRA: rollouts scored by the DETERMINISTIC verifier reward (grpo_reward.py —
 decline-aware + geometry-graded). Continues training the SAME adapter. Run on the GPU box:
 
-  python grpo_gemma4.py [--steps 400] [--lora /root/ckpt_rung1/lora_final]
+  python grpo_gemma4.py [--steps 400] [--lora /path/to/lora_final]
 
 Box needs: unsloth (+transformers git main), trl, cadquery + cq_gears, and the constraint_kit package
 on PYTHONPATH (rsync the repo) — the reward BUILDS every rollout's geometry on the box's CPUs.
@@ -14,16 +14,16 @@ import json
 import os
 import sys
 
-REPO = "/srv/nvme-data/containers/constraint-kit"
+REPO = os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit")
 sys.path.insert(0, REPO)
 sys.path.insert(0, f"{REPO}/training")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--lora", default="/root/ckpt_rung1/lora_final")
+    ap.add_argument("--lora", default=os.environ.get("LORA_DIR", "/tmp/lora_final"))
     ap.add_argument("--prompts", default=f"{REPO}/training/grpo_prompts.jsonl")
-    ap.add_argument("--out", default="/root/ckpt_grpo")
+    ap.add_argument("--out", default=os.environ.get("GRPO_OUT", "/tmp/ckpt_grpo"))
     ap.add_argument("--steps", type=int, default=400)
     ap.add_argument("--gens", type=int, default=6)
     ap.add_argument("--lr", type=float, default=5e-6)

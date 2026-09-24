@@ -2,23 +2,23 @@
 
 Generate **exact parametric CAD assemblies** from natural language: an LLM plans parts+params+mates,
 parametric generators emit B-rep geometry, a deterministic mate kernel assembles them, and the result
-is rendered + QA'd. The CAD analog of the `../placement` pipeline, with parametric generation replacing
+is rendered + QA'd. The CAD analog of the parametric pipeline, with parametric generation replacing
 placement's fidelity-limited SAM3D mesh-lift stage. Thesis: `README.md`.
 
-Working dir: `/srv/nvme-data/containers/constraint-kit` (also `/home/josh/containers/constraint-kit`).
+Working dir: `CK_WORK_DIR` env var (default: `/tmp/constraint-kit`).
 
 ## ⭐ Architecture — reuse the resident models, add one CPU service
 
-The doctrine (from `../placement`): **AI for semantics, deterministic geometry for placement.** The LLM
+The doctrine: **AI for semantics, deterministic geometry for placement.** The LLM
 proposes; exact geometry + the mate kernel dispose. The GPU-heavy models are REUSED, never duplicated:
 
 | stage | how | reused? |
 |---|---|---|
-| plan (parts+params+mates) | `qwen27b` VLM @ `localhost:8000`, **`response_format` json_schema** | reused |
+| plan (parts+params+mates) | `qwen27b` VLM (via QWEN_BASE_URL), **`response_format` json_schema** | reused |
 | generate (params → B-rep) | cadquery + cq_gears, in `cadkit` | new (CPU) |
 | assemble (deterministic mate) | pure-Python kernel, in `cadkit` | new (CPU) |
 | persist (all work) | **atlas** = shared `n4j_atlas` Neo4j (`bolt://127.0.0.1:7687`) | reused |
-| render (for QA) | `vrm-automation-blender:4.2.0` + `../placement/scripts/render_glb.py` | reused |
+| render (for QA) | Blender image + render script | reused |
 | QA / verify | render → `qwen27b` vision **+ geometric ground truth** | reused |
 
 `cadkit` is **CPU-only** (OpenCASCADE is CPU) → it never contends with the comfy/LLM GPU instances.
@@ -369,14 +369,14 @@ sheet_size, dxf/png paths, vlm_verdict. **Design versioning (T8.1):** `(:CkAssem
 (:CkDesignVersion {id, git_sha, params, mass_g, part_count})` — the version id hashes the resolved
 parameter values (idempotent; a parametric edit creates a new linked version). `store.record_design_version`
 / `GET /design/versions?name=`. Inspect:
-`docker exec n4j_atlas cypher-shell -u neo4j -p microdrama-local "MATCH (a:CkAssembly) RETURN a"`.
+`docker exec n4j_atlas cypher-shell -u neo4j -p $NEO4J_PASS "MATCH (a:CkAssembly) RETURN a"`.
 
 ## Hard-won gotchas
 
 - **`cq_gears` is GitHub-only**, not on PyPI → `pip install "cq_gears @ git+https://github.com/meadiode/cq_gears.git"` (needs `git` in the image).
 - **cadquery `Location.inverse` is a PROPERTY**, not a method (`loc.inverse`, never `loc.inverse()`).
 - **This vLLM ignores top-level `guided_json`** → use OpenAI-standard `response_format:{type:"json_schema",...}` (honored). qwen3.6 is a reasoning model → send `chat_template_kwargs:{enable_thinking:false}` or the answer lands in `reasoning` and `content` is null.
-- **`cadkit` needs `network_mode: host`** — the planner/VLM and comfy services bind `127.0.0.1`, unreachable via port-mapping; host netns also reaches `rtx0` over tailscale.
+- **`cadkit` needs `network_mode: host`** — the planner/VLM and comfy services bind `127.0.0.1`, unreachable via port-mapping.
 - **`OUTPUT_DIR` is the shared host path** mounted identically in the container, so returned glb/step paths are valid on the host for the Blender render step (no path translation).
 - **cadquery `Assembly.save` is deprecated** (FutureWarning) but works; GLB export falls back to STL→trimesh→GLB if native GLTF fails.
 - **Parallel builds use PROCESSES, not threads** (T3.3): cq_gears' involute math is Python-heavy and OCC holds the GIL, so a thread pool gives NO speedup (measured ~slower); a process pool does. Two entry points: `builder.build_assemblies_parallel` (batch of flat specs, geometry crosses as BREP) and **`assembly.build_tree(..., prewarm=True)`** — the recursive-tree integration (R-T3.3 resolved): `prewarm_cache` generates the tree's DISTINCT parts in a pool and populates the T3.1 cache, so the recursive build + the validated density-weighted mass-props run UNCHANGED against a warm cache (sidesteps the per-leaf-shape problem entirely; prewarmed tree == serial tree, exact).

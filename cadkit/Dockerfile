@@ -47,6 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends openscad \
 ENV OPENSCADPATH=/opt/openscad-libs \
     QT_QPA_PLATFORM=offscreen
 
-WORKDIR /srv/nvme-data/containers/constraint-kit
+ARG CK_WORK_DIR=/tmp/constraint-kit
+WORKDIR ${CK_WORK_DIR}
 EXPOSE 8195
 CMD ["uvicorn", "constraint_kit.api:app", "--host", "127.0.0.1", "--port", "8195"]

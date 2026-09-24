@@ -4,11 +4,12 @@ parse -> dsl.check -> build -> overlap gate; {"unsupported"} = honest decline. S
 from __future__ import annotations
 
 import json
+import os
 from collections import Counter
 
 from constraint_kit import dsl
 
-ROOT = "/srv/nvme-data/containers/constraint-kit"
+ROOT = os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit")
 
 
 def classify(text):

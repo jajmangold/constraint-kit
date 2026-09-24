@@ -2,7 +2,7 @@
 # contends with the resident comfy/LLM model instances -- it CALLS them.
 #
 # network_mode: host is REQUIRED: the planner/VLM and comfy services bind 127.0.0.1:<port>, so
-# cadkit must share the host net namespace to reach them (and to reach rtx0 over tailscale).
+# cadkit must share the host net namespace to reach them.
 #
 #   HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose -f cadkit/docker-compose.yaml up -d --build
 #   API: http://127.0.0.1:8195
@@ -17,14 +17,14 @@ services:
     container_name: cadkit
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     network_mode: host
-    working_dir: /srv/nvme-data/containers/constraint-kit
+    working_dir: ${CK_WORK_DIR:-/tmp/constraint-kit}
     volumes:
-      - /srv/nvme-data/containers:/srv/nvme-data/containers
+      - ${CK_WORK_DIR:-/tmp/constraint-kit}:/tmp/constraint-kit
     environment:
-      PYTHONPATH: /srv/nvme-data/containers/constraint-kit
+      PYTHONPATH: ${CK_WORK_DIR:-/tmp/constraint-kit}
       PYTHONUNBUFFERED: "1"
-      OUTPUT_DIR: /srv/nvme-data/containers/constraint-kit/cadkit/output
-      # Planner: local qwen35b-tp2 (:8040) is lower-latency; qwen27b (rtx0:8000) is the default.
+      OUTPUT_DIR: ${CK_WORK_DIR:-/tmp/constraint-kit}/cadkit/output
+      # Planner URL and model.
       PLANNER_URL: "http://localhost:8000/v1"
       MODEL_PLANNER: "qwen27b"
       # VLM QA: qwen27b per the standing "use the VLM for vision" instruction.
@@ -33,11 +33,11 @@ services:
       # atlas (shared n4j_atlas Neo4j) -- persist all work. Reachable via host net namespace.
       NEO4J_URL: "bolt://127.0.0.1:7687"
       NEO4J_USER: "neo4j"
-      NEO4J_PASS: "microdrama-local"
+      NEO4J_PASS: "${NEO4J_PASS:-changeme}"
       # spec compiler (engineering-fact resolution): SQLite store + SearXNG discovery + qwen27b VLM
       SPEC_SEARCH_URL: "http://localhost:8080"
-      SPEC_DB_PATH: "/srv/nvme-data/containers/constraint-kit/cadkit/output/specs.sqlite"
-      SPEC_CACHE_DIR: "/srv/nvme-data/containers/constraint-kit/cadkit/output/spec_cache"
+      SPEC_DB_PATH: "${CK_WORK_DIR:-/tmp/constraint-kit}/cadkit/output/specs.sqlite"
+      SPEC_CACHE_DIR: "${CK_WORK_DIR:-/tmp/constraint-kit}/cadkit/output/spec_cache"
       QWEN_BASE_URL: "http://localhost:8000/v1"
       QWEN_MODEL: "qwen27b"
       # design-version provenance (T8.1): .git is NOT bind-mounted, so pass the host SHA through.

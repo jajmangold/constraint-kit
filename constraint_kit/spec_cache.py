@@ -6,7 +6,7 @@ import json
 import os
 
 CACHE_DIR = os.environ.get(
-    "SPEC_CACHE_DIR", "/srv/nvme-data/containers/constraint-kit/cadkit/output/spec_cache")
+    "SPEC_CACHE_DIR", os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "cadkit/output/spec_cache"))
 
 
 def write_json_artifact(result: dict, cache_dir: str | None = None) -> str | None:

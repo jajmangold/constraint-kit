@@ -21,9 +21,10 @@ import sys
 import urllib.request
 
 CADKIT = os.environ.get("CADKIT_URL", "http://127.0.0.1:8195")
-VLM = os.environ.get("VLM_URL", "http://localhost:8000/v1")
-CONTAINERS = "/srv/nvme-data/containers"
-OUT = f"{CONTAINERS}/constraint-kit/cadkit/output"
+VLM = os.environ.get("VLM_URL", os.environ.get("QWEN_BASE_URL", "http://localhost:8000/v1"))
+CK_WORK_DIR = os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit")
+CONTAINERS = os.path.join(os.path.dirname(CK_WORK_DIR), "containers")
+OUT = os.path.join(CK_WORK_DIR, "cadkit/output")
 
 
 def post(path, payload, timeout=300):
@@ -98,7 +99,7 @@ def main():
         subprocess.run(["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
                         "-e", "HOME=/tmp/bh", "-e", "XDG_CONFIG_HOME=/tmp/bc",
                         "-e", "RENDER_ENGINE=BLENDER_WORKBENCH", "-v", f"{CONTAINERS}:{CONTAINERS}",
-                        "vrm-automation-blender:4.2.0", "blender", "--background", "--python",
+                        os.environ.get("BLENDER_IMAGE", "blender:latest"), "blender", "--background", "--python",
                         f"{CONTAINERS}/placement/scripts/render_glb.py", "--", asm["glb"], png, "900",
                         "three_quarter"], capture_output=True, text=True, timeout=300, check=True)
         import base64

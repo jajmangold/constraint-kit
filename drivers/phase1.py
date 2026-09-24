@@ -16,7 +16,7 @@ import sys
 import urllib.request
 
 CADKIT = os.environ.get("CADKIT_URL", "http://127.0.0.1:8195")
-VLM = os.environ.get("VLM_URL", "http://localhost:8000/v1")
+VLM = os.environ.get("VLM_URL", os.environ.get("QWEN_BASE_URL", "http://localhost:8000/v1"))
 VLM_MODEL = os.environ.get("MODEL_VLM", "qwen27b")
 
 DEFAULT = ("three 60x40 rectangular panels in a horizontal row with 10mm gaps between them, each with "

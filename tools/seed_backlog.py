@@ -6,7 +6,7 @@ Graph: (:CkBacklog)-[:HAS_EPIC]->(:CkEpic)-[:HAS_TASK]->(:CkTask)
        (:CkTask)-[:DEPENDS_ON]->(:CkTask) · (:CkTask)-[:BLOCKED_BY]->(:CkResearch)
        (:CkBacklog)-[:GOVERNED_BY]->(:CkPolicy)
 All nodes namespaced Ck* + project="constraint-kit". Run:  docker exec cadkit python3 tools/seed_backlog.py
-Query:  docker exec n4j_atlas cypher-shell -u neo4j -p microdrama-local \\
+Query:  docker exec n4j_atlas cypher-shell -u neo4j -p $NEO4J_PASS \\
           "MATCH (e:CkEpic)-[:HAS_TASK]->(t:CkTask) RETURN e.id,t.id,t.status ORDER BY t.id"
 """
 from __future__ import annotations

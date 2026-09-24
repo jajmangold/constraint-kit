@@ -14,7 +14,7 @@ import urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
-ROOT = "/srv/nvme-data/containers/constraint-kit"
+ROOT = os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit")
 SERVER = "http://127.0.0.1:8086"
 TRAIN_SYS = open(f"{ROOT}/cadkit/output/train_sys.txt").read()
 

@@ -12,13 +12,13 @@ bd_warehouse / build123d is real, standards-accurate geometry we wrap but did no
       into a measured, honest number.
 
 Runs IN the container (needs the geometry kernel):
-  docker exec cadkit python3 /srv/nvme-data/containers/constraint-kit/drivers/reference_verify.py
+  docker exec cadkit python3 ${CK_WORK_DIR:-/tmp/constraint-kit}/drivers/reference_verify.py
 """
 import json
 
 from constraint_kit import builder, dsl
 
-OUT = "/srv/nvme-data/containers/constraint-kit/cadkit/output/reference_signatures.json"
+OUT = os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "cadkit/output/reference_signatures.json")
 
 # (our native part) vs (the bd_warehouse REAL equivalent) at matching nominal size -> quantify our simplification
 CROSS = [

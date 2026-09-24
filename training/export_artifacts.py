@@ -4,22 +4,23 @@
 2. GGUF quant, Q6_K_XL-preferred (Unsloth dynamic quant naming varies by release; tries variants in
    order and falls back to plain q6_k), for local serving via llama.cpp/ollama.
 
-  python export_artifacts.py [lora_dir=/root/ckpt_rung1/lora_final]
+  python export_artifacts.py [lora_dir]
 """
 from __future__ import annotations
 
 import os
 import sys
 
-LORA = sys.argv[1] if len(sys.argv) > 1 else "/root/ckpt_rung1/lora_final"
-MERGED = "/root/export/merged16"
-GGUF = "/root/export/gguf"
+LORA = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("LORA_DIR", "/tmp/lora_final")
+EXPORT_DIR = os.environ.get("EXPORT_DIR", "/tmp/export")
+MERGED = os.path.join(EXPORT_DIR, "merged16")
+GGUF = os.path.join(EXPORT_DIR, "gguf")
 
 
 def main():
     from unsloth import FastVisionModel
     model, tokenizer = FastVisionModel.from_pretrained(LORA, max_seq_length=6144, load_in_4bit=False)
-    os.makedirs("/root/export", exist_ok=True)
+    os.makedirs(EXPORT_DIR, exist_ok=True)
 
     print("=== 1/2 merging LoRA -> 16-bit ===", flush=True)
     try:
@@ -36,7 +37,7 @@ def main():
             break
         except Exception as exc:  # noqa: BLE001
             print(f"  {method!r} failed: {str(exc)[:160]}", flush=True)
-    for root, _d, files in os.walk("/root/export"):
+    for root, _d, files in os.walk(EXPORT_DIR):
         for f in files:
             p = os.path.join(root, f)
             if os.path.getsize(p) > 50e6:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """constraint-kit regression suite — dependency-free (plain asserts, no pytest), runs inside cadkit:
 
-    docker exec cadkit python3 /srv/nvme-data/containers/constraint-kit/tests/test_kernel.py
+    docker exec cadkit python3 ${CK_WORK_DIR:-/tmp/constraint-kit}/tests/test_kernel.py
 
 Asserts the geometric ground truths the pipeline relies on (seating zero-gap, gear-mesh center distance,
 2D layout placement, mass, DXF validity, atlas round-trip). Exit code != 0 if anything fails, so it can

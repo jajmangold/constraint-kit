@@ -22,7 +22,7 @@ import os
 import subprocess
 import urllib.request
 
-ROOT = "/srv/nvme-data/containers/constraint-kit"
+ROOT = os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit")
 LEARNED = f"{ROOT}/constraint_kit/learned_aliases.json"
 REVIEW = f"{ROOT}/cadkit/output/review_queue.json"
 REPORT = f"{ROOT}/cadkit/output/census_report.json"

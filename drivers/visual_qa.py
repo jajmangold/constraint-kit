@@ -17,11 +17,11 @@ import subprocess
 import sys
 import urllib.request
 
-ROOT = "/srv/nvme-data/containers/constraint-kit"
+ROOT = os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit")
 CORPUS = f"{ROOT}/cadkit/output/dsl_corpus.jsonl"
 CADKIT = os.environ.get("CADKIT_URL", "http://127.0.0.1:8195")
-QWEN = os.environ.get("VLM_URL", "http://localhost:8000/v1")
-BLENDER = "vrm-automation-blender:4.2.0"
+QWEN = os.environ.get("VLM_URL", os.environ.get("QWEN_BASE_URL", "http://localhost:8000/v1"))
+BLENDER = os.environ.get("BLENDER_IMAGE", "blender:latest")
 
 
 def _post(url, payload, timeout=240):
@@ -47,7 +47,7 @@ def sample(n):
 
 
 def render(glb, png):
-    r = subprocess.run(["docker", "run", "--rm", "-v", "/srv/nvme-data:/srv/nvme-data",
+    r = subprocess.run(["docker", "run", "--rm", "-v", f"{ROOT}:/tmp/constraint-kit",
                         "-e", "HOME=/tmp/blender-home", "-e", "XDG_CONFIG_HOME=/tmp/blender-config",
                         BLENDER, "blender", "--background", "--python", f"{ROOT}/tools/render_part.py",
                         "--", glb, png, "900"], capture_output=True, text=True, timeout=300)

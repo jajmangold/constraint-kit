@@ -30,7 +30,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from corpus_factory import GEN_SYS, _build_and_sig, _deepseek, _match  # noqa: E402
 
-OUT = "/srv/nvme-data/containers/constraint-kit/cadkit/output"
+OUT = os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "cadkit/output")
 CORPUS = f"{OUT}/dsl_corpus.jsonl"
 YIELD_BAR = 0.70
 DS_WORKERS = 128

@@ -12,7 +12,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 DEFAULT_PATH = os.environ.get(
-    "SPEC_DB_PATH", "/srv/nvme-data/containers/constraint-kit/cadkit/output/specs.sqlite")
+    "SPEC_DB_PATH", os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "cadkit/output/specs.sqlite"))
 
 _SCHEMA = [
     """CREATE TABLE IF NOT EXISTS spec_resolutions (

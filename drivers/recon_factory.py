@@ -25,7 +25,7 @@ from constraint_kit.parts import PART_GENS
 from recon_probe import SYS, matches  # reuse the proven prompt + match criterion
 
 KEY = os.environ.get("DEEPSEEK_API_KEY")
-OUT = "/srv/nvme-data/containers/constraint-kit/cadkit/output/constructive_corpus.jsonl"
+OUT = os.path.join(os.environ.get("CK_WORK_DIR", "/tmp/constraint-kit"), "cadkit/output/constructive_corpus.jsonl")
 N_CAND = 3
 
 
