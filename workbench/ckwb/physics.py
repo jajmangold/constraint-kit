@@ -150,7 +150,8 @@ def prepare(obj, pitch: float = 2.0, material: str = "petg") -> dict:
 
 
 def stiffness(obj, material: str = "petg", pitch: float = 2.0, *,
-              fix: str, load: str = "", force=(0.0, 0.0, -100.0), cases=None) -> dict:
+              fix: str, load: str = "", force=(0.0, 0.0, -100.0), cases=None,
+              buckling: int = 0) -> dict:
     """Solve one part for deflection and stress. Boundary conditions are arguments, never guessed.
 
     `fix` and `load` are selector expressions over node coordinates in millimetres, in the part's
@@ -162,7 +163,8 @@ def stiffness(obj, material: str = "petg", pitch: float = 2.0, *,
     `constraint_kit.fea.richardson`, which declines rather than inventing a limit.
     """
     bundle = prepare(obj, pitch=pitch, material=material)
-    return solve_prepared(bundle, fix=fix, load=load, force=force, cases=cases)
+    return solve_prepared(bundle, fix=fix, load=load, force=force, cases=cases,
+                          buckling=buckling)
 
 
 def _check_cases(cases) -> list:
@@ -201,7 +203,7 @@ def _check_cases(cases) -> list:
 
 
 def solve_prepared(bundle: dict, *, fix: str, load: str = "",
-                   force=(0.0, 0.0, -100.0), cases=None) -> dict:
+                   force=(0.0, 0.0, -100.0), cases=None, buckling: int = 0) -> dict:
     """The numpy half: voxelise the triangles and solve. Safe on any thread.
 
     Either one `load`/`force`, or several named `cases` -- never both. The two are different
@@ -221,9 +223,10 @@ def solve_prepared(bundle: dict, *, fix: str, load: str = "",
         sel, axes = _selector(expr)
         model.fix(sel, axes=axes)
 
-    # Inside FreeCAD the direct solver is unusable (see direct_solver_available); CG with a
-    # Jacobi preconditioner is pure numpy and works. "auto" would pick direct below 80k DOF.
-    method = "auto" if direct_solver_available() else "cg"
+    # "auto" now probes for itself -- `fea.voxel.direct_solver_available` is the same check
+    # this module used to make on its own, moved into the tier so every caller gets it. Inside
+    # FreeCAD it resolves to CG, because the bundled SuperLU is ABI-broken.
+    method = "auto"
     envelope = None
     if parsed:
         for name, where, vec in parsed:
@@ -271,6 +274,8 @@ def solve_prepared(bundle: dict, *, fix: str, load: str = "",
     if envelope is not None:
         out.update(_envelope_rows(envelope))
     out.update(_linearity(res.max_displacement, grid))
+    if buckling:
+        out.update(_buckling(model, int(buckling)))
     if key in PRINTED:
         out.update(_interlayer(fea, res, allowable))
     return out
@@ -343,6 +348,44 @@ def _envelope_rows(envelope) -> dict:
             "stress is the ELEMENTWISE maximum over the cases, so the safety factor is never "
             "better than the worst case. More than one name in governs_by_element means no "
             "single case is the design case."),
+    }
+
+
+def _buckling(model, n_modes: int) -> dict:
+    """Critical load factors, for the failure mode a stress check cannot see.
+
+    Off by default because an eigensolve costs several times a static solve, and on by choice
+    for anything slender -- which is to say, for anything an optimizer has been asked to make
+    light. A stress check is blind to stability: the member sits nowhere near its allowable
+    right up until it folds.
+
+    `buckling_factor` is reported as a plain number so an optimizer can constrain it, and
+    `{"metric": "buckling_factor", "op": ">=", "limit": 2.0}` is the constraint to write. Two
+    rather than one, because linear buckling is an upper bound on a perfect member and a real
+    printed part has a bowed wall and an eccentric load.
+    """
+    from constraint_kit.fea.buckling import BucklingFailure, buckling as _solve
+
+    try:
+        out = _solve(model, n_modes=n_modes)
+    except BucklingFailure as exc:
+        # "It does not buckle" is a real answer. Reported as an unbounded factor so a
+        # constraint on it still resolves, with the reason beside it rather than inferred.
+        return {"buckling_factor": None,
+                "buckling_note": str(exc),
+                "buckles": False}
+    return {
+        "buckling_factor": round(out.critical_factor, 4),
+        "buckling_factors": [round(f, 4) for f in out.factors],
+        "buckling_localisation": [round(v, 4) for v in out.localisation],
+        "buckling_suspect_modes": [i + 1 for i in out.suspect],
+        "buckles": True,
+        "buckling_note": (
+            "a LOAD FACTOR: 1.0 means the applied load is exactly critical. Linear buckling is "
+            "an UPPER BOUND on a perfect member -- a real part with a bowed wall or an "
+            "eccentric load fails below it, so keep 2.0 or more on anything slender. A "
+            "localisation near 1.0 means the mode sits in a few voxels and is probably a "
+            "staircase artefact rather than a structural finding."),
     }
 
 

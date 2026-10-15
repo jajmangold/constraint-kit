@@ -50,8 +50,11 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
     sample.py          #   triangle soup -> occupancy by ray parity; dependency-free STL reader; OCC path
     convergence.py     #   Richardson extrapolation; refuses a non-monotone or non-geometric ladder
     printed.py         #   FDM anisotropy: traction on the LAYER PLANE (peel/shear), orientation ranking
+    buckling.py        #   LINEAR BUCKLING [#1]: geometric stiffness + pure-numpy subspace iteration;
+                       #   load FACTORS, mode localisation, honest 'does not buckle'
     tet.py             #   INDEPENDENT reference: gmsh quadratic tets -> CalculiX (both ship in FreeCAD)
     crosscheck.py      #   voxel vs tet: measures the gap and ATTRIBUTES it (too stiff / too soft / agree)
+    #                      tet.buckle() cross-checks buckling against CalculiX *BUCKLE too
   optimise.py          # CLOSED LOOP [#17]: compass search + feasibility filter, monotone bisection,
                        #   nested sized search; evaluation cache [#16]; numpy-free, CAD-free, testable
   massprops.py         # mass properties: exact CG + inertia tensor (OCC GProp, density-weighted) [T4.1]

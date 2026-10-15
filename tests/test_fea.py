@@ -479,6 +479,37 @@ def test_the_voxel_tier_keeps_the_stress_tensor_and_can_resolve_it_onto_a_plane(
 
 
 @test
+def test_auto_never_picks_a_solver_this_interpreter_cannot_run():
+    """A capability check only one caller knows about is a trap for the next one.
+
+    Inside FreeCAD 1.0.2 scipy's compiled SuperLU is built against a different numpy ABI, so
+    every direct solve fails with `argument 3 must be numpy.ndarray, not numpy.ndarray`. The
+    workbench bridge knew that and passed `method="cg"` explicitly, so the bridge worked -- and
+    `method="auto"` stayed broken in there for every other caller, which is exactly how the
+    buckling solver failed the first time it ran inside FreeCAD. The probe now lives in the tier
+    and `auto` respects it.
+    """
+    from constraint_kit.fea.voxel import _choose, direct_solver_available
+
+    available = direct_solver_available()
+    assert isinstance(available, bool)
+    assert direct_solver_available() is available, "the probe must be cached, not re-run"
+
+    small, huge = 1_000, 10_000_000
+    assert _choose("auto", small) == ("direct" if available else "cg")
+    assert _choose("auto", huge) == "cg", "a huge system is CG regardless"
+    # an explicit choice is still honoured, so a test can force either path
+    assert _choose("direct", small) == "direct"
+    assert _choose("cg", small) == "cg"
+    try:
+        _choose("wibble", small)
+    except ValueError as exc:
+        assert "wibble" in str(exc), str(exc)
+    else:
+        raise AssertionError("an unknown method must be refused")
+
+
+@test
 def test_a_result_reports_the_force_it_actually_applied():
     """The accounting that would have caught the worst bug in this package.
 

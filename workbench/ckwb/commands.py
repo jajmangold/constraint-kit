@@ -418,9 +418,15 @@ def sweep(moving: str, target: str, target_frame: str, moving_frame: str,
                              "any single case is the design case at all"},
             "material": {"type": str, "default": "petg",
                          "doc": "petg, pla, abs, al6061 or steel"},
-            "pitch": {"type": float, "default": 2.0, "doc": "voxel pitch in mm"}})
+            "pitch": {"type": float, "default": 2.0, "doc": "voxel pitch in mm"},
+            "buckling": {"type": int, "default": 0,
+                         "doc": "number of buckling modes to find, 0 for none. Worth asking "
+                                "for on anything slender: a stress check is BLIND to "
+                                "stability, and a strut sits nowhere near its allowable right "
+                                "up until it folds"}})
 def analyse(part: str, fix: str, load: str = "", force: list = None,
-            cases: list = None, material: str = "petg", pitch: float = 2.0) -> dict:
+            cases: list = None, material: str = "petg", pitch: float = 2.0,
+            buckling: int = 0) -> dict:
     """Is it strong enough? The question the agent surface could not previously ask.
 
     `physics.stiffness` existed and was verified against beam theory, and it was not a registered
@@ -449,7 +455,7 @@ def analyse(part: str, fix: str, load: str = "", force: list = None,
         raise ValueError("a load selector is needed, or a list of cases")
     out = _physics.stiffness(obj, material=material, pitch=float(pitch), fix=fix, load=load,
                              force=tuple(float(v) for v in (force or [0.0, 0.0, -100.0])),
-                             cases=cases)
+                             cases=cases, buckling=int(buckling))
     return _checks._stamp(obj.Document, out)
 
 
@@ -486,13 +492,19 @@ def analyse(part: str, fix: str, load: str = "", force: list = None,
                             "sizing (a thickness) and the others are shape"},
             "tol": {"type": float, "default": 0.05,
                     "doc": "parameter tolerance in mm. 0.05 is finer than a printer holds"},
+            "buckling": {"type": int, "default": 0,
+                         "doc": "buckling modes per evaluation, 0 for none. Set 1 and add "
+                                "{metric: buckling_factor, op: '>=', limit: 2.0} when the part "
+                                "is slender: making something light is exactly what finds a "
+                                "stability failure a stress check cannot see"},
             "max_evaluations": {"type": int, "default": 60,
                                 "doc": "budget. Each evaluation is a mesh and a solve, so this "
                                        "is a wall-clock decision"}})
 def optimise(part: str, parameters: list, fix: str, objective: str = "mass_g",
              constraints: list = None, load: str = "", force: list = None,
              cases: list = None, material: str = "petg", pitch: float = 4.0,
-             size: str = "", tol: float = 0.05, max_evaluations: int = 60) -> dict:
+             size: str = "", tol: float = 0.05, buckling: int = 0,
+             max_evaluations: int = 60) -> dict:
     """Parameters -> geometry -> physics -> better parameters, closed.
 
     Everything this needs already existed and was verified separately: `set_param` rebuilds the
@@ -576,7 +588,8 @@ def optimise(part: str, parameters: list, fix: str, objective: str = "mass_g",
         for name, value in x.items():
             _doc.set_param(obj, name, value)
         doc.recompute()
-        return _physics_stiffness(obj, material, pitch, fix, load, force, cases)
+        return _physics_stiffness(obj, material, pitch, fix, load, force, cases,
+                                  int(buckling))
 
     try:
         if size:
@@ -640,13 +653,21 @@ def optimise(part: str, parameters: list, fix: str, objective: str = "mass_g",
     })
 
 
-def _physics_stiffness(obj, material, pitch, fix, load, force, cases) -> dict:
+def _physics_stiffness(obj, material, pitch, fix, load, force, cases,
+                       buckling: int = 0) -> dict:
     """One evaluation, flattened to the metrics an objective and a constraint can name."""
     from . import physics as _physics
 
     out = _physics.stiffness(
         obj, material=material, pitch=float(pitch), fix=fix, load=load,
-        force=tuple(float(v) for v in (force or [0.0, 0.0, -100.0])), cases=cases)
+        force=tuple(float(v) for v in (force or [0.0, 0.0, -100.0])), cases=cases,
+        buckling=buckling)
+    # A member that does not buckle at all reports None; for an optimizer that is an unbounded
+    # factor, not a missing metric, or a constraint on it would stop resolving exactly where the
+    # design got safe.
+    if buckling and out.get("buckling_factor") is None:
+        out = dict(out)
+        out["buckling_factor"] = float("inf")
     flat = {}
     for key, value in out.items():
         if isinstance(value, bool):

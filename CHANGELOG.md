@@ -2,6 +2,81 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-17 (last) — linear buckling, the failure a stress check cannot see (closes #1)
+
+This mattered more the day the optimizer shipped than it did the day before. "The lightest design
+that passes stress and deflection" pushes straight at thin walls and slender columns, and a linear
+static solve is perfectly content with a strut that would fold the instant it was loaded. A stress
+check is **blind** to stability: the member sits nowhere near its allowable right up until it
+collapses. Measured on a real strut in this very changelog entry: **stress safety factor 19, and
+within a factor of two of buckling.**
+
+- `[feat]` **`hex8.geometric_stiffness`** and **`fea/buckling.py`**: solve the static problem,
+  build the geometric stiffness from the stress state, find the smallest `lambda` at which
+  `K + lambda*Kg` loses positive-definiteness. Because `Kg` is linear in the stress, that
+  `lambda` is a load **factor** -- 1.0 means the applied load is exactly critical.
+- `[feat]` **Verified three independent ways**, which an eigenvalue solver needs more than most
+  code because its errors look plausible:
+
+  | | result |
+  |---|---|
+  | against Euler `pi^2 EI/(2L)^2`, fixed-free | **1.066x** at 3 elements across, converging **1.149 / 1.066 / 1.037** from above as it refines |
+  | the `I` power law, width doubled | critical load **x15.0** against Euler's 16 (the rest is shear) |
+  | against **CalculiX `*BUCKLE`** on the same column | CalculiX **0.999x** Euler, ours **1.034x**; the two within 3.4% |
+  | inside FreeCAD, a 10 mm round shaft | factor **2.1427** against Euler's **2.136**, and the two degenerate modes of a round section identical as they must be |
+
+- `[feat]` **`analyse(..., buckling=N)`** and a constrainable `buckling_factor`, so the optimizer
+  can be told to keep a margin. The demonstration is the point: the same strut, same load,
+  optimised for mass, comes out **6 mm unconstrained and 8 mm with a 2x buckling margin.**
+- `[test]` **The sign convention is tested against physics, not against a comment.** Tension
+  stiffens (a guitar string is harder to deflect the tighter it is wound) and compression softens,
+  so the quadratic form of `Kg` must be positive under one and negative under the other. A sign
+  error there inverts every answer this module gives and is otherwise invisible.
+- `[feat]` **Mode localisation is measured**, as the energy fraction in the busiest 5% of nodes. A
+  staircased boundary turns surface voxels into tiny cantilevers that buckle at absurd factors
+  while the structure is fine, so a localised mode is flagged SUSPECT -- the alternative is
+  quietly reporting the buckling load of one voxel as the buckling load of the machine.
+- `[feat]` **"It does not buckle" is a first-class answer.** A member in net tension has no
+  positive factor, and that is reported as such rather than as a solver failure -- which is what
+  it looked like before, because ARPACK hunting for an eigenvalue that does not exist runs to its
+  iteration limit and complains about convergence.
+- `[feat]` Every report says **linear buckling is an UPPER BOUND** on a perfect member, perfectly
+  loaded. A real printed column with a bowed wall and an eccentric load fails below it, often well
+  below. In the report rather than in a doc, because that is the one thing a reader must not
+  forget.
+
+### ARPACK does not work here, twice, for two unrelated reasons
+
+Both environmental, both recorded at `_largest_eigenpairs` so nobody spends the afternoon again:
+
+- `eigsh(B, M=K, Minv=...)` -- scipy's generalised symmetric mode re-wraps a supplied `Minv`, and
+  with a LinearOperator in that slot it **recursed until the interpreter gave up**:
+  `maximum recursion depth exceeded`, from an eigensolver, on a correctly posed problem.
+- `eigs` on the collapsed operator `x -> K^-1 B x` -- the right reformulation, since its
+  eigenvalues *are* the pencil's -- dies **inside FreeCAD before a single matvec**, because
+  FreeCAD 1.0 bundles a numpy whose `numpy.core._dtype.__repr__` recurses through `issubdtype`
+  and scipy's ARPACK wrapper formats a dtype on the way in. Nothing to do with this code and
+  nothing this code can fix.
+
+- `[decision]` So: **subspace iteration in pure numpy**, which is what conventional buckling
+  solvers have used for forty years and suits the problem exactly -- near-degenerate modes are
+  handled naturally, which matters because a square column has two almost identical first modes
+  and single-vector power iteration would thrash between them. One code path that works in both
+  interpreters beats a fast path that works in one. It costs 34 s on 6300 DOF inside FreeCAD,
+  where every inner solve is a CG, and that is the honest price.
+
+### And a footgun removed from the whole tier
+
+- `[fix]` **`method="auto"` now probes whether the direct solver actually works.** FreeCAD 1.0.2
+  pairs numpy 1.26.4 with a scipy whose compiled SuperLU was built against a different numpy ABI,
+  so every direct solve in there fails with `argument 3 must be numpy.ndarray, not numpy.ndarray`.
+  The workbench bridge knew and passed `method="cg"` explicitly, so the bridge worked -- **and
+  `auto` stayed broken in there for every other caller**, which is exactly how the buckling solver
+  failed the first time it ran inside FreeCAD. The probe now lives in `fea/voxel.py` where `auto`
+  can respect it. A capability check that only one caller knows about is a trap for the next one.
+
+**308 tests across 16 suites.**
+
 ## 2026-10-17 (later) — the loop closes: parameters to performance to better parameters (closes #16, #17)
 
 The piece everything else was built toward, and deliberately the smallest piece. The hard parts

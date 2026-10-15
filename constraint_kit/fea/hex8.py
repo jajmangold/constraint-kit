@@ -137,3 +137,71 @@ def hex8_b_centre(h: tuple[float, float, float]) -> np.ndarray:
     hx, hy, hz = (float(v) for v in h)
     scale = np.array([2.0 / hx, 2.0 / hy, 2.0 / hz])
     return strain_displacement(shape_gradients(np.zeros(3)) * scale)
+
+
+def _stress_block(sigma: np.ndarray) -> np.ndarray:
+    """The 9x9 block-diagonal of the 3x3 Cauchy tensor, for the geometric stiffness.
+
+    `sigma` is in the (sxx, syy, szz, sxy, syz, szx) order used throughout this package.
+    """
+    sxx, syy, szz, sxy, syz, szx = (float(v) for v in sigma)
+    s3 = np.array([[sxx, sxy, szx],
+                   [sxy, syy, syz],
+                   [szx, syz, szz]])
+    S = np.zeros((9, 9))
+    for c in range(3):
+        S[3 * c:3 * c + 3, 3 * c:3 * c + 3] = s3
+    return S
+
+
+def displacement_gradient(dN_dx: np.ndarray) -> np.ndarray:
+    """The 9x24 G matrix: every first derivative of every displacement component.
+
+    Rows run (du/dx, du/dy, du/dz, dv/dx, ... dw/dz); columns are the 24 element DOF. This is
+    the operator the geometric stiffness needs, and it is a different object from the 6x24 `B`
+    of `strain_displacement`: `B` throws away the antisymmetric part of the gradient because
+    strain does not depend on local rotation, while buckling depends on exactly that part -- a
+    member rotates as it buckles, and the work the existing stress does through that rotation is
+    the whole mechanism.
+    """
+    G = np.zeros((9, 24))
+    for i in range(8):
+        for c in range(3):          # displacement component
+            for d in range(3):      # derivative direction
+                G[3 * c + d, 3 * i + c] = dN_dx[i, d]
+    return G
+
+
+def geometric_stiffness(h: tuple[float, float, float], sigma: np.ndarray) -> np.ndarray:
+    """24x24 geometric (initial-stress) stiffness of one rectangular hex under `sigma`.
+
+    `K + lambda*Kg` loses positive-definiteness at the critical load factor `lambda`, which is
+    what makes linear buckling an eigenvalue problem rather than an iteration.
+
+    LINEAR in `sigma` by construction, and that is the property the whole method rests on: it is
+    why the eigenvalue comes out as a load *factor*. Double the load, double the stress, double
+    `Kg`, halve the factor -- and the critical load is unchanged, which is the real invariant.
+
+    Sign follows the physics and is worth stating because an error in it inverts every answer:
+    with the stress passed as computed (compression negative), a member in compression gives a
+    negative quadratic form -- it is easier to buckle -- and one in tension gives a positive one,
+    which is a guitar string being harder to deflect the tighter it is wound.
+    """
+    hx, hy, hz = (float(v) for v in h)
+    if min(hx, hy, hz) <= 0.0:
+        raise ValueError(f"element sides must be positive, got {h}")
+    sigma = np.asarray(sigma, dtype=float)
+    if sigma.shape != (6,):
+        raise ValueError(f"sigma must be 6 components (sxx, syy, szz, sxy, syz, szx), got "
+                         f"{sigma.shape}")
+    S = _stress_block(sigma)
+    scale = np.array([2.0 / hx, 2.0 / hy, 2.0 / hz])
+    detJ = hx * hy * hz / 8.0
+
+    KG = np.zeros((24, 24))
+    for a in (-_GP, _GP):
+        for b in (-_GP, _GP):
+            for c in (-_GP, _GP):
+                G = displacement_gradient(shape_gradients(np.array([a, b, c])) * scale)
+                KG += G.T @ S @ G * detJ      # weight is 1.0 for 2-point Gauss
+    return 0.5 * (KG + KG.T)

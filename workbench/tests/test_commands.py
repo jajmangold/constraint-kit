@@ -669,6 +669,90 @@ def test_optimise_can_be_constrained_to_designs_the_physics_is_valid_for():
 
 
 @test
+def test_analyse_finds_the_buckling_factor_of_a_strut_and_matches_euler():
+    """The failure mode a stress check is blind to, through the command surface.
+
+    A slender strut sits nowhere near its stress allowable right up until it folds -- this one
+    reports a safety factor of 19 while being within a factor of two of collapse. Checked against
+    `pi^2 EI / (2L)^2` for a fixed-free column, which is ground truth from outside this repo.
+    """
+    import math
+
+    doc = new_doc()
+    obj = D.make_part(doc, "shaft", None, name="Strut")
+    obj.Diameter, obj.Length = 10.0, 160.0
+    doc.recompute()
+
+    out = registry.call("analyse", part="Strut", material="al6061", pitch=3.0,
+                        fix="z<=-79", load="z>=79", force=[0.0, 0.0, -900.0], buckling=2)
+    I = math.pi * 10.0 ** 4 / 64.0
+    euler = math.pi ** 2 * 68900.0 * I / (2.0 * 160.0) ** 2
+    expect = euler / 900.0
+    print("        factor %.3f vs Euler %.3f (x%.3f), stress SF %.1f"
+          % (out["buckling_factor"], expect, out["buckling_factor"] / expect,
+             out["safety_factor"]))
+
+    assert out["buckles"] is True, out
+    assert 0.9 < out["buckling_factor"] / expect < 1.25, (out["buckling_factor"], expect)
+    assert len(out["buckling_factors"]) == 2, out["buckling_factors"]
+    # a round section has two identical first modes, by symmetry
+    assert abs(out["buckling_factors"][0] - out["buckling_factors"][1]) < 1e-3, \
+        out["buckling_factors"]
+    # and the point of the whole exercise: stress says it is fine
+    assert out["safety_factor"] > 5.0, (
+        "this fixture needs stress to look comfortable while stability does not: %s"
+        % out["safety_factor"])
+    assert "upper bound" in out["buckling_note"].lower(), out["buckling_note"]
+
+
+@test
+def test_analyse_says_a_part_in_tension_does_not_buckle_rather_than_failing():
+    doc = new_doc()
+    obj = D.make_part(doc, "shaft", None, name="Tie")
+    obj.Diameter, obj.Length = 10.0, 160.0
+    doc.recompute()
+    out = registry.call("analyse", part="Tie", material="al6061", pitch=4.0,
+                        fix="z<=-79", load="z>=79", force=[0.0, 0.0, +900.0], buckling=1)
+    assert out["buckles"] is False, out
+    assert out["buckling_factor"] is None, out
+    assert "tension" in out["buckling_note"].lower(), out["buckling_note"]
+
+
+@test
+def test_optimise_can_require_a_buckling_margin():
+    """Making something light is exactly what finds a stability failure, so it must be sayable.
+
+    The same problem with and without a buckling constraint: unconstrained, "lightest" walks the
+    strut thin enough to be unstable at the design load; constrained, it stops at a margin.
+    """
+    doc = new_doc()
+    obj = D.make_part(doc, "shaft", None, name="Strut")
+    obj.Diameter, obj.Length = 12.0, 160.0
+    doc.recompute()
+
+    common = dict(part="Strut", material="al6061", pitch=4.0, tol=1.0,
+                  fix="z<=-79", load="z>=79", force=[0.0, 0.0, -900.0],
+                  parameters=[{"name": "diameter", "low": 6.0, "high": 20.0, "step": 2.0}],
+                  objective="mass_g", buckling=1, max_evaluations=30)
+
+    loose = registry.call("optimise", constraints=[], **common)
+    strict = registry.call(
+        "optimise",
+        constraints=[{"name": "stability", "metric": "buckling_factor", "op": ">=",
+                      "limit": 2.0}],
+        **common)
+
+    assert loose["feasible"] and strict["feasible"], (loose, strict)
+    assert loose["best"]["diameter"] <= 8.0, loose["best"]
+    assert strict["best"]["diameter"] > loose["best"]["diameter"], (
+        strict["best"], loose["best"])
+    assert strict["metrics"]["buckling_factor"] >= 2.0 - 1e-6, strict["metrics"]
+    assert strict["blocking_constraints"] == ["stability"], strict["blocking_constraints"]
+    print("        unconstrained %.0f mm, with a 2x buckling margin %.0f mm"
+          % (loose["best"]["diameter"], strict["best"]["diameter"]))
+
+
+@test
 def test_optimise_refuses_a_parameter_the_part_does_not_have():
     doc = new_doc()
     D.make_part(doc, "plate", None, name="Bracket")

@@ -346,6 +346,58 @@ def test_the_voxel_stress_bias_is_the_predicted_1_minus_pitch_over_thickness():
 
 
 @test
+def test_calculix_and_our_buckling_agree_on_a_column():
+    """An independent check on an eigenvalue solver, which is where errors hide best.
+
+    A geometric stiffness with a sign slip in one off-diagonal block still produces positive
+    factors in roughly the right range, and still converges to Euler on the one case anybody
+    tests. Nothing short of a second implementation catches that -- and CalculiX has `*BUCKLE`,
+    quadratic tets, and no code in common with us.
+
+    Both are checked against Euler first, for the same reason the static cross-check is: a
+    reference nobody verified is a second opinion of unknown quality.
+    """
+    import math
+
+    from constraint_kit.fea.buckling import buckling
+
+    side, long_n, pitch = 4.0, 48.0, 1.0
+    applied = 1000.0
+    I = side ** 4 / 12.0
+    euler = math.pi ** 2 * E_STEEL * I / (2.0 * long_n) ** 2       # fixed-free, k = 2
+
+    m = tet.mesh_box((side, side, long_n), pitch=2.0)
+    theirs = tet.buckle(m, E=E_STEEL, nu=NU,
+                        fix=lambda p: p[:, 2] <= 1e-9,
+                        load=(lambda p: p[:, 2] >= long_n - 1e-9, (0.0, 0.0, -applied)),
+                        n_modes=2)
+    their_critical = theirs[0] * applied
+
+    n = int(round(side / pitch))
+    grid = voxel.Grid(density=np.ones((n, n, int(long_n / pitch))), pitch=(pitch,) * 3)
+    model = voxel.Model(grid, E=E_STEEL, nu=NU)
+    model.fix(lambda p: p[:, 2] <= 1e-9)
+    model.load_face("z", "max", (0.0, 0.0, -applied))
+    ours = buckling(model, n_modes=1)
+    our_critical = ours.factors[0] * applied
+
+    print("      Euler %.1f N | CalculiX %.1f N (x%.3f) | voxel %.1f N (x%.3f)"
+          % (euler, their_critical, their_critical / euler,
+             our_critical, our_critical / euler))
+
+    # the reference, against closed form, first
+    assert 0.90 < their_critical / euler < 1.10, (
+        "CalculiX must land near Euler before it can judge anything: %.4f"
+        % (their_critical / euler))
+    # ours, from above, because a trilinear hex locks
+    assert our_critical / euler > 1.0, our_critical / euler
+    # and the two against each other
+    ratio = our_critical / their_critical
+    assert 0.90 < ratio < 1.30, (
+        "the two buckling solvers disagree by more than meshing explains: %.4f" % ratio)
+
+
+@test
 def test_the_comparison_refuses_to_compare_different_problems():
     """Two solvers given different loads disagree for a reason that is neither solver fault."""
     vox = _voxel_cantilever(5.0)

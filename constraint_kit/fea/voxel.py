@@ -40,6 +40,37 @@ CG_MAX_ITER = 30_000
 ASSEMBLY_CHUNK = 16_384  # elements per triplet batch; 16k -> ~150 MB transient
 
 
+_DIRECT_OK: bool | None = None
+
+
+def direct_solver_available() -> bool:
+    """Is scipy's sparse DIRECT solver usable in THIS interpreter? Probed once, then cached.
+
+    It is not, inside FreeCAD 1.0.2. That bundle pairs numpy 1.26.4 with a scipy whose compiled
+    SuperLU extension was built against a different numpy ABI, so `spsolve`, `factorized` and
+    `splu` all fail with the memorable `argument 3 must be numpy.ndarray, not numpy.ndarray` --
+    two distinct ndarray types in one process. Pure-Python iterative solvers and sparse matvec
+    are unaffected, because they never cross that boundary.
+
+    This lives HERE rather than only in the workbench bridge because `method="auto"` has to
+    respect it. The bridge knew and passed `method="cg"` explicitly, so the bridge worked -- and
+    every other caller of `auto` inside FreeCAD was broken, which is exactly how the buckling
+    solver failed the first time it ran in there. A capability check that only one caller knows
+    about is a trap for the next one.
+
+    Probed rather than hardcoded on "are we in FreeCAD", so a future bundle shipping a matched
+    pair gets the faster path with no code change.
+    """
+    global _DIRECT_OK
+    if _DIRECT_OK is None:
+        try:
+            spla.spsolve(sp.csc_matrix(np.eye(3)), np.ones(3))
+            _DIRECT_OK = True
+        except Exception:  # noqa: BLE001 - any failure at all means do not use it
+            _DIRECT_OK = False
+    return _DIRECT_OK
+
+
 class SolveFailure(RuntimeError):
     """The linear solve did not converge, or converged to something that is not a solution.
 
@@ -493,9 +524,7 @@ class Model:
                 "every loaded node is restrained or outside the material -- "
                 "the reduced load vector is zero")
 
-        chosen = method
-        if chosen == "auto":
-            chosen = "direct" if n_red <= DIRECT_DOF_LIMIT else "cg"
+        chosen = _choose(method, n_red)
 
         if chosen == "direct":
             u_red = spla.spsolve(K.tocsc(), f)
@@ -552,9 +581,7 @@ class Model:
         self._guard(active)
         K, _reduce_map, n_red, keep_flat = self._assemble(active)
 
-        chosen = method
-        if chosen == "auto":
-            chosen = "direct" if n_red <= DIRECT_DOF_LIMIT else "cg"
+        chosen = _choose(method, n_red)
 
         # One factorisation (or one preconditioner) shared by every right-hand side.
         if chosen == "direct":
@@ -654,6 +681,22 @@ class Model:
         sx, sy, sz, txy, tyz, tzx = sig.T
         return np.sqrt(0.5 * ((sx - sy) ** 2 + (sy - sz) ** 2 + (sz - sx) ** 2)
                        + 3.0 * (txy ** 2 + tyz ** 2 + tzx ** 2))
+
+
+def _choose(method: str, n_red: int) -> str:
+    """Resolve `method` for this system in this interpreter.
+
+    `auto` wants the direct solver while the system is small enough for it to be the faster
+    choice -- and only if the direct solver actually works here, which inside FreeCAD it does
+    not.
+    """
+    if method != "auto":
+        if method not in ("direct", "cg"):
+            raise ValueError(f"method must be 'auto', 'direct' or 'cg', got {method!r}")
+        return method
+    if n_red > DIRECT_DOF_LIMIT:
+        return "cg"
+    return "direct" if direct_solver_available() else "cg"
 
 
 def _preconditioner(K: sp.spmatrix):

@@ -592,3 +592,89 @@ def solve(mesh: TetMesh, *, E: float, nu: float, fix, load,
     finally:
         if own:
             shutil.rmtree(directory, ignore_errors=True)
+
+
+_BUCKLE_HEADER = "BUCKLING"
+
+
+def buckle(mesh: TetMesh, *, E: float, nu: float, fix, load,
+           n_modes: int = 1, axes: str = "xyz", workdir: str | None = None) -> list:
+    """Critical load FACTORS from CalculiX `*BUCKLE`, as an independent check on ours.
+
+    The same reasoning as the static cross-check, and more urgently: an eigenvalue solver is
+    exactly the kind of code whose errors look plausible. A geometric stiffness with a sign slip
+    in one off-diagonal block still produces positive factors in roughly the right range, and
+    nothing short of a second implementation will tell you.
+
+    Returns the factors in ascending order. They multiply the applied load, the same convention
+    `fea.buckling` uses, which is CalculiX convention too.
+    """
+    _, ccx_path = tools()
+    where_load, force = load
+    fixed = _nodes_where(mesh, fix)
+    loaded = _nodes_where(mesh, where_load)
+    share = np.asarray(force, dtype=float) / len(loaded)
+
+    own = workdir is None
+    directory = workdir or tempfile.mkdtemp(prefix="ck-buckle-")
+    if not own:
+        os.makedirs(directory, exist_ok=True)
+    try:
+        with open(os.path.join(directory, "job.inp"), "w", encoding="utf-8") as fh:
+            fh.write("*NODE, NSET=Nall\n")
+            for i, (x, y, z) in enumerate(mesh.nodes, start=1):
+                fh.write("%d, %.10g, %.10g, %.10g\n" % (i, x, y, z))
+            fh.write("*ELEMENT, TYPE=C3D10, ELSET=Eall\n")
+            for e, element in enumerate(mesh.tets, start=1):
+                fh.write("%d, %s\n" % (e, ", ".join(str(int(n) + 1) for n in element)))
+            _write_set(fh, "FIXED", fixed)
+            _write_set(fh, "LOADED", loaded)
+            fh.write(f"*MATERIAL, NAME=MAT\n*ELASTIC\n{E!r}, {nu!r}\n")
+            fh.write("*SOLID SECTION, ELSET=Eall, MATERIAL=MAT\n")
+            # *BUCKLE takes the number of modes on its data line, and the load that follows is
+            # the one the factors multiply -- so this deck says the same thing ours does.
+            fh.write("*STEP\n*BUCKLE\n%d\n*BOUNDARY\n" % int(n_modes))
+            for axis in axes:
+                dof = "xyz".index(axis) + 1
+                fh.write(f"FIXED, {dof}, {dof}, 0.0\n")
+            fh.write("*CLOAD\n")
+            for dof, value in enumerate(share, start=1):
+                if value:
+                    fh.write("LOADED, %d, %.12g\n" % (dof, value))
+            fh.write("*NODE FILE\nU\n*END STEP\n")
+
+        proc = _run([ccx_path, "-i", "job"], directory, "CalculiX (buckle)")
+        text = (proc.stdout or "") + (proc.stderr or "")
+        if proc.returncode != 0 or "nonpositive jacobian" in text.lower():
+            detail = "\n".join(l for l in text.splitlines() if "error" in l.lower())[:600]
+            raise SolverFailed("CalculiX *BUCKLE failed (exit %s): %s"
+                               % (proc.returncode, detail or text.strip()[-400:]))
+
+        dat = os.path.join(directory, "job.dat")
+        if not os.path.isfile(dat):
+            raise SolverFailed(
+                "CalculiX wrote no .dat, so there are no buckling factors to read. Output: %s"
+                % text.strip()[-400:])
+        factors = []
+        with open(dat, encoding="utf-8", errors="replace") as fh:
+            inside = False
+            for line in fh:
+                upper = line.upper()
+                if _BUCKLE_HEADER in upper.replace(" ", ""):
+                    inside = True
+                    continue
+                if not inside:
+                    continue
+                parts = line.split()
+                if len(parts) == 2:
+                    try:
+                        factors.append(float(parts[1]))
+                    except ValueError:
+                        continue
+        if not factors:
+            raise SolverFailed(
+                "no buckling factors found in job.dat; CalculiX ran but reported none")
+        return sorted(factors)
+    finally:
+        if own:
+            shutil.rmtree(directory, ignore_errors=True)
