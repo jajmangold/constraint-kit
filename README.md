@@ -300,17 +300,29 @@ All endpoints on `127.0.0.1:8195` (host-only by default).
 ## Running tests
 
 ```bash
-tools/ci.sh                        # everything available here; exit 0 = green
-python3 tests/test_fea.py          # physics      (19, numpy + scipy only)
-python3 tests/test_convergence.py  # convergence  (16, numpy only)
-tests/run.sh                       # kernel       (113, needs the cadkit container)
+tools/ci.sh                        # every tier available here; exit 0 = green
+CK_GUI=1  tools/ci.sh              # ...plus a real FreeCAD window (~30 s)
+CK_LIVE=1 tools/ci.sh              # ...plus the configured model endpoint (costs money)
 ```
 
-**148 tests in two tiers, deliberately.** The physics and convergence suites need nothing but numpy and
-scipy, so they run anywhere — including inside FreeCAD's bundled Python. The kernel suite needs the
-container stack (`build123d`, `bd_warehouse`, `cq_gears`, `z3`, `python_solvespace`, `trimesh`); on a bare
-host it reports 86/113 with the rest failing on imports, which is expected rather than a regression.
-`tools/ci.sh` knows the difference and reports the container suite as *skipped*, never as passed.
+**209 tests in five tiers, each gated on a different dependency**, plus 113 more in the container:
+
+| tier | needs | covers | gating |
+|---|---|---|---|
+| host | numpy + scipy | physics (21), convergence (16), workbench core (32) | always |
+| freecad | `freecadcmd` | geometry (30), document (16), commands (25), planner (15), STEP import (14), motion (17), agent end-to-end (4) | if found |
+| gui | a real FreeCAD window | toolbar, three panels, the worker thread (15) | `CK_GUI=1` |
+| live | a model endpoint | plain English → validated program → built geometry (4) | `CK_LIVE=1` |
+| container | `docker exec cadkit` | the cadquery kernel (113) | if up |
+
+The split is deliberate rather than accidental. The kernel suite needs `build123d`, `bd_warehouse`,
+`cq_gears`, `z3`, `python_solvespace` and `trimesh`; on a bare host it reports 86/113 with the rest
+failing on imports, which is expected rather than a regression. The gui tier exists because two
+defects shipped in one day while the Qt layer had no coverage, both invisible to 150 passing headless
+tests. The live tier exists because every other planner test injects the model call — which is right,
+since a suite that needs a paid API to tell you your parser works is a bad suite — but injection
+cannot answer whether a real model, given the real catalogue, produces a program this kernel accepts.
+`tools/ci.sh` reports any tier it could not run as **SKIPPED**, never as passed.
 
 Every test is checked against ground truth that exists independently of this code — seating zero-gap, gear
 center distances `m·(z₁+z₂)/2`, mass vs density, DXF validity, atlas round-trip, and for the physics tier

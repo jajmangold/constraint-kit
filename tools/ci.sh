@@ -8,12 +8,17 @@
 #   host      numpy + scipy only          physics, convergence, workbench core  -- ALWAYS gated
 #   freecad   freecadcmd                  geometry, document, commands, agents  -- gated if found
 #   gui       a real FreeCAD window       toolbar, panels, the planner UI       -- CK_GUI=1
+#   live      a real model endpoint       plain English -> validated -> built   -- CK_LIVE=1
 #   container docker exec cadkit          the 113 kernel tests                  -- gated if up
 #
 # The gui tier opens a window for ~30 s, so it is opt-in (CK_GUI=1) rather than on by default --
 # but it is not optional in spirit. Two defects shipped in one day while the Qt layer had no
 # coverage, both invisible to every headless test, because FreeCADGui cannot be imported without
 # a display. Run it before calling GUI work done.
+#
+# The live tier calls a paid API, so it is opt-in too (CK_LIVE=1) -- but it is the only tier that
+# answers the question the user actually asked: does a real model, given the real catalogue,
+# produce a program this kernel accepts? Every other planner test injects the model call.
 #
 # A tier that cannot run is reported as SKIPPED, never as passed. A CI run that covers less than
 # you think is worse than one that fails.
@@ -70,6 +75,20 @@ else
   echo "[ci] gui tier SKIPPED — set CK_GUI=1 to run it (opens a FreeCAD window for ~30 s)."
   echo "[ci]   the toolbar, the three panels and the planner UI are NOT covered by this run."
   skipped+=("gui")
+fi
+
+echo "=== live tier ==="
+if [ "${CK_LIVE:-0}" = "1" ]; then
+  if [ -x "$FREECADCMD" ]; then
+    CK_LIVE=1 run "live planner   workbench/tests/test_planner_live.py"         "$FREECADCMD" workbench/tests/test_planner_live.py
+  else
+    echo "[ci] live tier SKIPPED — freecadcmd not found."
+    skipped+=("live")
+  fi
+else
+  echo "[ci] live tier SKIPPED — set CK_LIVE=1 to run it (calls the configured model, costs money)."
+  echo "[ci]   whether a REAL model produces a buildable program is NOT covered by this run."
+  skipped+=("live")
 fi
 
 echo "=== container tier ==="

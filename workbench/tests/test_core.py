@@ -363,6 +363,79 @@ def test_the_client_refuses_an_unconfigured_endpoint_with_instructions():
 
 
 @test
+def test_an_answer_lost_to_reasoning_is_diagnosed_rather_than_returned_empty():
+    """A reasoning model can return `content: ""` with the answer in `reasoning_content`.
+
+    Measured against the live endpoint, which is how this was found: `deepseek-flash` thinks by
+    default, and with a small output budget the thinking consumed all of it -- HTTP 200,
+    `finish_reason: "length"`, 70 characters of reasoning and an empty answer. Returning "" from
+    here sends the planner off to report "not valid JSON", which is true and completely useless.
+    The cause is knowable at exactly this point, so it is named here.
+    """
+    import json as _json
+    from ckwb import llm
+
+    class _Resp:
+        def __init__(self, payload):
+            self._payload = _json.dumps(payload).encode()
+
+        def read(self):
+            return self._payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def _reply(message, finish="stop"):
+        return {"choices": [{"message": message, "finish_reason": finish}]}
+
+    original = llm.urllib.request.urlopen
+    try:
+        def answer(payload):
+            llm.urllib.request.urlopen = lambda *a, **k: _Resp(payload)
+            return llm.chat([{"role": "user", "content": "hi"}],
+                            base_url="http://x", model="m")
+
+        # the measured case: budget spent on thinking
+        try:
+            answer(_reply({"role": "assistant", "content": "",
+                           "reasoning_content": "The user wants me to"}, finish="length"))
+        except llm.LLMError as exc:
+            text = str(exc).lower()
+            assert "reasoning" in text, str(exc)
+            assert "budget" in text or "length" in text, str(exc)
+        else:
+            raise AssertionError("an empty answer lost to reasoning must not be returned as ''")
+
+        # thought, then finished, and still said nothing
+        try:
+            answer(_reply({"role": "assistant", "content": None,
+                           "reasoning_content": "x" * 200}))
+        except llm.LLMError as exc:
+            assert "reasoning" in str(exc).lower(), str(exc)
+        else:
+            raise AssertionError("an empty answer must be an error, not an empty string")
+
+        # empty with no reasoning at all is a different fault and must say so differently
+        try:
+            answer(_reply({"role": "assistant", "content": ""}))
+        except llm.LLMError as exc:
+            assert "reasoning" not in str(exc).lower(), (
+                "do not blame reasoning when the response contains none: " + str(exc))
+        else:
+            raise AssertionError("an empty answer must be an error")
+
+        # and a real answer is returned untouched even when reasoning came along with it
+        got = answer(_reply({"role": "assistant", "content": '{"parts": []}',
+                             "reasoning_content": "thinking out loud"}))
+        assert got == '{"parts": []}', got
+    finally:
+        llm.urllib.request.urlopen = original
+
+
+@test
 def test_the_socket_timeout_is_short_enough_to_notice():
     """urllib's timeout is per read, not a total deadline, so it must not be a UI-freezing value.
 

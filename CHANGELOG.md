@@ -5,6 +5,53 @@ Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[
 Read this first every session; write it last. Log **decisions**, not just code — a decision that
 is not written down gets re-litigated, and the reason it was made is the expensive part.
 
+## 2026-10-16 (later still) — the planner works against a real model, and the model found a hole in the catalogue
+
+- `[feat]` **`workbench/tests/test_planner_live.py`** + a `CK_LIVE=1` CI tier: plain English through
+  the configured endpoint, the validator, the repair loop and `build()`. Four tests, all green
+  against `deepseek-flash` in 1.6-9.6 s each. This closes #26 with evidence rather than with a
+  wiring diagram: the panel had been wired for a while, but no live completion had ever been
+  observed to return.
+- `[fix]` **The dead completions were the provider, not us.** Earlier the endpoint answered
+  `/v1/models` in 0.5 s and never answered a chat completion at all; it now answers the real
+  4,045-character planner prompt in 4.5 s on the as-shipped configuration. Nothing in the client
+  needed changing for that, which is worth recording so the next outage is not re-debugged as a
+  bug.
+- `[fix]` **An answer lost to reasoning is now diagnosed where the cause is knowable.** A reasoning
+  model can return HTTP 200 with `content: ""` and the answer in `reasoning_content` —
+  measured: `finish_reason: "length"`, 70 characters of reasoning, empty answer, because thinking
+  consumed the whole output budget. `llm.chat` returned `""`, and the planner then reported "the
+  model did not return valid JSON", which is true of an empty string and tells nobody anything.
+  It now names the actual fault and what to do about it, with a different message for an empty
+  answer carrying no reasoning at all (a model-name problem, not a thinking problem).
+
+### `plate` could not put a hole in the middle of a plate
+
+- `[feat]` **`plate` takes a `bore_d`**, a single centred through-bore, independent of the bolt
+  circle; a plate can have both, which is the commonest plate there is. New frames `bore` and
+  `bore_top`. Four tests, written first, including the two refusals: a bore that is not smaller
+  than the plate, and a bolt circle that would run into the bore and merge with it into one ragged
+  opening.
+- `[note]` **The gap was found by the model, not by me.** Asked for "a plate 120 by 80 by 10 with a
+  20mm bore through the middle", it tried a bolt circle of radius zero, was refused by the
+  validator, and the repair came back with: *"No generator in this catalogue can put a central
+  through-bore in a flat plate... that feature was dropped rather than faked."* It was right on
+  every count, including about `block_with_bore` being the wrong substitute.
+
+  Two things in that are worth keeping. The execute-and-repair loop did what it is for, on a real
+  gap rather than a syntax slip. And **a live model exercising the catalogue finds holes a unit
+  test will not, because a unit test only asks for what its author already thought of.** That is
+  now written into `AGENTS.md` as the reason the live tier exists.
+- `[feat]` With `bore_d` in place the same model produces, first try and with every value stated, a
+  160 x 120 x 10 gantry plate with a 25 mm bearing bore and four holes on a 100 mm bolt circle —
+  and volunteers that 5.0 mm is M5 tapping size rather than clearance, which is a correct and
+  unprompted observation about the part.
+- `[note]` Forward-compatible by construction: `paramset_of` reads each part's stored provenance
+  metadata rather than the live catalogue, so a document saved before `bore_d` existed rebuilds
+  byte-identically.
+
+**209 tests across 12 suites** (five tiers), plus 113 in the container.
+
 ## 2026-10-16 (later) — coupled motion, and checking a mechanism through its travel
 
 - `[feat]` **`ckwb/motion.py`**: slides, screw travel, belt arithmetic, pulley rotation, and

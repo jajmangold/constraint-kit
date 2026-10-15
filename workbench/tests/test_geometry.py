@@ -67,6 +67,64 @@ def test_plate_bolt_circle_removes_exactly_the_right_volume():
 
 
 @test
+def test_plate_takes_a_centred_bore_and_removes_exactly_a_cylinder():
+    """A hole in the middle of a plate.
+
+    This gap was found by the planner, not by me: asked for "a plate 120 by 80 by 10 with a 20mm
+    bore through the middle" the model tried a bolt circle of radius zero, was refused, and came
+    back saying the feature could not be expressed and it would rather drop it than fake it. It
+    was right. A plate with a hole in it is not an exotic request.
+    """
+    w, d, t, bore = 120.0, 80.0, 10.0, 20.0
+    plain, _ = P.plate(width=w, depth=d, thickness=t)
+    holed, frames = P.plate(width=w, depth=d, thickness=t, bore_d=bore)
+    removed = plain.Volume - holed.Volume
+    expect = math.pi * (bore / 2.0) ** 2 * t
+    assert abs(removed - expect) < 1e-5, (removed, expect)
+    assert len(holed.Solids) == 1 and holed.isValid() and holed.isClosed()
+    assert "bore" in frames, sorted(frames)
+    axis = frames["bore"]
+    assert axis.Base.Length < TOL, axis.Base
+    assert axis.Rotation.multVec(FreeCAD.Vector(0, 0, 1)).z > 0.999
+
+
+@test
+def test_plate_bore_coexists_with_a_bolt_circle():
+    """The two hole features are independent; a bored plate can still be bolted down."""
+    w, d, t = 100.0, 100.0, 8.0
+    both, frames = P.plate(width=w, depth=d, thickness=t, bore_d=25.0,
+                           hole_d=6.0, bolt_circle=70.0, n_holes=4)
+    expect = w * d * t - math.pi * 12.5 ** 2 * t - 4 * math.pi * 3.0 ** 2 * t
+    assert abs(both.Volume - expect) < 1e-5, (both.Volume, expect)
+    assert len(both.Solids) == 1
+    assert {"bore", "hole_0", "hole_3", "top", "bottom"} <= set(frames), sorted(frames)
+
+
+@test
+def test_plate_refuses_a_bore_that_eats_the_plate():
+    """A bore wider than the plate is not a plate with a hole, it is two pieces or none."""
+    for bad in (80.0, 120.0):
+        try:
+            P.plate(width=60.0, depth=40.0, thickness=8.0, bore_d=bad)
+        except ValueError as exc:
+            assert "bore" in str(exc).lower(), str(exc)
+        else:
+            raise AssertionError("bore_d=%s should be refused on a 60 x 40 plate" % bad)
+
+
+@test
+def test_plate_refuses_a_bore_that_collides_with_its_bolt_circle():
+    """Overlapping hole features would merge into one ragged opening; say so instead."""
+    try:
+        P.plate(width=100.0, depth=100.0, thickness=8.0, bore_d=60.0,
+                hole_d=10.0, bolt_circle=64.0, n_holes=4)
+    except ValueError as exc:
+        assert "bolt circle" in str(exc).lower() or "bore" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("a bore overlapping the bolt circle must be refused")
+
+
+@test
 def test_plate_frames_sit_on_the_faces_and_point_outward():
     _, frames = P.plate(width=60.0, depth=40.0, thickness=8.0)
     assert {"top", "bottom"} <= set(frames), sorted(frames)

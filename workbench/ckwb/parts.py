@@ -45,18 +45,45 @@ def _require_positive(**kw) -> None:
 # ------------------------------------------------------------------------------------- plate
 
 def plate(width: float = 60.0, depth: float = 40.0, thickness: float = 8.0,
-          hole_d: float = 0.0, bolt_circle: float = 0.0, n_holes: int = 0):
-    """Rectangular plate centred on the origin in XY, rising from z=0, with an optional bolt circle."""
+          bore_d: float = 0.0, hole_d: float = 0.0, bolt_circle: float = 0.0,
+          n_holes: int = 0):
+    """Rectangular plate centred on the origin in XY, rising from z=0.
+
+    Two independent hole features, because they answer different questions. `bore_d` is a single
+    through-bore on the centre, which is what a bearing, a bushing or a shaft clearance wants.
+    `hole_d`/`bolt_circle`/`n_holes` is a bolt circle, which is what mounting wants. A plate can
+    have both: a bored boss ringed by fixings is the commonest plate there is.
+
+    The centre bore was missing until the planner found it. Asked for a plate with a 20 mm bore
+    through the middle, the model tried a bolt circle of radius zero, was refused, and reported
+    that it would rather drop the feature than fake it. Correct of it, and a poor showing from
+    the catalogue.
+    """
     _require_positive(width=width, depth=depth, thickness=thickness)
     shape = Part.makeBox(width, depth, thickness, V(-width / 2.0, -depth / 2.0, 0.0))
     frames = {"top": frame((0, 0, thickness), (0, 0, 1)),
               "bottom": frame((0, 0, 0), (0, 0, -1))}
+
+    if bore_d > 0.0:
+        if bore_d >= min(width, depth):
+            raise ValueError(
+                f"bore_d={bore_d} is not smaller than the {width} x {depth} plate, so it would "
+                f"not leave a plate behind")
+        # Over-length tool so the cut is unambiguously through, never a skin-thin lid.
+        shape = shape.cut(
+            Part.makeCylinder(bore_d / 2.0, thickness + 2.0, V(0, 0, -1.0), _Z))
+        frames["bore"] = frame((0, 0, 0), (0, 0, 1))
+        frames["bore_top"] = frame((0, 0, thickness), (0, 0, 1))
 
     n = int(n_holes)
     if n > 0:
         if hole_d <= 0.0 or bolt_circle <= 0.0:
             raise ValueError("a bolt circle needs both hole_d and bolt_circle to be positive")
         r = bolt_circle / 2.0
+        if bore_d > 0.0 and r - hole_d / 2.0 <= bore_d / 2.0:
+            raise ValueError(
+                f"bolt circle {bolt_circle} with {hole_d} holes runs into the {bore_d} centre "
+                f"bore; the two would merge into one ragged opening rather than distinct holes")
         if r + hole_d / 2.0 > min(width, depth) / 2.0:
             raise ValueError(
                 f"bolt circle {bolt_circle} with {hole_d} holes breaks the plate edge "

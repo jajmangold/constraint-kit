@@ -109,10 +109,36 @@ def chat(messages: list, *, base_url: str, api_key: str = "", model: str,
         raise LLMError(f"{url} did not return JSON: {exc}") from exc
 
     try:
-        return raw["choices"][0]["message"]["content"] or ""
+        choice = raw["choices"][0]
+        message = choice["message"]
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMError(
             f"unexpected response shape from {url}: {json.dumps(raw)[:400]}") from exc
+
+    content = message.get("content") or ""
+    if content.strip():
+        return content
+
+    # An empty answer with HTTP 200. The cause is knowable here and nowhere downstream, so it is
+    # named here rather than handed on as "the model did not return valid JSON" -- which is true
+    # of an empty string and tells nobody anything.
+    reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
+    finish = choice.get("finish_reason")
+    if reasoning:
+        if finish == "length":
+            raise LLMError(
+                f"{model} spent its entire output budget on reasoning and returned no answer "
+                f"({len(reasoning)} characters of reasoning, finish_reason=length). It is a "
+                "reasoning model; either raise its output limit or configure a model that does "
+                "not think before answering.")
+        raise LLMError(
+            f"{model} returned {len(reasoning)} characters of reasoning and an empty answer. It "
+            "is a reasoning model and its reply never reached the answer field; try a "
+            "non-reasoning model, or the same model with thinking disabled.")
+    raise LLMError(
+        f"{model} returned an empty message (finish_reason={finish!r}). The endpoint and key are "
+        "working, so this is the model or the request: check the model name is one this endpoint "
+        "actually serves.")
 
 
 def probe(base_url: str, api_key: str = "", timeout: float = 10.0) -> list:

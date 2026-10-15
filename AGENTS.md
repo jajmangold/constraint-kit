@@ -94,7 +94,7 @@ python workbench/install.py            # link the workbench into FreeCAD's Mod d
 git config core.hooksPath .githooks    # enable the pre-push gate, once per clone
 ```
 
-**Three test tiers, on purpose.** The host tier needs nothing but numpy and scipy. The FreeCAD
+**Five test tiers, on purpose.** The host tier needs nothing but numpy and scipy. The FreeCAD
 tier runs under `freecadcmd`. `test_kernel.py` needs `build123d`, `bd_warehouse`, `cq_gears`,
 `z3`, `python_solvespace` and `trimesh`, which live in the container — on a bare host it reports
 86/113 with the other 27 failing on imports, and that is expected, not a regression. `tools/ci.sh`
@@ -105,6 +105,20 @@ shipped in one day (InitGui raising on `__file__`, nine missing icons) and both 
 150 passing headless tests. `run_gui_tests.py` launches a real FreeCAD, drives the toolbar and all
 three panels, fakes the model call to exercise the worker-thread path, and quits. It is opt-in
 (`CK_GUI=1`) only because it opens a window — **run it before calling any GUI change done.**
+
+**The live tier is the only one that asks the real question.** `test_planner_live.py` (`CK_LIVE=1`)
+runs plain English through the configured endpoint, the validator, the repair loop and `build()`, and
+asserts on OUR side of the contract: a stated dimension reaches the geometry, unstated values stay
+tagged as guesses, an impossible request declines rather than substituting, and two parts come out
+mated rather than piled. It deliberately does NOT assert which generator the model picks or how it
+words its notes — that would be a test of today's weights, and it would fail for the wrong reason the
+day they change.
+
+It also earns its keep as a gap-finder, which was not the plan. Asked for a plate with a centred
+bore, the model tried a bolt circle of radius zero, was refused by the validator, and came back
+saying it would rather drop the feature than fake it. It was right: `plate` could not express a hole
+in the middle of a plate. **A live model exercising the catalogue finds holes in the catalogue that no
+unit test will, because a unit test only asks for what the author already thought of.**
 
 Write GUI assertions that can fail. The responsiveness test originally counted event-loop spins
 *after* `submit()` returned, which proves nothing about blocking; it now times `submit()` itself,
