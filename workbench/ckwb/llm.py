@@ -15,7 +15,11 @@ import json
 import urllib.error
 import urllib.request
 
-DEFAULT_TIMEOUT = 180.0
+# Per-SOCKET-OPERATION, not a total deadline — urllib has no such thing. A server that accepts
+# the connection and then sends nothing will stall for this long per read, so keep it short
+# enough that a human waiting on it does not conclude the application has died. Measured against
+# a real endpoint that answered /models in 0.5 s and then never answered a chat completion.
+DEFAULT_TIMEOUT = 60.0
 
 
 class LLMError(RuntimeError):
@@ -24,6 +28,11 @@ class LLMError(RuntimeError):
     Always carries what to do about it: a key problem, a URL problem and a model-name problem all
     look the same from the call site and need different fixes.
     """
+
+
+def _mentions_json(messages: list) -> bool:
+    """Does any message contain the word "json"? Some servers require it for JSON mode."""
+    return any("json" in str(m.get("content", "")).lower() for m in messages)
 
 
 def chat(messages: list, *, base_url: str, api_key: str = "", model: str,
@@ -53,7 +62,11 @@ def chat(messages: list, *, base_url: str, api_key: str = "", model: str,
         url += "/chat/completions"
 
     payload = {"model": model, "messages": messages, "temperature": float(temperature)}
-    if json_object:
+    if json_object and _mentions_json(messages):
+        # Only when the prompt actually says "json". DeepSeek rejects response_format outright
+        # otherwise: HTTP 400 "Prompt must contain the word 'json' in some form to use
+        # 'response_format' of type 'json_object'". Relying on the caller's prompt happening to
+        # contain the word is luck, not design, so it is checked.
         payload["response_format"] = {"type": "json_object"}
 
     body = json.dumps(payload).encode("utf-8")
@@ -76,9 +89,21 @@ def chat(messages: list, *, base_url: str, api_key: str = "", model: str,
                 404: f" — no such endpoint or model at {url}",
                 429: " — rate limited"}.get(exc.code, "")
         raise LLMError(f"{url} returned HTTP {exc.code}{hint}. {detail}") from exc
-    except urllib.error.URLError as exc:
+    except TimeoutError as exc:
         raise LLMError(
-            f"cannot reach {url}: {exc.reason}. If this is a local server, check it is running; "
+            f"{url} accepted the connection but sent no response within {timeout:.0f}s. The "
+            "endpoint is reachable, so this is not a URL or key problem — the model is queued, "
+            "overloaded, or the account cannot currently serve completions. Check the provider's "
+            "status and balance, or point Settings at a local server.") from exc
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        if isinstance(reason, TimeoutError):
+            raise LLMError(
+                f"{url} sent no response within {timeout:.0f}s. The endpoint is reachable, so "
+                "this is not a URL or key problem — check the provider's status and "
+                "balance.") from exc
+        raise LLMError(
+            f"cannot reach {url}: {reason}. If this is a local server, check it is running; "
             "if it is hosted, check the URL and your network.") from exc
     except json.JSONDecodeError as exc:
         raise LLMError(f"{url} did not return JSON: {exc}") from exc

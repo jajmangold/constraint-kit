@@ -291,6 +291,82 @@ def _validate(raw: dict) -> list:
     return errors
 
 
+class PlanSession:
+    """The plan/validate/repair state machine, with the network call left to the caller.
+
+    Exists because of a real defect: the first version ran the whole thing synchronously, so a
+    slow model froze FreeCAD's GUI thread for as long as the HTTP request took. The fix cannot be
+    "run plan() in a worker thread" either — validation BUILDS the proposed parts to check their
+    frames, and driving OCCT from a non-GUI thread is not safe.
+
+    So the two halves are separated. The caller owns the slow, thread-safe part (one HTTP call)
+    and this object owns the fast, thread-bound part (prompting, parsing, validating, building).
+    `plan()` drives it on one thread; the GUI drives the same object across a worker and a signal.
+    One implementation, so the interactive path and the scripted path cannot diverge.
+
+    Usage:
+        session = PlanSession(request)
+        while True:
+            reply = chat(session.messages)        # slow; anywhere you like
+            kind, payload = session.offer(reply)  # fast; must be the geometry thread
+            if kind == "plan":  return payload
+            if kind == "error": raise PlanError(payload)
+            # kind == "retry": loop, session.messages has been updated
+    """
+
+    def __init__(self, request: str):
+        if not request or not request.strip():
+            raise PlanError("nothing was asked")
+        self.request = request
+        self.messages = _prompt(request, json.dumps(catalogue(), sort_keys=True))
+        self.attempt = 0
+        self.problems: list[str] = []
+
+    def offer(self, reply: str):
+        """Judge one model reply. Returns ("plan", Plan) | ("retry", None) | ("error", str)."""
+        self.attempt += 1
+        last = self.attempt >= MAX_ATTEMPTS
+
+        try:
+            raw = _parse(reply)
+        except PlanError as exc:
+            self.problems.append(str(exc))
+            if last:
+                return "error", ("the model failed twice to return a usable program. "
+                                 + " | ".join(self.problems))
+            self.messages = self.messages + [
+                {"role": "assistant", "content": reply},
+                {"role": "user", "content":
+                    f"That could not be read: {exc}. Reply with JSON only, in one of the two "
+                    "shapes described, and nothing else."}]
+            return "retry", None
+
+        if raw.get("unsupported"):
+            # An honest refusal. Never retried.
+            return "plan", Plan(request=self.request, declined=True,
+                                reason=str(raw["unsupported"]),
+                                nearest=str(raw.get("nearest") or ""), raw=reply,
+                                attempts=self.attempt)
+
+        errors = _validate(raw)
+        if not errors:
+            return "plan", Plan(request=self.request, parts=raw["parts"],
+                                mates=raw.get("mates") or [],
+                                notes=str(raw.get("notes") or ""), raw=reply,
+                                attempts=self.attempt)
+
+        self.problems.extend(errors)
+        if last:
+            return "error", ("the model produced an unusable program twice. "
+                             + " | ".join(self.problems))
+        self.messages = self.messages + [
+            {"role": "assistant", "content": reply},
+            {"role": "user", "content":
+                "That program will not build. Fix exactly these problems and reply with JSON "
+                "only:\n- " + "\n- ".join(errors)}]
+        return "retry", None
+
+
 def plan(request: str, *, chat=None, base_url: str = "", api_key: str = "",
          model: str = "") -> Plan:
     """Ask the model for a program, validate it, and repair once if needed.
@@ -298,55 +374,19 @@ def plan(request: str, *, chat=None, base_url: str = "", api_key: str = "",
     `chat` is injectable so the whole path above the network is testable; left unset, the real
     OpenAI-compatible client is used.
     """
-    if not request or not request.strip():
-        raise PlanError("nothing was asked")
-
     if chat is None:
         from .llm import chat as real_chat
 
         def chat(messages, **kw):  # noqa: A001 - deliberately shadows the parameter
             return real_chat(messages, base_url=base_url, api_key=api_key, model=model, **kw)
 
-    messages = _prompt(request, json.dumps(catalogue(), sort_keys=True))
-    problems: list[str] = []
-
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        reply = chat(messages)
-        try:
-            raw = _parse(reply)
-        except PlanError as exc:
-            problems.append(str(exc))
-            if attempt == MAX_ATTEMPTS:
-                raise PlanError(
-                    "the model failed twice to return a usable program. "
-                    + " | ".join(problems))
-            messages = messages + [
-                {"role": "assistant", "content": reply},
-                {"role": "user", "content":
-                    f"That could not be read: {exc}. Reply with JSON only, in one of the two "
-                    "shapes described, and nothing else."}]
-            continue
-
-        if raw.get("unsupported"):
-            # An honest refusal. Never retried.
-            return Plan(request=request, declined=True, reason=str(raw["unsupported"]),
-                        nearest=str(raw.get("nearest") or ""), raw=reply, attempts=attempt)
-
-        errors = _validate(raw)
-        if not errors:
-            return Plan(request=request, parts=raw["parts"], mates=raw.get("mates") or [],
-                        notes=str(raw.get("notes") or ""), raw=reply, attempts=attempt)
-
-        problems.extend(errors)
-        if attempt == MAX_ATTEMPTS:
-            raise PlanError(
-                "the model produced an unusable program twice. " + " | ".join(problems))
-        messages = messages + [
-            {"role": "assistant", "content": reply},
-            {"role": "user", "content":
-                "That program will not build. Fix exactly these problems and reply with JSON "
-                "only:\n- " + "\n- ".join(errors)}]
-
+    session = PlanSession(request)
+    for _ in range(MAX_ATTEMPTS):
+        kind, payload = session.offer(chat(session.messages))
+        if kind == "plan":
+            return payload
+        if kind == "error":
+            raise PlanError(payload)
     raise PlanError("unreachable")  # pragma: no cover
 
 

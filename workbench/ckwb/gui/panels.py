@@ -135,6 +135,9 @@ class DescribePanel(QtGui.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._plan = None
+        self._session = None
+        self._worker = None
+        self._cfg = {}
         layout = QtGui.QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
 
@@ -154,8 +157,12 @@ class DescribePanel(QtGui.QWidget):
         self.discard_btn = QtGui.QPushButton("Discard")
         self.discard_btn.clicked.connect(self.discard)
         self.discard_btn.setEnabled(False)
+        self.cancel_btn = QtGui.QPushButton("Stop waiting")
+        self.cancel_btn.clicked.connect(self.cancel)
+        self.cancel_btn.setVisible(False)
         row.addWidget(self.build_btn, 1)
         row.addWidget(self.discard_btn)
+        row.addWidget(self.cancel_btn)
         layout.addLayout(row)
 
         self.entry = QtGui.QLineEdit()
@@ -200,6 +207,9 @@ class DescribePanel(QtGui.QWidget):
         text = self.entry.text().strip()
         if not text:
             return
+        if self._worker is not None and self._worker.isRunning():
+            self._say("Constraint Kit", "Still waiting on the last request.")
+            return
         self.entry.clear()
         self._say("You", text)
 
@@ -208,24 +218,71 @@ class DescribePanel(QtGui.QWidget):
             self._say("Constraint Kit",
                       "No model endpoint is configured, so I will not guess at what you meant. "
                       "Open <b>Settings</b> and point it at any OpenAI-compatible endpoint. A "
-                      "local server needs no key at all — Ollama is "
+                      "local server needs no key at all - Ollama is "
                       "<code>http://127.0.0.1:11434/v1</code>, LM Studio "
                       "<code>http://127.0.0.1:1234/v1</code>.")
             return
 
         from .. import planner as _planner
 
-        QtGui.QApplication.setOverrideCursor(QtGui.Qt.WaitCursor)
         try:
-            plan = _planner.plan(text, base_url=cfg["base_url"], api_key=cfg["api_key"],
-                                 model=cfg["planner_model"])
+            self._session = _planner.PlanSession(text)
         except Exception as exc:  # noqa: BLE001
-            FreeCAD.Console.PrintError("[ConstraintKit] planner: %s\n" % exc)
+            self._say("Constraint Kit", str(exc))
+            return
+        self._cfg = cfg
+        self._say("Constraint Kit", f"Asking {cfg['planner_model']}...")
+        self._ask()
+
+    def _ask(self) -> None:
+        """Send the session's current messages off-thread. The GUI stays responsive."""
+        from .worker import ChatWorker
+
+        self._set_busy(True)
+        self._worker = ChatWorker(self._session.messages, self._cfg, self)
+        self._worker.replied.connect(self._on_reply)
+        self._worker.failed.connect(self._on_failed)
+        self._worker.start()
+
+    def _set_busy(self, busy: bool) -> None:
+        self.entry.setEnabled(not busy)
+        self.cancel_btn.setVisible(busy)
+        self.build_btn.setEnabled(not busy and self._plan is not None)
+
+    def cancel(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.cancel()
+            self._say("Constraint Kit",
+                      "Stopped waiting. The request may still finish in the background; its "
+                      "answer will be discarded.")
+        self._set_busy(False)
+
+    def _on_failed(self, message: str) -> None:
+        self._set_busy(False)
+        FreeCAD.Console.PrintError("[ConstraintKit] planner: " + message + chr(10))
+        self._say("Constraint Kit", f"That did not work: {message}")
+
+    def _on_reply(self, reply: str) -> None:
+        """Back on the GUI thread, where it is safe to build geometry for validation."""
+        self._set_busy(False)
+        try:
+            kind, payload = self._session.offer(reply)
+        except Exception as exc:  # noqa: BLE001
             self._say("Constraint Kit", f"That did not work: {exc}")
             return
-        finally:
-            QtGui.QApplication.restoreOverrideCursor()
 
+        if kind == "retry":
+            self._say("Constraint Kit",
+                      "That program would not build; telling it exactly what was wrong and "
+                      "asking once more.")
+            self._ask()
+            return
+        if kind == "error":
+            FreeCAD.Console.PrintError("[ConstraintKit] planner: " + str(payload) + chr(10))
+            self._say("Constraint Kit", f"I could not get a usable program: {payload}")
+            return
+
+        plan = payload
         if plan.declined:
             msg = f"<b>I will not build that.</b> {plan.reason}"
             if plan.nearest:
@@ -242,7 +299,7 @@ class DescribePanel(QtGui.QWidget):
         note = f" {plan.notes}" if plan.notes else ""
         extra = " (repaired once)" if plan.attempts > 1 else ""
         self._say("Constraint Kit",
-                  f"Here is the program{extra} — {plan.summary()}. "
+                  f"Here is the program{extra} - {plan.summary()}. "
                   f"Read it, then press <b>Build it</b>.{note}")
 
     def build(self) -> None:

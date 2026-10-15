@@ -319,6 +319,61 @@ def test_registry_aborts_the_transaction_when_a_command_raises():
     assert events == [("open", "boom"), ("abort",)], events
 
 
+# ----------------------------------------------------------------------------- the LLM client
+
+@test
+def test_json_mode_is_only_requested_when_the_prompt_says_json():
+    """DeepSeek returns HTTP 400 for response_format unless the prompt contains "json".
+
+    Found against the live endpoint: `{"error": "Prompt must contain the word 'json' in some
+    form to use 'response_format' of type 'json_object'"}`. Relying on a caller's prompt
+    happening to include the word is luck rather than design, so it is checked.
+    """
+    from ckwb import llm
+
+    assert llm._mentions_json([{"role": "user", "content": "reply with JSON only"}]) is True
+    assert llm._mentions_json([{"role": "user", "content": "a json object"}]) is True
+    assert llm._mentions_json([{"role": "user", "content": "a 500mm ball screw"}]) is False
+    assert llm._mentions_json([]) is False
+    assert llm._mentions_json([{"role": "user"}]) is False
+
+
+@test
+def test_the_planner_prompt_satisfies_its_own_json_requirement():
+    """If the system prompt ever loses the word, JSON mode silently stops being requested."""
+    source = os.path.join(_WB, "ckwb", "planner.py")
+    with open(source, encoding="utf-8") as fh:
+        body = fh.read()
+    start = body.index("SYSTEM = ")
+    end = body.index('"""', body.index('"""', start) + 3)
+    assert "json" in body[start:end].lower(),         "the planner's SYSTEM prompt no longer mentions json, so JSON mode will be skipped"
+
+
+@test
+def test_the_client_refuses_an_unconfigured_endpoint_with_instructions():
+    from ckwb import llm
+
+    for kwargs in ({"base_url": "", "model": "m"}, {"base_url": "http://x", "model": ""}):
+        try:
+            llm.chat([{"role": "user", "content": "hi"}], **kwargs)
+        except llm.LLMError as exc:
+            assert "Settings" in str(exc), str(exc)
+            continue
+        raise AssertionError(f"{kwargs} should have been refused before any network call")
+
+
+@test
+def test_the_socket_timeout_is_short_enough_to_notice():
+    """urllib's timeout is per read, not a total deadline, so it must not be a UI-freezing value.
+
+    A real endpoint answered /models in 0.5 s and then never answered a completion at all; with
+    the original 180 s this looked exactly like a hung application.
+    """
+    from ckwb import llm
+
+    assert llm.DEFAULT_TIMEOUT <= 90.0, llm.DEFAULT_TIMEOUT
+
+
 # ------------------------------------------------------------------- the FreeCAD entry points
 
 _WB = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

@@ -5,6 +5,47 @@ Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[
 Read this first every session; write it last. Log **decisions**, not just code — a decision that
 is not written down gets re-litigated, and the reason it was made is the expensive part.
 
+## 2026-10-15 (evening) — the planner stopped freezing FreeCAD
+
+A key was configured and the first real call went out. It never came back, and finding out why
+turned up two defects of mine plus one thing that is not mine.
+
+- `[broke]` **The planner call ran on FreeCAD's GUI thread.** A slow model froze the entire
+  application for as long as the request took — originally up to 180 s. The instance stopped
+  answering `execute_code` and had to be restarted. An unresponsive CAD application is not a
+  cosmetic problem: the user cannot even see what it is waiting for.
+- `[fix]` **The split follows what is actually thread-safe, not what is convenient.** The obvious
+  fix — run `plan()` in a worker — is wrong, because validation *builds the proposed parts* to
+  check their frames and driving OCCT off the GUI thread is unsafe. So `PlanSession` now owns the
+  fast, thread-bound half (prompting, parsing, validating, building) and `gui/worker.py` owns the
+  slow, thread-safe half (one HTTP call). `plan()` drives the session on one thread; the panel
+  drives the same object across a worker and a signal — one implementation, so the interactive
+  and scripted paths cannot diverge. The repair loop needs no special handling: it is a second
+  trip through the same pair.
+- `[feat]` A **Stop waiting** button, which says plainly that it cannot interrupt a socket read
+  already in flight — the request finishes in the background and its answer is discarded.
+  Pretending to cancel would be worse than saying so.
+- `[fix]` **`response_format: json_object` is only sent when the prompt contains "json".**
+  DeepSeek returns HTTP 400 otherwise: *"Prompt must contain the word 'json' in some form"*. The
+  planner's own prompt happens to satisfy it, which is luck rather than design, so it is now
+  checked — and a test asserts the SYSTEM prompt keeps the word, since losing it would silently
+  stop JSON mode being requested.
+- `[fix]` **`DEFAULT_TIMEOUT` 180 s → 60 s, and the docstring now says what it means.** urllib's
+  timeout is per socket operation, not a total deadline, so a server that accepts a connection
+  and then sends nothing stalls for that long *per read*. 180 s was indistinguishable from a
+  hang. A timeout now reports that the endpoint is reachable and the problem is not the URL or
+  the key, because those three failures look identical from the call site and need different
+  fixes.
+- `[test]` 4 client tests in the host suite (`llm.py` imports no FreeCAD): the json-mode guard,
+  the SYSTEM prompt keeping its json mention, refusal of an unconfigured endpoint before any
+  network call, and the timeout staying short enough to notice.
+- `[broke]` **Still no successful live completion, and it is not this code.**
+  `https://api.deepseek.com/v1/models` answers in 0.5 s and lists both `deepseek-flash` and
+  `deepseek-v4-pro`; `/v1/chat/completions` validates requests (a malformed one returned HTTP 400
+  in 0.4 s) — but a *valid* completion returns nothing, on both models, bounded to 16 output
+  tokens, timing out at 55 s. Route reachable, key accepted, request validated, no response. That
+  points at the provider side: status, quota or balance.
+
 ## 2026-10-15 (later still) — the planner, and an SFU1605
 
 Prompted by a user typing "a 500mm sfu1605 ball screw assembly" into the Describe panel and
