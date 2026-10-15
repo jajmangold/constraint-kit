@@ -21,17 +21,17 @@ Always: deterministic geometry verified by **tests, not the VLM**; provenance on
 Every `CkTask.requires = "sequential-thinking + atlas-update"`.
 
 ## Epics (9)
-| id | epic | thrust |
-|---|---|---|
-| E1 | geometry-richness | fillets/shells/sweeps/sheet-metal + real housings (parts aren't primitives) |
-| E2 | interface-grounding | derive stable named ports/mate-frames from geometry+intent (stop hand-authoring) |
-| E3 | scale-and-perf | spatial-index interference, build cache, parallel subtrees → thousands of parts |
-| E4 | engineering-depth | CG/inertia, tolerance stack-up, material/load checks ("will it work") |
-| E5 | spec-breadth | grow spec-compiler kinds (full ISO 286 interference, sections, codes) + reliable extraction |
-| E6 | domain-libraries | reusable automotive/architectural assembly-def packages |
-| E7 | manufacturing-outputs | GD&T drawings, exploded views, CAM exports, BOM documents |
-| E8 | lifecycle-and-packaging | parametric edit/re-solve, versioning, CI, subpackage reorg |
-| E9 | rule-validation | standards/code/design-rule checks fed by the spec compiler |
+| id | epic | thrust | state |
+|---|---|---|---|
+| E1 | geometry-richness | fillets/shells/sweeps/sheet-metal + real housings (parts aren't primitives) | fillet/chamfer/shell + housing done. **Lofts, sweeps and splines are not, and that is the blocker on expressing real parts** ([#15](../../issues/15)) |
+| E2 | interface-grounding | derive stable named ports/mate-frames from geometry+intent (stop hand-authoring) | geometric port-derivation done. Mate vocabulary is incomplete: no `prismatic`/`screw`/`belt`/`gear_rack` ([#11](../../issues/11)–[#14](../../issues/14)) |
+| E3 | scale-and-perf | spatial-index interference, build cache, parallel subtrees → thousands of parts | prefilter, build cache and parallel subtrees done |
+| E4 | engineering-depth | CG/inertia, tolerance stack-up, material/load checks ("will it work") | CG/inertia and tolerance stack-up done; **"will it work" now answered by the physics tier** (`constraint_kit/fea/`). Gaps: buckling ([#1](../../issues/1)), anisotropy ([#2](../../issues/2)) |
+| E5 | spec-breadth | grow spec-compiler kinds (full ISO 286 interference, sections, codes) + reliable extraction | ISO 286 incl. interference fits done. Deliberately parked — see PLAN.md §6 |
+| E6 | domain-libraries | reusable automotive/architectural assembly-def packages | loader + two libraries done |
+| E7 | manufacturing-outputs | GD&T drawings, exploded views, CAM exports, BOM documents | drawings, exploded views, BOM documents done. GD&T and CAM deliberately parked — PLAN.md §6 |
+| E8 | lifecycle-and-packaging | parametric edit/re-solve, versioning, CI, subpackage reorg | CI runner + re-solve done. **The real lifecycle gap is upstream: no STEP import** ([#10](../../issues/10)) |
+| E9 | rule-validation | standards/code/design-rule checks fed by the spec compiler | design rules + strength checks done. Next is manufacturing rules as optimizer *constraints* ([#18](../../issues/18)) |
 
 > **Ordering now lives in [`PLAN.md`](PLAN.md), and the live queue is
 > [GitHub issues](../../issues), milestoned by phase.** This table is the epic map, not the work list.
