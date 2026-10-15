@@ -48,6 +48,8 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
     voxel.py           #   Grid/Model/Result: chunked reduced assembly, direct|Jacobi-CG solve, von Mises
     sample.py          #   triangle soup -> occupancy by ray parity; dependency-free STL reader; OCC path
     convergence.py     #   Richardson extrapolation; refuses a non-monotone or non-geometric ladder
+    tet.py             #   INDEPENDENT reference: gmsh quadratic tets -> CalculiX (both ship in FreeCAD)
+    crosscheck.py      #   voxel vs tet: measures the gap and ATTRIBUTES it (too stiff / too soft / agree)
   massprops.py         # mass properties: exact CG + inertia tensor (OCC GProp, density-weighted) [T4.1]
   bom.py               # BOM document export (Markdown/CSV) from a build-tree roll-up [T7.3]
   drawing.py           # 2D drawing export [T7.2]: cross-section DXF + orthographic projection SVGs + overall dims
@@ -430,8 +432,12 @@ STEP import, closed-loop optimization — is in [`PLAN.md`](PLAN.md), which is w
 what to do next.
 
 - **PLAN Phase 0 — physics tier** ✅ `fea/`, 35 verified tests, `drivers/fea_part.py`. First real
-  result: the knee-exo gantry plate under its documented 764 N belt load is comfortable on stress
-  (SF 2.9) and **compliant** — >1 mm of give in series with the drive.
+  result, now CONVERGED and cross-validated against Gmsh + CalculiX (#3 closed): the knee-exo
+  gantry plate under its documented 764 N belt load deflects **4.57 mm** at **SF 1.06** — no
+  stress margin on a creep-aware allowable, and the compliance is the real finding. Two
+  solvers sharing no code agree on p99 stress to 0.5% (14.02 vs 14.10 MPa). Earlier figures of
+  SF 2.9 (lost load) and SF 0.75 (unconverged staircase) are superseded; see PLAN.md for why
+  each changed.
 - **Phase 0 — 3D assembly** ✅ plate/spur_gear/spacer, coincident+contact mates, STEP+GLB, Blender render, VLM QA, atlas.
 - **Phase 1 — 2D layout → DXF** ✅ rect_panel/disc/bracket, coincident+offset, DXF (per-part layers) + PNG preview, VLM QA, atlas.
 - **Phase 2 (cadquery-native) — engineering parts & mates.** ✅ `mesh` gear-mate (exact involute center

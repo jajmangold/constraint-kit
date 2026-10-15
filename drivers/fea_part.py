@@ -11,6 +11,13 @@ pushed IS the engineering; a tool that guesses produces a number that looks like
 not. The selector language is deliberately tiny -- conjunctions of `axis op value` in millimetres,
 e.g. `x>=-38 & y>=144 & y<=186` -- and is parsed, not eval'd.
 
+`--reference` solves the SAME problem a second time with body-fitted quadratic tetrahedra
+through Gmsh and CalculiX, and compares. Use it on any part whose answer matters, and always on
+one with thin walls: refining a lattice through a 3.45 mm wall does not converge, because whether
+the wall lands on element centres matters more than the pitch does. Measured on the knee-exo
+gantry plate, the voxel ladder read 83% and then 121% of the body-fitted deflection across one
+refinement step, while the body-fitted mesh settled to within 2% of itself over the same range.
+
 `--converge` solves a geometric ladder of three pitches and Richardson-extrapolates, so the
 output is a limit with an error bar rather than a number. A single voxel-FEA value is not a
 result: a trilinear hex locks in bending and a stair-stepped boundary concentrates stress, so
@@ -150,6 +157,7 @@ def analyse(path, pitch, mat, fixes, loads, method="auto"):
         "compliance": res.compliance,
         "seconds": time.perf_counter() - t0,
         "method": res.method,
+        "result": res,
     }
 
 
@@ -171,6 +179,10 @@ def main(argv=None):
     ap.add_argument("--tol", type=float, default=0.05, metavar="F",
                     help="remaining mesh error below which a result counts as converged")
     ap.add_argument("--method", default="auto", choices=("auto", "direct", "cg"))
+    ap.add_argument("--reference", nargs="?", type=float, const=0.0, metavar="PITCH",
+                    help="also solve the SAME problem with body-fitted quadratic tetrahedra "
+                         "through Gmsh + CalculiX and compare. Needs a STEP file (an STL has no "
+                         "solid to mesh). Omit the pitch to use the finest voxel pitch.")
     args = ap.parse_args(argv)
     sys.stdout.reconfigure(line_buffering=True)  # progress must be visible when piped
 
@@ -229,10 +241,90 @@ def main(argv=None):
         print("\nA voxel boundary concentrates stress, so the peak column is an upper bound "
               "and p99 is the structural signal.")
     fin = rows[-1]
+    if args.reference is not None:
+        _reference(args, mat, fixes, loads, rows)
     if fin["safety_factor"] < 1.0:
         print(f"\nFAIL: p99 stress {fin['stress_p99']:.1f} MPa exceeds the {mat[3]:.0f} MPa "
               f"allowable (SF {fin['safety_factor']:.2f}).")
     return 0
+
+
+def _all_of(fixes, p):
+    """The conjunction of every fix selector, as one mask."""
+    mask = fixes[0][0](p)
+    for sel, _ in fixes[1:]:
+        mask = mask & sel(p)
+    return mask
+
+
+def _reference(args, mat, fixes, loads, rows) -> None:
+    """Solve the same problem body-fitted, and compare.
+
+    Worth saying why this is a second solver rather than simply a finer voxel grid. On a part
+    with thin walls, refining the lattice does not converge: whether a 3.45 mm wall lands on
+    element centres matters more than the pitch does, so the sequence wanders instead of
+    settling. A conforming mesh puts nodes ON the wall faces, so the wall is the thickness it
+    actually is at every pitch. That is not a better approximation of the same thing — it is a
+    different question, answered correctly.
+    """
+    from constraint_kit.fea import crosscheck, tet
+
+    pitch = args.reference or rows[-1]["pitch"]
+    try:
+        tet.tools()
+    except tet.ToolchainMissing as exc:
+        print("\nNO REFERENCE: %s" % exc)
+        return
+    if args.part.lower().endswith(".stl"):
+        print("\nNO REFERENCE: --reference needs a STEP, BREP or IGES file. An STL is a "
+              "triangle soup with no solid to mesh. Convert it first; FreeCAD will, via "
+              "Part.makeSolid(Part.Shape().makeShapeFromMesh(mesh.Topology, 0.05)) — and check "
+              "the result matches the mesh volume to a fraction of a percent, because a "
+              "conversion that quietly heals a hole has changed the part.")
+        return
+
+    versions = tet.versions()
+    print("\nbody-fitted reference: gmsh %s + CalculiX %s, quadratic tetrahedra at %.2f mm"
+          % (versions["gmsh"], versions["ccx"], pitch))
+    E, nu, rho, allow, _ = mat
+    t0 = time.perf_counter()
+    try:
+        mesh = tet.mesh_cad(args.part, pitch=pitch)
+        ref = tet.solve(mesh, E=E, nu=nu, fix=lambda p: _all_of(fixes, p),
+                        load=(loads[0][0], loads[0][1]))
+    except Exception as exc:                                         # noqa: BLE001
+        print("  FAILED after %.0fs: %s" % (time.perf_counter() - t0, exc))
+        return
+
+    s99 = ref.von_mises_percentile(99.0)
+    true_mass = mesh.volume() * rho / 1000.0
+    print("  %d nodes / %d elements in %.0fs"
+          % (len(mesh.nodes), len(mesh.tets), time.perf_counter() - t0))
+    print("  mesh volume %.0f mm3 -> %.1f g; the voxel grid said %.1f g (%+.1f%%)"
+          % (mesh.volume(), true_mass, rows[-1]["mass_g"],
+             100.0 * (rows[-1]["mass_g"] / true_mass - 1.0) if true_mass else 0.0))
+    print("  deflection %.4f mm   p99 %.2f MPa   peak %.2f MPa   SF %.2f"
+          % (ref.max_displacement, s99, ref.peak_von_mises,
+             allow / s99 if s99 else math.inf))
+
+    if len(fixes) > 1 or len(loads) > 1:
+        print("  NOTE: several fix or load selectors were given. The reference applied the "
+              "conjunction of the fixes and only the FIRST load, so treat this as indicative "
+              "rather than the same problem.")
+        return
+    if any(axes != "xyz" for _, axes in fixes):
+        print("  NOTE: a per-axis restraint was given. The reference clamped all three axes, so "
+              "it reads stiffer than the voxel run by construction.")
+
+    voxel_result = rows[-1].get("result")
+    if voxel_result is not None:
+        try:
+            ag = crosscheck.compare(voxel_result, ref)
+        except crosscheck.NotComparable as exc:
+            print("\n  NOT COMPARABLE: %s" % exc)
+            return
+        print()
+        print("  " + ag.report().replace("\n", "\n  "))
 
 
 if __name__ == "__main__":

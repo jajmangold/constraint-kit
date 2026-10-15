@@ -6,6 +6,7 @@
 # silently reports a tier it did not run:
 #
 #   host      numpy + scipy only          physics, convergence, workbench core  -- ALWAYS gated
+#             (+ gmsh and ccx)            the independent-solver cross-check    -- skips if absent
 #   freecad   freecadcmd                  geometry, document, commands, agents  -- gated if found
 #   gui       a real FreeCAD window       toolbar, panels, the planner UI       -- CK_GUI=1
 #   live      a real model endpoint       plain English -> validated -> built   -- CK_LIVE=1
@@ -49,6 +50,7 @@ echo "=== host tier (numpy + scipy) ==="
 run "physics          tests/test_fea.py"            python tests/test_fea.py
 run "convergence      tests/test_convergence.py"    python tests/test_convergence.py
 run "workbench core   workbench/tests/test_core.py" python workbench/tests/test_core.py
+run "crosscheck      tests/test_crosscheck.py"    python tests/test_crosscheck.py
 
 echo "=== freecad tier ==="
 if [ -x "$FREECADCMD" ]; then

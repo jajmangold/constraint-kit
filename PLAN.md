@@ -198,6 +198,45 @@ refinement does. Refining out of it is impractical: 0.93 mm is already 336k DOF 
 is exactly the division of labour this phase assumed: the voxel tier for the loop, a conventional
 solver for the final figure.
 
+### The converged answer (2026-10-16, issue #3 closed)
+
+Gmsh 4.13 and CalculiX 2.22 ship inside FreeCAD, so the body-fitted solver cost no new
+dependency. Same geometry (STL → solid → STEP, volume preserved to 0.2 mm³ of 79,967), same
+boundary conditions, quadratic tetrahedra:
+
+| | 4.00 mm | 2.80 mm | 2.00 mm |
+|---|---|---|---|
+| nodes / C3D10 | 104,695 / 57,367 | 148,883 / 83,968 | 228,143 / 133,876 |
+| deflection, mm | 4.477 | 4.647 | 4.572 |
+| p99 stress, MPa | 12.98 | 14.10 | 14.10 |
+| safety factor | 1.16 | 1.06 | **1.06** |
+
+**This one converges.** Deflection settles inside 2%, and p99 stress is identical over the last
+refinement. The answer is **4.57 mm of deflection and SF 1.06.**
+
+**This is the third safety factor published for this part, so here is why each changed.**
+SF 2.9 was *wrong* — `Model.load` was dividing the force over empty padding, so a quarter of the
+764 N reached the structure. SF 0.75 was *not converged* — a staircase through a 3.45 mm wall,
+reported honestly as a lower bound and labelled as needing this analysis. SF 1.06 is converged,
+body-fitted, and cross-validated: at 1.30 mm pitch the voxel tier independently reads p99 of
+**14.02 MPa against the reference 14.10** — agreement to 0.5% from two solvers sharing no code.
+
+**The verdict on the part does not change; the reason does.** The plate is not 25% overstressed.
+It has **no stress margin at all** — SF 1.06 on a *creep-aware* allowable, under a sustained belt
+tension, in a printed part — and it gives **4.6 mm** in series with the knee drive. The
+compliance is the finding, and it is now a converged number rather than a lower bound. knee-exo's
+BOM had already moved the ball nut into the bought aluminium DSG16H housing on sourcing grounds;
+two independent solvers now agree the plate needs redrawing around it.
+
+**And the cross-check diagnosed the voxel tier rather than merely disagreeing with it.** Voxel
+deflection read 83% of the reference at 1.82 mm pitch and 121% at 1.30 mm — straddling it,
+which no discretisation story explains, since a locking element does not become compliant. The
+mass column says why: the grid carries +10.7% material at 1.82 mm and −1.3% at 1.30 mm. The
+staircase is not uniformly thickening the part, it is thickening some walls and thinning others,
+and with compliance going as `t⁻³` a single lattice layer off a 2.7-element wall moves local
+compliance by 4×. That is a *sampling* failure, not a convergence failure, and refining re-rolls
+it rather than fixing it.
+
 Two notes on believing any of it. The boundary conditions are an assumption — mine, stated on the
 command line, not inferred and not taken from the repo. And the Y restraint at the V-wheel arms
 carries no load at all; releasing it moved the answer by nothing, which locates the load path as

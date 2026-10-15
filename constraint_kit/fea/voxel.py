@@ -134,6 +134,12 @@ class Result:
     n_dof: int                      # size of the system actually solved
     residual: float                 # ||K u - f|| / ||f||, reported not assumed
     method: str
+    # The force actually written into the reduced system, summed over every node. Not the force
+    # the caller asked for -- the two differ whenever a selector catches a node the solve then
+    # discards, which is exactly how a cantilever once read a third of its true deflection with
+    # a residual of 9e-10. Reporting it is how a cross-check can tell a solver disagreement
+    # apart from two solvers being handed different problems.
+    applied_force: tuple = (0.0, 0.0, 0.0)
 
     @property
     def max_displacement(self) -> float:
@@ -418,6 +424,7 @@ class Model:
             n_dof=n_red,
             residual=residual,
             method=chosen,
+            applied_force=tuple(float(v) for v in self._force.sum(axis=0)),
         )
 
     def _von_mises(self, active: np.ndarray, u_full: np.ndarray) -> np.ndarray:

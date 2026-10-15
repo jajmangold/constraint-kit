@@ -137,6 +137,20 @@ with a 2s model".
   contribute no crossings at all, so a hole in one is invisible to the watertightness check.
 - **An absolute stress peak off a voxel model is a staircase artefact** as much as a structural
   fact. Use the 99th percentile; it moves with the structure.
+- **Voxel bending stress is systematically OPTIMISTIC by `pitch/h`, and that is a ceiling, not
+  an error.** Stress is evaluated at element *centres*; in bending it peaks at the *surface*. So
+  the largest stress a grid can even observe is the value at `h/2 − pitch/2` from the neutral
+  axis, which is `1 − pitch/h` of the extreme fibre. Measured against CalculiX on a 10 mm beam:
+  0.447 / 0.740 / 0.863 at pitch 5 / 2.5 / 1.25, against a prediction of 0.500 / 0.750 / 0.875.
+  **A safety factor read off a voxel bending stress is too high by that factor.** Four elements
+  through a thickness still over-states SF by a quarter. See
+  `tests/test_crosscheck.py::test_the_voxel_stress_bias_is_the_predicted_1_minus_pitch_over_thickness`.
+- **A non-converging voxel ladder on a thin-walled part is not a refinement problem.** Whether a
+  wall lands on element centres matters more than the pitch does. A 3.45 mm wall is 2.7 elements
+  at 1.30 mm pitch, and bending compliance goes as `t⁻³`, so gaining or losing one lattice layer
+  off that wall swings its local compliance by 4×. Refining does not fix this; it re-rolls the
+  dice. **Use `drivers/fea_part.py --reference`** — a body-fitted mesh puts nodes on the wall
+  faces, so the wall is the thickness it is at every pitch.
 - **`DIRECT_DOF_LIMIT` is shape-dependent and cannot be right for everything.** A slender beam
   factorises nearly banded and stays cheap far past the threshold; a cube is the opposite.
 - **Load applied to empty nodes silently vanishes.** A voxel grid is padded, so a selector like

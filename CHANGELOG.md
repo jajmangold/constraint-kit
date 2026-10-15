@@ -2,6 +2,75 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-16 (later again) — a second solver that shares no code with ours (closes #3)
+
+- `[feat]` **`fea/tet.py`** — an independent reference solver: Gmsh quadratic tetrahedra through
+  CalculiX. **Both ship inside FreeCAD 1.0** at `<FreeCAD>/bin/{gmsh,ccx}.exe`, so this cost no
+  new dependency at all; `CK_GMSH` / `CK_CCX` override, and a missing toolchain raises rather
+  than skipping, because a cross-check that quietly does not run reads as agreement.
+- `[feat]` **`fea/crosscheck.py`** — measures the gap and *attributes* it. Independent in every
+  way that matters: a different element family (C3D10 against our trilinear hexes), a different
+  mesh topology (conforming against staircased), a different assembly, a different linear solver
+  (SPOOLES against our CG/SuperLU). It reports rather than asserts, because when two solvers
+  disagree the useful output is the size and the direction of the gap.
+- `[feat]` **`drivers/fea_part.py --reference`** — one command, both solvers, formal comparison.
+- `[test]` **13 new tests**, in the order that matters: the reference is validated against closed
+  form *first* (1.0028× `PL³/3EI` on deflection, 0.935× `Mc/I` on p99 stress), and only then
+  used to judge anything. Plus `voxel.Result.applied_force`, so the comparison can tell a solver
+  disagreement apart from two solvers being handed different loads — the check that would have
+  caught the lost-load bug in one line instead of three days.
+
+### A safety-relevant systematic, found and then quantified
+
+- `[fix]` **Voxel bending stress is optimistic by `pitch/h`, and it is a ceiling rather than an
+  error.** Stress is evaluated at element *centres*; in bending it peaks at the *surface*. The
+  largest value a grid can observe is therefore the stress at `h/2 − pitch/2`, i.e. `1 − pitch/h`
+  of the extreme fibre. Measured against CalculiX on a 10 mm beam: **0.447 / 0.740 / 0.863** at
+  pitch 5 / 2.5 / 1.25, against a prediction of 0.500 / 0.750 / 0.875. Four elements through a
+  thickness still over-states the safety factor by a quarter. Refinement improves it; nothing
+  else does. Now a test, and a gotcha in `AGENTS.md`.
+
+### The gantry plate, converged — and the third safety factor for it
+
+- `[feat]` The question `PLAN.md` said needed this exact tool now has an answer. Body-fitted,
+  same geometry (STL → solid → STEP, volume preserved to 0.2 mm³ of 79,967), same BCs:
+
+  | | 4.00 mm | 2.80 mm | 2.00 mm |
+  |---|---|---|---|
+  | nodes / C3D10 | 104,695 / 57,367 | 148,883 / 83,968 | 228,143 / 133,876 |
+  | deflection, mm | 4.477 | 4.647 | 4.572 |
+  | p99 stress, MPa | 12.98 | 14.10 | 14.10 |
+  | safety factor | 1.16 | 1.06 | **1.06** |
+
+  **It converges**, where the voxel ladder did not. And the two tiers agree on stress to 0.5%:
+  the voxel run at 1.30 mm pitch reads p99 **14.02 MPa** against the reference **14.10**.
+- `[decision]` **Three published safety factors for one part, so each change is on the record.**
+  SF 2.9 was *wrong* (`Model.load` lost three quarters of the force to padding). SF 0.75 was
+  *not converged* (a staircase through a 3.45 mm wall, reported as a lower bound at the time and
+  flagged as needing this analysis). **SF 1.06 is converged, body-fitted and cross-validated.**
+- `[decision]` **The verdict on the part is unchanged; the reason is sharper.** It is not 25%
+  overstressed. It has *no stress margin* — SF 1.06 on a creep-aware allowable under sustained
+  belt tension in a printed part — and it gives **4.6 mm** in series with the knee drive. The
+  compliance was always the real finding and is now a converged number rather than a floor.
+- `[fix]` **And the cross-check diagnosed the voxel tier rather than merely disagreeing with it.**
+  Voxel deflection read 83% of the reference at 1.82 mm pitch and 121% at 1.30 mm — straddling
+  it, which no discretisation story explains, since a locking element does not become compliant.
+  The mass column says why: **+10.7% material at 1.82 mm, −1.3% at 1.30 mm.** The staircase
+  thickens some walls and thins others, and with bending compliance going as `t⁻³`, one lattice
+  layer off a 2.7-element wall moves local compliance by **4×**. That is a *sampling* failure,
+  not a convergence failure — refining re-rolls the dice rather than fixing it. Which is the
+  honest reason this phase always assumed a second solver for the final figure.
+- `[note]` Two traps worth keeping. **Gmsh native `.msh` node order for a 10-node tet is not
+  CalculiX order** — the mid-edge nodes on the fourth vertex are swapped, and the symptom is
+  `*ERROR in e_c3d: nonpositive jacobian determinant`, not a wrong answer. Rather than
+  hand-permute, `tet.py` asks Gmsh for its own Abaqus output and reads the element block from
+  that; and there is a test that a scrambled ordering still *fails* rather than being absorbed.
+  **The `.frd` parser must be fixed-width** (3 / 10 / 12 characters): splitting on whitespace
+  works until a six-figure node id meets a negative exponent and two fields run together.
+
+**235 tests across 13 suites.**
+
+
 Read this first every session; write it last. Log **decisions**, not just code — a decision that
 is not written down gets re-litigated, and the reason it was made is the expensive part.
 

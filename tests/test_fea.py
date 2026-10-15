@@ -431,6 +431,35 @@ def test_end_to_end_voxelised_cantilever_is_sane():
     assert res.peak_von_mises > res.von_mises_percentile(99) >= 0.0
 
 
+@test
+def test_a_result_reports_the_force_it_actually_applied():
+    """The accounting that would have caught the worst bug in this package.
+
+    `Model.load` divides a force over the nodes a selector matched, and a padded grid lets a
+    selector match empty space. Those nodes are dropped from the reduced system and their share
+    of the load vanishes with them. Measured once: 200 N asked for, 60.5 N applied, a converged
+    residual of 9e-10, and a cantilever deflection wrong by a factor of three. The division is
+    now over material nodes only, and the total is reported so the next version of that mistake
+    is visible in the output rather than inferable from a surprising answer.
+    """
+    grid = Grid(density=np.ones((8, 2, 2)), pitch=(1.0, 1.0, 1.0))
+    model = Model(grid, E=210000.0, nu=0.3)
+    model.fix(lambda p: p[:, 0] <= 0.0)
+    model.load(lambda p: p[:, 0] >= 8.0, (0.0, 0.0, -200.0))
+    r = model.solve()
+    assert abs(r.applied_force[2] + 200.0) < 1e-9, r.applied_force
+    assert abs(r.applied_force[0]) < 1e-12 and abs(r.applied_force[1]) < 1e-12, r.applied_force
+
+    # two loads accumulate rather than replace
+    model2 = Model(grid, E=210000.0, nu=0.3)
+    model2.fix(lambda p: p[:, 0] <= 0.0)
+    model2.load(lambda p: p[:, 0] >= 8.0, (0.0, 0.0, -200.0))
+    model2.load(lambda p: p[:, 0] >= 8.0, (50.0, 0.0, 0.0))
+    r2 = model2.solve()
+    assert abs(r2.applied_force[0] - 50.0) < 1e-9, r2.applied_force
+    assert abs(r2.applied_force[2] + 200.0) < 1e-9, r2.applied_force
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:
