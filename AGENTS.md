@@ -77,6 +77,7 @@ CK_GUI=1 CK_LIVE=1 tools/ci.sh   # ...plus a FreeCAD window and the configured m
 # host tier - numpy + scipy only, runs anywhere
 python tests/test_fea.py                   # physics        (23)
 python tests/test_convergence.py           # convergence    (16)
+python tests/test_cases.py                 # load cases     (16)
 python tests/test_printed.py               # FDM anisotropy (15)
 python tests/test_crosscheck.py            # vs gmsh+ccx    (15, skips if they are absent)
 python workbench/tests/test_core.py        # wb core        (32)
@@ -84,7 +85,7 @@ python workbench/tests/test_core.py        # wb core        (32)
 # freecad tier - needs freecadcmd
 freecadcmd workbench/tests/test_geometry.py # parts, mates   (30)
 freecadcmd workbench/tests/test_document.py # doc, checks    (16)
-freecadcmd workbench/tests/test_commands.py # commands, API  (30)
+freecadcmd workbench/tests/test_commands.py # commands, API  (33)
 freecadcmd workbench/tests/test_planner.py  # plan + repair  (15)
 freecadcmd workbench/tests/test_import.py   # STEP import    (14)
 freecadcmd workbench/tests/test_motion.py   # travel, sweep  (17)

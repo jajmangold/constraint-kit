@@ -447,6 +447,75 @@ def test_analyse_says_so_when_the_deflection_leaves_linear_theory_behind():
 
 
 @test
+def test_analyse_takes_several_load_cases_and_envelopes_them():
+    """A machine part does not have *a* load, and quoting one case's SF is a guess.
+
+    The envelope is elementwise, so the reported safety factor is never better than the worst
+    case — a part is safe only if it is safe everywhere under every load it will actually see.
+    """
+    doc = new_doc()
+    obj = D.make_part(doc, "plate", None, name="Beam")
+    obj.Width, obj.Depth, obj.Thickness = 120.0, 20.0, 12.0
+    doc.recompute()
+
+    out = registry.call("analyse", part="Beam", material="al6061", pitch=3.0,
+                        fix="x<=-58",
+                        cases=[{"name": "down", "load": "x>=58", "force": [0, 0, -400]},
+                               {"name": "side", "load": "x>=58", "force": [0, 300, 0]},
+                               {"name": "both", "load": "x>=58", "force": [0, 300, -400]}])
+    assert set(out["cases"]) == {"down", "side", "both"}, sorted(out["cases"])
+    for name, row in out["cases"].items():
+        assert row["max_disp_mm"] > 0 and row["stress_p99_mpa"] > 0, (name, row)
+
+    # the envelope bounds every case, so its SF is no better than the worst of them
+    worst_case_sf = min(15000.0 / r["stress_p99_mpa"] for r in out["cases"].values())
+    assert out["safety_factor"] <= min(
+        165.0 / r["stress_p99_mpa"] for r in out["cases"].values()) + 1e-6, out
+    assert worst_case_sf > 0
+    assert out["governing_case"] in out["cases"], out["governing_case"]
+    assert out["governs_by_element"], out
+    assert sum(out["governs_by_element"].values()) == out["elements"], out
+
+    # "both" is the vector sum of the other two, so it must govern
+    assert out["governing_case"] == "both", out["governing_case"]
+
+
+@test
+def test_analyse_refuses_cases_mixed_with_a_single_load():
+    """Two ways of saying the same thing, with different answers, is not a convenience."""
+    doc = new_doc()
+    D.make_part(doc, "plate", None, name="Beam")
+    doc.recompute()
+    try:
+        registry.call("analyse", part="Beam", material="al6061", pitch=4.0, fix="x<=-28",
+                      load="x>=28", force=[0, 0, -100],
+                      cases=[{"name": "a", "load": "x>=28", "force": [0, 0, -100]}])
+    except Exception as exc:                                        # noqa: BLE001
+        assert "cases" in str(exc).lower(), str(exc)
+        return
+    raise AssertionError("load/force alongside cases is ambiguous and must be refused")
+
+
+@test
+def test_analyse_refuses_a_malformed_case():
+    doc = new_doc()
+    D.make_part(doc, "plate", None, name="Beam")
+    doc.recompute()
+    for bad, expect in (
+            ([{"load": "x>=28", "force": [0, 0, -1]}], "name"),
+            ([{"name": "a", "force": [0, 0, -1]}], "load"),
+            ([{"name": "a", "load": "x>=28"}], "force"),
+            ([{"name": "a", "load": "x>=28", "force": [0, 0]}], "force")):
+        try:
+            registry.call("analyse", part="Beam", material="al6061", pitch=4.0,
+                          fix="x<=-28", cases=bad)
+        except Exception as exc:                                    # noqa: BLE001
+            assert expect in str(exc).lower(), (bad, str(exc))
+            continue
+        raise AssertionError("%s should have been refused" % bad)
+
+
+@test
 def test_analyse_refuses_an_unknown_part_and_an_unknown_material():
     doc = new_doc()
     D.make_part(doc, "plate", None, name="Beam")
@@ -469,10 +538,20 @@ def test_analyse_appears_in_the_mcp_schema_with_its_arguments():
     tools = {t["name"]: t for t in registry.schema()}
     assert "analyse" in tools, sorted(tools)
     props = tools["analyse"]["input_schema"]["properties"]
-    assert {"part", "material", "pitch", "fix", "load", "force"} <= set(props), sorted(props)
+    assert {"part", "material", "pitch", "fix", "load", "force",
+            "cases"} <= set(props), sorted(props)
     required = tools["analyse"]["input_schema"].get("required", [])
-    for name in ("part", "fix", "load"):
+    # `part` and `fix` are unconditionally required. `load` is NOT, because `cases` is the other
+    # way to say where the force goes -- the either/or is enforced at call time, where a schema
+    # cannot express it, and the test for that refusal is right above.
+    for name in ("part", "fix"):
         assert name in required, (name, required)
+    assert "load" not in required, (
+        "load must not be schema-required, or an agent reading the schema will conclude it "
+        "cannot use cases")
+    assert "cases" in props["cases"] or props["cases"].get("description"), props["cases"]
+    assert "envelope" in props["cases"]["description"].lower() \
+        or "elementwise" in props["cases"]["description"].lower(), props["cases"]
     # the description has to say the boundary conditions are the caller's to choose
     text = tools["analyse"]["description"].lower()
     assert "fix" in text or "boundary" in text or "held" in text, text

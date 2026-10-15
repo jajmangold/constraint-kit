@@ -143,7 +143,7 @@ def prepare(obj, pitch: float = 2.0, material: str = "petg") -> dict:
 
 
 def stiffness(obj, material: str = "petg", pitch: float = 2.0, *,
-              fix: str, load: str, force=(0.0, 0.0, -100.0)) -> dict:
+              fix: str, load: str = "", force=(0.0, 0.0, -100.0), cases=None) -> dict:
     """Solve one part for deflection and stress. Boundary conditions are arguments, never guessed.
 
     `fix` and `load` are selector expressions over node coordinates in millimetres, in the part's
@@ -155,29 +155,79 @@ def stiffness(obj, material: str = "petg", pitch: float = 2.0, *,
     `constraint_kit.fea.richardson`, which declines rather than inventing a limit.
     """
     bundle = prepare(obj, pitch=pitch, material=material)
-    return solve_prepared(bundle, fix=fix, load=load, force=force)
+    return solve_prepared(bundle, fix=fix, load=load, force=force, cases=cases)
 
 
-def solve_prepared(bundle: dict, *, fix: str, load: str,
-                   force=(0.0, 0.0, -100.0)) -> dict:
-    """The numpy half: voxelise the triangles and solve. Safe on any thread."""
+def _check_cases(cases) -> list:
+    """Validate load cases before any geometry is touched, and name what is wrong.
+
+    Each entry is `{"name", "load", "force"}`. Refused rather than defaulted: a case missing its
+    force would otherwise be solved as zero and report an infinite safety factor for a load
+    that was meant to be applied.
+    """
+    out = []
+    for i, entry in enumerate(cases):
+        if not isinstance(entry, dict):
+            raise ValueError("load case %d must be an object with name, load and force" % i)
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            raise ValueError("load case %d has no name; every case must be named so the "
+                             "envelope can say which one governs" % i)
+        where = str(entry.get("load") or "").strip()
+        if not where:
+            raise ValueError("load case %r has no load selector" % name)
+        force = entry.get("force")
+        if force is None or len(force) != 3:
+            raise ValueError("load case %r needs a force of exactly three components "
+                             "[fx, fy, fz] in newtons" % name)
+        if not any(float(v) for v in force):
+            raise ValueError("load case %r has a zero force, so it would report an infinite "
+                             "safety factor for a load that was meant to be applied" % name)
+        out.append((name, where, tuple(float(v) for v in force)))
+    if not out:
+        raise ValueError("cases was given but is empty")
+    seen = [n for n, _, _ in out]
+    if len(set(seen)) != len(seen):
+        raise ValueError("duplicate load case name(s): %s"
+                         % ", ".join(sorted({n for n in seen if seen.count(n) > 1})))
+    return out
+
+
+def solve_prepared(bundle: dict, *, fix: str, load: str = "",
+                   force=(0.0, 0.0, -100.0), cases=None) -> dict:
+    """The numpy half: voxelise the triangles and solve. Safe on any thread.
+
+    Either one `load`/`force`, or several named `cases` -- never both. The two are different
+    questions with different answers, and picking a reading on the caller behalf is how a
+    safety factor ends up meaning something that was never intended.
+    """
     fea = _import_fea()
     key = bundle["material"]
     E, nu, density, allowable, _note = MATERIALS[key]
     pitch = float(bundle["pitch"])
 
+    parsed = _check_cases(cases) if cases else None
     grid = fea.occupancy_from_triangles(bundle["triangles"], pitch, pad=1)
 
     model = fea.Model(grid, E, nu)
     for expr in (fix,) if isinstance(fix, str) else fix:
         sel, axes = _selector(expr)
         model.fix(sel, axes=axes)
-    load_sel, _axes = _selector(load)
-    model.load(load_sel, tuple(float(v) for v in force))
 
     # Inside FreeCAD the direct solver is unusable (see direct_solver_available); CG with a
     # Jacobi preconditioner is pure numpy and works. "auto" would pick direct below 80k DOF.
-    res = model.solve(method="auto" if direct_solver_available() else "cg")
+    method = "auto" if direct_solver_available() else "cg"
+    envelope = None
+    if parsed:
+        for name, where, vec in parsed:
+            sel, _axes = _selector(where)
+            model.load(sel, vec, case=name)
+        envelope = model.solve_cases(method=method)
+        res = envelope
+    else:
+        load_sel, _axes = _selector(load)
+        model.load(load_sel, tuple(float(v) for v in force))
+        res = model.solve(method=method)
     volume_cm3 = grid.material_volume / 1000.0
     peak = res.von_mises_percentile(99.0)
     out = {
@@ -187,7 +237,8 @@ def solve_prepared(bundle: dict, *, fix: str, load: str,
         "elements": int(len(res.active_elements)),
         "dof": int(res.n_dof),
         "method": res.method,
-        "residual": res.residual,
+        "residual": (res.residual if envelope is None
+                     else envelope.cases[envelope.worst_case_for_stress].residual),
         "volume_cm3": round(volume_cm3, 4),
         "mass_g": round(volume_cm3 * density, 3),
         "max_disp_mm": round(res.max_displacement, 6),
@@ -195,10 +246,13 @@ def solve_prepared(bundle: dict, *, fix: str, load: str,
         "stress_peak_mpa": round(res.peak_von_mises, 4),
         "allowable_mpa": allowable,
         "safety_factor": round(allowable / peak, 3) if peak > 0 else None,
-        "compliance": res.compliance,
+        "compliance": (res.compliance if envelope is None
+                       else envelope.cases[envelope.worst_case_for_stress].compliance),
         "direct_solver": direct_solver_available(),
         "note": "one mesh is not a converged answer; run a ladder and extrapolate",
     }
+    if envelope is not None:
+        out.update(_envelope_rows(envelope))
     out.update(_linearity(res.max_displacement, grid))
     if key in PRINTED:
         out.update(_interlayer(fea, res, allowable))
@@ -249,6 +303,29 @@ def _linearity(deflection: float, grid) -> dict:
             "stiffens as it deflects, so this figure OVERSTATES the movement -- read it as 'far "
             "too floppy', not as a number. Stiffen it and run again; nothing in this tier solves "
             "the large-displacement problem." % (deflection, span, 100.0 * ratio)),
+    }
+
+
+def _envelope_rows(envelope) -> dict:
+    """Per-case numbers plus which case governs each element.
+
+    The share-by-element line is the one worth reading: when more than one case appears in it,
+    no single case is the design case and the envelope is the only field that bounds the part.
+    """
+    governing = envelope.governing_case_per_element()
+    counts = {name: int((governing == name).sum()) for name in envelope.cases}
+    return {
+        "cases": {name: {"max_disp_mm": round(r.max_displacement, 6),
+                         "stress_p99_mpa": round(r.von_mises_percentile(99.0), 4),
+                         "stress_peak_mpa": round(r.peak_von_mises, 4),
+                         "applied_force_n": [round(v, 4) for v in r.applied_force]}
+                  for name, r in envelope.cases.items()},
+        "governing_case": envelope.worst_case_for_stress,
+        "governs_by_element": dict(counts),
+        "envelope_note": (
+            "stress is the ELEMENTWISE maximum over the cases, so the safety factor is never "
+            "better than the worst case. More than one name in governs_by_element means no "
+            "single case is the design case."),
     }
 
 

@@ -11,6 +11,11 @@ pushed IS the engineering; a tool that guesses produces a number that looks like
 not. The selector language is deliberately tiny -- conjunctions of `axis op value` in millimetres,
 e.g. `x>=-38 & y>=144 & y<=186` -- and is parsed, not eval'd.
 
+Several `--load` flags with `NAME=` prefixes become **load cases**, solved separately on one
+assembled matrix and enveloped elementwise. That last word is the point: one region of a part can
+be governed by the belt pull and another by the reaction, so the design field exists in none of
+the individual cases, and `max(case)` answers an easier question than the one being asked.
+
 `--reference` solves the SAME problem a second time with body-fitted quadratic tetrahedra
 through Gmsh and CalculiX, and compares. Use it on any part whose answer matters, and always on
 one with thin walls: refining a lattice through a 3.45 mm wall does not converge, because whether
@@ -119,14 +124,24 @@ def parse_selector(expr: str):
 
 
 def parse_load(spec: str):
-    """`y>=188 : 0,764,0` -> (selector, (fx, fy, fz)) in newtons."""
+    """`y>=188 : 0,764,0` -> (case, selector, (fx, fy, fz)). `belt=y>=188 : ...` names the case.
+
+    The case name comes before the selector rather than after the force, because that is the
+    order the sentence runs in: *the belt load acts here with this force*. An unnamed load has
+    `case=None` and is solved as the single default case, which is what a one-load analysis is.
+    """
+    name = None
+    head, sep, rest = spec.partition("=")
+    # `=` only names a case if it is not part of a comparison operator (`y>=188`).
+    if sep and not head.rstrip().endswith((">", "<", "!")) and head.strip():
+        name, spec = head.strip(), rest
     where, _, vec = spec.partition(":")
     if not vec.strip():
         raise ValueError(f"load needs a force vector after ':', got {spec!r}")
     parts = [float(v) for v in vec.split(",")]
     if len(parts) != 3:
         raise ValueError(f"load force must be 'fx,fy,fz', got {vec!r}")
-    return parse_selector(where), tuple(parts)
+    return name, parse_selector(where), tuple(parts)
 
 
 def build_grid(path: str, pitch: float, pad: int = 1) -> Grid:
@@ -144,22 +159,30 @@ def analyse(path, pitch, mat, fixes, loads, method="auto"):
     m = Model(grid, E, nu)
     for sel, axes in fixes:
         m.fix(sel, axes=axes)
-    for where, force in loads:
-        m.load(where, force)
-    res = m.solve(method=method)
+    named = any(name for name, _sel, _f in loads)
+    for name, where, force in loads:
+        m.load(where, force, case=name) if named else m.load(where, force)
+
+    # An Envelope exposes the same reporting surface a Result does -- max_displacement,
+    # peak_von_mises, von_mises_percentile, active_elements, n_dof, method -- so everything
+    # downstream reads the governing field without knowing which it was handed.
+    envelope = m.solve_cases(method=method) if named else None
+    res = envelope if named else m.solve(method=method)
     vol = grid.material_volume / 1000.0                      # cm3
     peak = res.von_mises_percentile(99.0)
     return {
         "pitch": pitch,
         "elements": int(len(res.active_elements)),
         "dof": res.n_dof,
+        "envelope": envelope,
         "volume_cm3": vol,
         "mass_g": vol * rho,
         "max_disp_mm": res.max_displacement,
         "stress_p99": peak,
         "stress_peak": res.peak_von_mises,
         "safety_factor": allow / peak if peak > 0 else math.inf,
-        "compliance": res.compliance,
+        "compliance": (res.compliance if envelope is None
+                       else envelope.cases[envelope.worst_case_for_stress].compliance),
         "seconds": time.perf_counter() - t0,
         "method": res.method,
         "result": res,
@@ -176,7 +199,10 @@ def main(argv=None):
                     help="restrain nodes, e.g. 'y<=125' or 'x>=24@xz' for "
                          "selected axes only; repeatable")
     ap.add_argument("--load", action="append", required=True, metavar="SELECTOR:fx,fy,fz",
-                    help="total force in N over the selected nodes; repeatable")
+                    help="total force in N over the selected nodes; repeatable. Prefix with "
+                         "'NAME=' to make it a named LOAD CASE, e.g. "
+                         "'belt=y>=188 : 0,764,0' -- cases are solved separately on one "
+                         "assembled matrix and enveloped elementwise")
     ap.add_argument("--converge", action="store_true",
                     help="also solve one level coarser and one finer, then Richardson-extrapolate")
     ap.add_argument("--ratio", type=float, default=1.4, metavar="R",
@@ -250,6 +276,9 @@ def main(argv=None):
         print("\nA voxel boundary concentrates stress, so the peak column is an upper bound "
               "and p99 is the structural signal.")
     fin = rows[-1]
+    if fin.get("envelope") is not None:
+        print()
+        print(fin["envelope"].report(allowable=mat[3]))
     if args.layers:
         _interlayer(args, mat, fin.get("result"), "voxel")
     if args.reference is not None:
@@ -373,7 +402,7 @@ def _reference(args, mat, fixes, loads, rows) -> None:
     try:
         mesh = tet.mesh_cad(args.part, pitch=pitch)
         ref = tet.solve(mesh, E=E, nu=nu, fix=lambda p: _all_of(fixes, p),
-                        load=(loads[0][0], loads[0][1]))
+                        load=(loads[0][1], loads[0][2]))
     except Exception as exc:                                         # noqa: BLE001
         print("  FAILED after %.0fs: %s" % (time.perf_counter() - t0, exc))
         return
@@ -391,8 +420,8 @@ def _reference(args, mat, fixes, loads, rows) -> None:
 
     if len(fixes) > 1 or len(loads) > 1:
         print("  NOTE: several fix or load selectors were given. The reference applied the "
-              "conjunction of the fixes and only the FIRST load, so treat this as indicative "
-              "rather than the same problem.")
+              "conjunction of the fixes and only the FIRST load (%s), so treat this as "
+              "indicative rather than the same problem." % (loads[0][0] or "unnamed"))
         return
     if any(axes != "xyz" for _, axes in fixes):
         print("  NOTE: a per-axis restraint was given. The reference clamped all three axes, so "

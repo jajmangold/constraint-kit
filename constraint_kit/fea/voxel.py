@@ -166,6 +166,100 @@ class Result:
         return float(np.percentile(self.von_mises, q))
 
 
+@dataclass(frozen=True)
+class Envelope:
+    """Several load cases solved on one matrix, and the field that bounds all of them.
+
+    The envelope is an **elementwise** maximum over the cases, and that is the whole reason this
+    class exists rather than a loop over `solve()`. A real part is governed in one region by one
+    load and in another region by a different one, so the design field exists in none of the
+    individual cases. `max(case.peak for case in cases)` would answer a different and easier
+    question, and `governing_case_per_element` is here so the distinction stays visible.
+
+    Displacement is reported per case rather than enveloped, deliberately: an envelope of
+    displacement magnitudes is not a displacement field of anything, and quoting it as one would
+    invite reading a shape off it that no load produces.
+    """
+
+    cases: dict                  # name -> Result, in declaration order
+    von_mises: np.ndarray        # (n_active,) elementwise max over every case
+    active_elements: np.ndarray
+    n_dof: int
+    method: str
+
+    def _stacked(self) -> np.ndarray:
+        return np.stack([r.von_mises for r in self.cases.values()])
+
+    def governing_case_per_element(self) -> np.ndarray:
+        """Which case drives each element. An array of names, so it can be read directly."""
+        names = np.array(list(self.cases), dtype=object)
+        return names[self._stacked().argmax(axis=0)]
+
+    @property
+    def peak_von_mises(self) -> float:
+        return float(self.von_mises.max()) if self.von_mises.size else 0.0
+
+    def von_mises_percentile(self, q: float = 99.0) -> float:
+        """A percentile of the ENVELOPE, for the same reason as on a single result."""
+        if self.von_mises.size == 0:
+            return 0.0
+        return float(np.percentile(self.von_mises, q))
+
+    @property
+    def max_displacement(self) -> float:
+        return max((r.max_displacement for r in self.cases.values()), default=0.0)
+
+    @property
+    def worst_case_for_displacement(self) -> str:
+        return max(self.cases, key=lambda n: self.cases[n].max_displacement)
+
+    @property
+    def worst_case_for_stress(self) -> str:
+        return max(self.cases, key=lambda n: self.cases[n].von_mises_percentile(99.0))
+
+    def governing(self, *, allowable: float, q: float = 99.0) -> tuple:
+        """`(case name, safety factor)` from the ENVELOPE, not from any single case.
+
+        The safety factor is the envelope's, so it is never better than the worst case — a part
+        is safe only if it is safe everywhere under every load it will actually see. The name is
+        the case that contributes most of it, which is what to go and look at.
+        """
+        if allowable <= 0.0:
+            raise ValueError(f"allowable must be positive, got {allowable}")
+        demand = self.von_mises_percentile(q)
+        sf = float("inf") if demand <= 0.0 else allowable / demand
+        return self.worst_case_for_stress, sf
+
+    def report(self, *, allowable: float | None = None, q: float = 99.0) -> str:
+        """The whole envelope as ASCII text, naming each case and what it governs."""
+        lines = ["%d load case(s) on one %d-DOF matrix (%s)"
+                 % (len(self.cases), self.n_dof, self.method),
+                 "  %-22s %10s %10s %10s" % ("case", "defl mm", "p%.0f MPa" % q, "peak MPa")]
+        for name, res in self.cases.items():
+            lines.append("  %-22s %10.4f %10.2f %10.2f"
+                         % (name[:22], res.max_displacement,
+                            res.von_mises_percentile(q), res.peak_von_mises))
+        lines.append("  %-22s %10s %10.2f %10.2f"
+                     % ("ENVELOPE", "-", self.von_mises_percentile(q), self.peak_von_mises))
+
+        governing = self.governing_case_per_element()
+        counts = {name: int((governing == name).sum()) for name in self.cases}
+        total = max(sum(counts.values()), 1)
+        share = ", ".join("%s %.0f%%" % (n, 100.0 * c / total)
+                          for n, c in sorted(counts.items(), key=lambda kv: -kv[1]) if c)
+        lines.append("  governs by element: " + share)
+        if len({n for n, c in counts.items() if c}) > 1:
+            lines.append("  More than one case governs, so no single case is the design case and "
+                         "the envelope is the only field that bounds the part.")
+        if allowable is not None:
+            name, sf = self.governing(allowable=allowable, q=q)
+            lines.append("  envelope SF %.2f against %.0f MPa allowable; %s contributes the peak"
+                         % (sf, allowable, name))
+            if sf < 1.0:
+                lines.append("  FAILS: the envelope exceeds the allowable.")
+        return "\n".join(lines)
+
+
 class Model:
     """A grid plus material, restraints and loads."""
 
@@ -188,6 +282,10 @@ class Model:
         n = grid.n_nodes
         self._fixed = np.zeros((n, 3), dtype=bool)
         self._force = np.zeros((n, 3), dtype=float)
+        # Named load cases, in declaration order. The unnamed `_force` above is NOT one of these:
+        # mixing the two is ambiguous (is the unnamed load in every case, or a case of its own?)
+        # and `solve_cases` refuses it rather than picking a reading.
+        self._cases: dict = {}
 
     # ---- restraints and loads -------------------------------------------------------------
 
@@ -233,7 +331,19 @@ class Model:
             mask[self.grid.element_nodes(active).ravel()] = True
         return mask
 
-    def load(self, where, force: tuple[float, float, float]) -> "Model":
+    def case(self, name: str) -> np.ndarray:
+        """Declare a load case and return its force vector, creating it if new.
+
+        Declaring one and never loading it is a mistake rather than an empty case, so
+        `solve_cases` refuses it by name -- a case that is silently zero would report a safety
+        factor of infinity for a load someone meant to apply.
+        """
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"a load case name must be a non-empty string, got {name!r}")
+        return self._cases.setdefault(name, np.zeros((self.grid.n_nodes, 3), dtype=float))
+
+    def load(self, where, force: tuple[float, float, float], *,
+             case: str | None = None) -> "Model":
         """Spread a TOTAL force vector equally over the selected nodes THAT CARRY MATERIAL.
 
         Equal division is a uniform-traction approximation. It is right for a pad or a flange
@@ -258,10 +368,12 @@ class Model:
                 f"the load selector matched {len(idx)} node(s) but none of them touch material "
                 "at this density threshold, so there is nothing to push on -- check the "
                 "coordinate bounds against the part's actual extent")
-        self._force[kept] += np.asarray(force, dtype=float) / len(kept)
+        target = self._force if case is None else self.case(case)
+        target[kept] += np.asarray(force, dtype=float) / len(kept)
         return self
 
-    def load_face(self, axis: str, side: str, force: tuple[float, float, float]) -> "Model":
+    def load_face(self, axis: str, side: str, force: tuple[float, float, float], *,
+                  case: str | None = None) -> "Model":
         """Spread a TOTAL force over one outer face of the grid with consistent nodal weights.
 
         Unlike `load`, this is exact rather than approximate. Uniform pressure on a bilinear
@@ -305,7 +417,8 @@ class Model:
         weight = np.zeros(grid.n_nodes)
         np.add.at(weight, nodes.ravel(), 1.0)
         total = weight.sum()
-        self._force += np.outer(weight / total, np.asarray(force, dtype=float))
+        target = self._force if case is None else self.case(case)
+        target += np.outer(weight / total, np.asarray(force, dtype=float))
         return self
 
     # ---- assembly -------------------------------------------------------------------------
@@ -363,22 +476,16 @@ class Model:
     def solve(self, *, method: str = "auto", tol: float = 1e-9,
               residual_tol: float = 1e-6, maxiter: int | None = None) -> Result:
         """Solve K u = f and report, never assume, the residual."""
-        grid = self.grid
         active = self._active()
-        if active.size == 0:
+        self._guard(active)
+        if self._cases:
             raise SolveFailure(
-                "no element exceeds the density floor -- the grid is empty at this threshold")
-        if not self._fixed.any():
-            raise SolveFailure(
-                "no restraints applied: the system has six rigid-body modes and is singular")
-        if not (self._fixed.any(axis=1) & self._material_nodes()).any():
-            raise SolveFailure(
-                "every restrained node sits in empty space, so nothing is actually held: the "
-                "restraint selector matched only padding outside the part")
+                "this model has named load cases (%s); call solve_cases() for them. solve() "
+                "would silently analyse none of them." % ", ".join(sorted(self._cases)))
         if not np.any(self._force):
             raise SolveFailure("no loads applied: the solution is trivially zero")
 
-        K, reduce_map, n_red, keep_flat = self._assemble(active)
+        K, _reduce_map, n_red, keep_flat = self._assemble(active)
         f = self._force.ravel()[keep_flat]
 
         if np.allclose(f, 0.0):
@@ -392,10 +499,6 @@ class Model:
 
         if chosen == "direct":
             u_red = spla.spsolve(K.tocsc(), f)
-            if not np.all(np.isfinite(u_red)):
-                raise SolveFailure(
-                    "direct solve produced non-finite displacements, which means the reduced "
-                    "system is singular -- the restraints do not remove all rigid-body motion")
         elif chosen == "cg":
             M = _preconditioner(K)
             u_red, info = spla.cg(K, f, rtol=tol, maxiter=maxiter or CG_MAX_ITER, M=M)
@@ -407,6 +510,103 @@ class Model:
         else:
             raise ValueError(f"method must be 'auto', 'direct' or 'cg', got {method!r}")
 
+        return self._finish(active, keep_flat, K, f, u_red, chosen, residual_tol, self._force)
+
+    def solve_cases(self, *, method: str = "auto", tol: float = 1e-9,
+                    residual_tol: float = 1e-6, maxiter: int | None = None) -> "Envelope":
+        """Solve every named load case on ONE assembled matrix, and envelope the results.
+
+        A real machine part does not have *a* load. The gantry plate carries belt tension when
+        the drive pulls and a reaction when it pushes; the gear cutter sees cutting force one way
+        and clamping force another. Analysing one of those and quoting its safety factor is a
+        guess dressed as an answer.
+
+        Two things make this more than a loop over `solve()`. **The matrix is assembled and
+        factorised once** -- neither depends on the load, and assembly is the expensive part on a
+        big grid, so four cases cost barely more than one. And **the envelope is elementwise**,
+        which is the engineering point: one region can be governed by one case and another region
+        by a different one, so the design field exists in none of the individual cases.
+        """
+        grid = self.grid
+        if self._cases and np.any(self._force):
+            raise SolveFailure(
+                "this model has named load cases AND an unnamed load. That is ambiguous -- the "
+                "unnamed load could belong to every case or be a case of its own, and the two "
+                "readings give different answers. Put it in each case explicitly, which also "
+                "makes it say so.")
+
+        cases = dict(self._cases)
+        if not cases:
+            if not np.any(self._force):
+                raise SolveFailure("no loads applied in any case: there is nothing to solve")
+            cases = {"default": self._force}
+
+        empty = [name for name, f in cases.items() if not np.any(f)]
+        if empty:
+            raise SolveFailure(
+                "load case(s) %s were declared and never loaded. A case that is silently zero "
+                "reports a safety factor of infinity for a load somebody meant to apply, so it "
+                "is refused rather than solved." % ", ".join(repr(n) for n in empty))
+
+        active = self._active()
+        self._guard(active)
+        K, _reduce_map, n_red, keep_flat = self._assemble(active)
+
+        chosen = method
+        if chosen == "auto":
+            chosen = "direct" if n_red <= DIRECT_DOF_LIMIT else "cg"
+
+        # One factorisation (or one preconditioner) shared by every right-hand side.
+        if chosen == "direct":
+            lu = spla.splu(K.tocsc())
+            back = lu.solve
+        elif chosen == "cg":
+            M = _preconditioner(K)
+
+            def back(rhs):
+                u, info = spla.cg(K, rhs, rtol=tol, maxiter=maxiter or CG_MAX_ITER, M=M)
+                if info != 0:
+                    raise SolveFailure(
+                        f"conjugate gradient stopped after {maxiter or CG_MAX_ITER} iterations "
+                        f"without reaching rtol={tol:.0e} on {n_red} DOF (info={info})")
+                return u
+        else:
+            raise ValueError(f"method must be 'auto', 'direct' or 'cg', got {method!r}")
+
+        results = {}
+        for name, force in cases.items():
+            f = force.ravel()[keep_flat]
+            if np.allclose(f, 0.0):
+                raise SolveFailure(
+                    f"every loaded node in case {name!r} is restrained or outside the material, "
+                    "so its reduced load vector is zero")
+            u_red = back(f)
+            results[name] = self._finish(
+                active, keep_flat, K, f, u_red, chosen, residual_tol, force)
+
+        stacked = np.stack([r.von_mises for r in results.values()])
+        return Envelope(cases=results, von_mises=stacked.max(axis=0),
+                        active_elements=active, n_dof=n_red, method=chosen)
+
+    def _guard(self, active: np.ndarray) -> None:
+        """The preconditions shared by `solve` and `solve_cases`, in one place."""
+        if active.size == 0:
+            raise SolveFailure(
+                "no element exceeds the density floor -- the grid is empty at this threshold")
+        if not self._fixed.any():
+            raise SolveFailure(
+                "no restraints applied: the system has six rigid-body modes and is singular")
+        if not (self._fixed.any(axis=1) & self._material_nodes()).any():
+            raise SolveFailure(
+                "every restrained node sits in empty space, so nothing is actually held: the "
+                "restraint selector matched only padding outside the part")
+
+    def _finish(self, active, keep_flat, K, f, u_red, chosen, residual_tol, force) -> Result:
+        """Turn a solved reduced vector into a Result, residual checked rather than assumed."""
+        if not np.all(np.isfinite(u_red)):
+            raise SolveFailure(
+                "the solve produced non-finite displacements, which means the reduced system is "
+                "singular -- the restraints do not remove all rigid-body motion")
         nf = float(np.linalg.norm(f))
         residual = float(np.linalg.norm(K @ u_red - f) / nf) if nf else 0.0
         if residual > residual_tol:
@@ -414,21 +614,18 @@ class Model:
                 f"solve returned a relative residual of {residual:.3e}, above the "
                 f"{residual_tol:.0e} limit -- treat the displacement field as unusable")
 
-        u_full = np.zeros(grid.n_nodes * 3)
+        u_full = np.zeros(self.grid.n_nodes * 3)
         u_full[keep_flat] = u_red
-        displacement = u_full.reshape(-1, 3)
-        compliance = float(f @ u_red)
         stress = self._stress(active, u_full)
-
         return Result(
-            displacement=displacement,
-            compliance=compliance,
+            displacement=u_full.reshape(-1, 3),
+            compliance=float(f @ u_red),
             active_elements=active,
             von_mises=self._von_mises_of(stress),
-            n_dof=n_red,
+            n_dof=int(len(f)),
             residual=residual,
             method=chosen,
-            applied_force=tuple(float(v) for v in self._force.sum(axis=0)),
+            applied_force=tuple(float(v) for v in force.sum(axis=0)),
             stress=stress,
         )
 

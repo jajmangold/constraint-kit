@@ -46,6 +46,7 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   fea/                 # PHYSICS TIER -- numpy+scipy ONLY, no CAD dep, runs on a bare host    [PLAN Phase 0]
     hex8.py            #   trilinear hex element, stiffness by 2x2x2 Gauss quadrature (not a pasted table)
     voxel.py           #   Grid/Model/Result: chunked reduced assembly, direct|Jacobi-CG solve, von Mises
+    #                      + Envelope: N load cases on ONE factorisation, ELEMENTWISE max
     sample.py          #   triangle soup -> occupancy by ray parity; dependency-free STL reader; OCC path
     convergence.py     #   Richardson extrapolation; refuses a non-monotone or non-geometric ladder
     printed.py         #   FDM anisotropy: traction on the LAYER PLANE (peel/shear), orientation ranking

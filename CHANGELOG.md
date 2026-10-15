@@ -2,6 +2,61 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-17 — several load cases, and the field that bounds all of them (closes #4)
+
+A real machine part does not have *a* load. The gantry plate carries belt tension when the drive
+pulls and a reaction when it pushes; the gear cutter sees cutting force one way and clamping force
+another. Analysing one of those and quoting its safety factor is a guess dressed as an answer.
+
+- `[feat]` **`Model.load(..., case="belt")` and `Model.solve_cases()` -> `Envelope`.** Two things
+  make this more than a loop over `solve()`:
+  - **The matrix is assembled and factorised ONCE.** Neither depends on the load, and assembly is
+    the expensive part on a big grid, so four cases cost barely more than one. Two tests measure
+    it rather than assuming it: one counts `_assemble` calls, the other counts `splu` calls and
+    then checks the four answers still scale linearly with their loads, which is what proves the
+    shared factorisation is not stale.
+  - **The envelope is an ELEMENTWISE maximum, not the worst single case.** This is the whole
+    engineering point: one region of a part can be governed by the belt pull and another by the
+    reaction, so the design field exists in *none* of the individual cases.
+    `governing_case_per_element()` keeps that visible, and there is a test that fails if anybody
+    simplifies it back to `max(case.peak for case in cases)`.
+- `[test]` **Superposition holds exactly**, which is what proves the multi-RHS path is right: in
+  linear elasticity the response to A+B must equal the response to A plus the response to B. That
+  is a property of the physics rather than of this code, so it catches the three ways a multi-RHS
+  solve goes wrong -- a mis-mapped reduced vector, a factorisation reused after the matrix
+  changed, and one case leaking into another. 16 tests in `tests/test_cases.py`.
+- `[feat]` **`drivers/fea_part.py --load "belt=y>=188 : 0,764,0"`** -- a `NAME=` prefix makes a
+  load a case. The `=` is only read as a case name when it is not part of a comparison, so
+  `y>=188` still parses as a selector. On the gantry plate with belt pull, reaction and gravity:
+
+  ```
+  3 load case(s) on one 25977-DOF matrix (direct)
+    case                      defl mm    p99 MPa   peak MPa
+    belt pull                 10.7126      18.41      47.03
+    reaction                  10.7126      18.41      47.03
+    gravity                    0.0523       0.08       0.18
+    ENVELOPE                        -      18.41      47.03
+    governs by element: belt pull 100%
+    envelope SF 0.81 against 15 MPa allowable
+  ```
+
+  Belt pull and reaction landing on identical stress is a correctness check, not a coincidence:
+  von Mises is sign-blind and the reaction is the negated belt load. Gravity at 1 N against 764 N
+  is correctly negligible, which is also worth being able to see rather than assume.
+- `[feat]` **The workbench `analyse` command takes `cases`** as a list of `{name, load, force}`,
+  and reports per-case rows plus `governing_case` and `governs_by_element`. Refused when mixed
+  with a single `load`/`force`, refused when a case is unnamed, has no selector, has a malformed
+  force, or has a zero force -- a case that is silently zero reports an infinite safety factor
+  for a load somebody meant to apply.
+- `[fix]` **`solve()` and `solve_cases()` now share `_guard` and `_finish`**, so there is one
+  precondition check and one Result-building path rather than two that can drift. `solve()` also
+  now refuses a model that has named cases, instead of silently analysing none of them.
+- `[fix]` A declared-but-unloaded case is refused **by name**, and mixing a named case with an
+  unnamed load is refused outright: is the unnamed load part of every case, or a case of its own?
+  Both readings are defensible and they give different answers, so this picks neither.
+
+**259 tests across 14 suites.**
+
 ## 2026-10-16 (finally) — connecting the loop: parameters to performance
 
 The physics tier was verified, cross-validated against CalculiX, and **unreachable**. `stiffness`

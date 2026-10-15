@@ -404,16 +404,23 @@ def sweep(moving: str, target: str, target_frame: str, moving_frame: str,
             "fix": {"type": str, "required": True,
                     "doc": "where it is HELD, as a selector over placed coordinates in mm: "
                            "'x<=-59', or 'x>=24@xz' to restrain two axes as a roller does"},
-            "load": {"type": str, "required": True,
-                     "doc": "where the force is applied, same selector language"},
+            "load": {"type": str, "default": "",
+                     "doc": "where the force is applied, same selector language. Use this for "
+                            "a single load; use `cases` for several"},
             "force": {"type": list, "default": [0.0, 0.0, -100.0],
                       "doc": "total force in newtons as [fx, fy, fz], divided over the "
                              "selected material nodes"},
+            "cases": {"type": list, "default": None,
+                      "doc": "several named LOAD CASES instead of one load: a list of "
+                             "{name, load, force}. Solved on one assembled matrix and "
+                             "enveloped ELEMENTWISE, so the reported safety factor is never "
+                             "better than the worst case and `governs_by_element` says whether "
+                             "any single case is the design case at all"},
             "material": {"type": str, "default": "petg",
                          "doc": "petg, pla, abs, al6061 or steel"},
             "pitch": {"type": float, "default": 2.0, "doc": "voxel pitch in mm"}})
-def analyse(part: str, fix: str, load: str, force: list = None,
-            material: str = "petg", pitch: float = 2.0) -> dict:
+def analyse(part: str, fix: str, load: str = "", force: list = None,
+            cases: list = None, material: str = "petg", pitch: float = 2.0) -> dict:
     """Is it strong enough? The question the agent surface could not previously ask.
 
     `physics.stiffness` existed and was verified against beam theory, and it was not a registered
@@ -433,8 +440,16 @@ def analyse(part: str, fix: str, load: str, force: list = None,
     from . import physics as _physics
 
     obj = _part(part)
+    if cases and (load or force not in (None, [0.0, 0.0, -100.0])):
+        raise ValueError(
+            "give either one load/force or several cases, not both. The two are different "
+            "questions with different answers, and choosing a reading for you is how a safety "
+            "factor comes to mean something nobody asked for.")
+    if not cases and not load:
+        raise ValueError("a load selector is needed, or a list of cases")
     out = _physics.stiffness(obj, material=material, pitch=float(pitch), fix=fix, load=load,
-                             force=tuple(float(v) for v in (force or [0.0, 0.0, -100.0])))
+                             force=tuple(float(v) for v in (force or [0.0, 0.0, -100.0])),
+                             cases=cases)
     return _checks._stamp(obj.Document, out)
 
 
