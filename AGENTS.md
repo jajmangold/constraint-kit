@@ -84,6 +84,9 @@ freecadcmd workbench/tests/test_document.py # doc, checks    (16)
 freecadcmd workbench/tests/test_commands.py # commands, API  (24)
 python workbench/tests/test_agent_end_to_end.py  # MCP, cross-process (4)
 
+# gui tier - opens a real FreeCAD window for ~30 s
+python workbench/tests/run_gui_tests.py    # qt layer       (15)
+
 # container tier
 bash tests/run.sh                          # kernel        (113, needs cadkit)
 
@@ -97,9 +100,16 @@ tier runs under `freecadcmd`. `test_kernel.py` needs `build123d`, `bd_warehouse`
 86/113 with the other 27 failing on imports, and that is expected, not a regression. `tools/ci.sh`
 knows the difference and reports a tier it could not run as SKIPPED, never as passed.
 
-**The Qt panels are not covered by any of it.** `ckwb/gui/spec.py` is tested (every button is
-checked against the command registry), and every GUI module is compile-checked, but the dock
-widgets and dialogs need a human to click. Say so rather than implying otherwise.
+**The Qt layer has its own tier**, because the untestable layer is where the real bugs were: two
+shipped in one day (InitGui raising on `__file__`, nine missing icons) and both were invisible to
+150 passing headless tests. `run_gui_tests.py` launches a real FreeCAD, drives the toolbar and all
+three panels, fakes the model call to exercise the worker-thread path, and quits. It is opt-in
+(`CK_GUI=1`) only because it opens a window — **run it before calling any GUI change done.**
+
+Write GUI assertions that can fail. The responsiveness test originally counted event-loop spins
+*after* `submit()` returned, which proves nothing about blocking; it now times `submit()` itself,
+and that was verified by mutation — making the worker synchronous reports "submit() took 2.30s
+with a 2s model".
 
 ## GOTCHAS THAT HAVE COST TIME
 

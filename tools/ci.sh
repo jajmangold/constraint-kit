@@ -7,7 +7,13 @@
 #
 #   host      numpy + scipy only          physics, convergence, workbench core  -- ALWAYS gated
 #   freecad   freecadcmd                  geometry, document, commands, agents  -- gated if found
+#   gui       a real FreeCAD window       toolbar, panels, the planner UI       -- CK_GUI=1
 #   container docker exec cadkit          the 113 kernel tests                  -- gated if up
+#
+# The gui tier opens a window for ~30 s, so it is opt-in (CK_GUI=1) rather than on by default --
+# but it is not optional in spirit. Two defects shipped in one day while the Qt layer had no
+# coverage, both invisible to every headless test, because FreeCADGui cannot be imported without
+# a display. Run it before calling GUI work done.
 #
 # A tier that cannot run is reported as SKIPPED, never as passed. A CI run that covers less than
 # you think is worse than one that fails.
@@ -53,6 +59,15 @@ else
   echo "[ci]   set FREECADCMD to its path. The workbench geometry, document, command and agent"
   echo "[ci]   suites are NOT covered by this run."
   skipped+=("freecad")
+fi
+
+echo "=== gui tier ==="
+if [ "${CK_GUI:-0}" = "1" ]; then
+  run "qt layer       workbench/tests/run_gui_tests.py"       python workbench/tests/run_gui_tests.py
+else
+  echo "[ci] gui tier SKIPPED — set CK_GUI=1 to run it (opens a FreeCAD window for ~30 s)."
+  echo "[ci]   the toolbar, the three panels and the planner UI are NOT covered by this run."
+  skipped+=("gui")
 fi
 
 echo "=== container tier ==="

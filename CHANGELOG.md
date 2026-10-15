@@ -5,6 +5,37 @@ Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[
 Read this first every session; write it last. Log **decisions**, not just code — a decision that
 is not written down gets re-litigated, and the reason it was made is the expensive part.
 
+## 2026-10-15 (night) — the untestable layer is now tested
+
+Closes the gap that produced the day's two worst bugs. Both shipped while 150 headless tests
+passed, because `FreeCADGui` cannot be imported without a display: `InitGui.py` raising on
+`__file__` so the workbench never appeared in the selector, and nine named pixmaps with no files.
+
+- `[test]` **A fourth CI tier that drives a real FreeCAD window.**
+  `workbench/tests/run_gui_tests.py` launches the application, runs `test_gui.py` inside it, and
+  reports; 15 tests in about 30 s, then it quits itself. Opt-in via `CK_GUI=1` only because it
+  opens a window — not because it is optional.
+- `[test]` Covers what had no coverage at all: the workbench registering and activating, the
+  toolbar's eight buttons with **every icon asserted non-null**, the menu, `IsActive` greying out
+  honestly with no document, the checks panel moving through *not-run → pass → stale*, a clash
+  rendering as a child row, the provenance panel grouping by origin and accepting a guess, the
+  settings dialog masking the key, and the Report view logging nothing.
+- `[test]` **The Describe panel's worker-thread path, with the model faked.** Propose, show,
+  approve, build; the repair round trip; a decline surfaced calmly with nothing built; and a
+  client failure reported as a sentence. No network, no key, no non-determinism.
+- `[decision]` **The settings lookup is patched, never written.** A GUI test that edited
+  `user.cfg` would overwrite a real endpoint and API key.
+- `[fix]` **The responsiveness test was weak and is now verified by mutation.** It originally
+  counted event-loop spins *after* `submit()` returned, which proves nothing — a blocking
+  `submit()` has finished blocking by then. It now times `submit()` itself, and both directions
+  were checked: making `ChatWorker.start()` synchronous fails exactly one test, with
+  *"submit() took 2.30s with a 2s model; it is blocking the GUI thread"*. A test that cannot fail
+  is worth nothing, so the ones that matter get mutated.
+- `[docs]` AGENTS.md gains the tier and the rule behind it: write GUI assertions that can fail,
+  and run this before calling any GUI change done.
+
+**169 tests across 9 suites.**
+
 ## 2026-10-15 (evening) — the planner stopped freezing FreeCAD
 
 A key was configured and the first real call went out. It never came back, and finding out why

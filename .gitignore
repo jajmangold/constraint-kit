@@ -25,3 +25,6 @@ training/*.jsonl
 
 # workbench scratch
 workbench/**/__pycache__/
+
+# gui test artefact
+workbench/tests/gui_result.txt

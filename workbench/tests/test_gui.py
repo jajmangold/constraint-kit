@@ -1,0 +1,455 @@
+# -*- coding: utf-8 -*-
+"""The Qt layer, driven inside a real FreeCAD GUI session.
+
+Launched by `run_gui_tests.py`, which starts FreeCAD, runs this, and reports. Not by freecadcmd:
+every assertion here needs a live `FreeCADGui`, a main window and a Qt event loop.
+
+This suite exists because the untestable layer is where the real bugs were. Two shipped in one
+day — `InitGui.py` raising on `__file__` so the workbench never appeared in the selector, and
+nine missing icons — and both were invisible to 150 passing tests because `FreeCADGui` cannot be
+imported headlessly. "Needs a human to click" was the problem, not an excuse for it.
+
+The model call is replaced with a fake, so the Describe panel's worker-thread path is exercised
+with no network: a plan is proposed, shown, approved and built, and the repair round trip is
+driven too. The settings lookup is patched rather than written, so the user's own configuration
+and API key are never touched.
+
+Results are written to a file because FreeCAD's stdout is not reliably captured.
+"""
+import os
+import sys
+import time
+import traceback
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(HERE) not in sys.path:
+    sys.path.insert(0, os.path.dirname(HERE))
+
+import FreeCAD
+import FreeCADGui
+from PySide import QtCore, QtWidgets
+
+OUT = os.environ.get("CK_GUI_RESULT") or os.path.join(HERE, "gui_result.txt")
+
+TESTS = []
+LOG = []
+
+
+def test(fn):
+    TESTS.append(fn)
+    return fn
+
+
+def pump(ms=60):
+    """Let Qt deliver queued signals. Needed because there is no running event loop here."""
+    deadline = time.time() + ms / 1000.0
+    while time.time() < deadline:
+        QtWidgets.QApplication.instance().processEvents()
+        time.sleep(0.005)
+
+
+def wait_for(predicate, timeout=20.0, what="condition"):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        QtWidgets.QApplication.instance().processEvents()
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"timed out after {timeout}s waiting for {what}")
+
+
+def main_window():
+    return FreeCADGui.getMainWindow()
+
+
+def new_doc(name="GuiTest"):
+    for existing in list(FreeCAD.listDocuments()):
+        FreeCAD.closeDocument(existing)
+    doc = FreeCAD.newDocument(name)
+    FreeCAD.setActiveDocument(name)
+    return doc
+
+
+def report_view_text():
+    for w in main_window().findChildren(QtWidgets.QTextEdit):
+        if w.objectName() == "Report view":
+            return w.toPlainText()
+    return ""
+
+
+# ------------------------------------------------------------------- registration and chrome
+
+@test
+def test_the_workbench_registers_and_activates():
+    """The bug that shipped: InitGui raised, so this was simply absent from the selector."""
+    assert "ConstraintKitWorkbench" in FreeCADGui.listWorkbenches(), \
+        sorted(FreeCADGui.listWorkbenches())
+    FreeCADGui.activateWorkbench("ConstraintKitWorkbench")
+    assert FreeCADGui.activeWorkbench().__class__.__name__ == "ConstraintKitWorkbench"
+
+
+@test
+def test_the_toolbar_has_eight_buttons_and_every_icon_resolves():
+    """The other bug that shipped: nine named pixmaps with no files, nine console warnings."""
+    from ckwb.gui import spec
+
+    bars = [b for b in main_window().findChildren(QtWidgets.QToolBar)
+            if b.windowTitle() == spec.TOOLBAR_NAME]
+    assert bars, f"no {spec.TOOLBAR_NAME!r} toolbar"
+    actions = [a for a in bars[0].actions() if not a.isSeparator()]
+    assert len(actions) == 8, [a.text() for a in actions]
+    blank = [a.text() for a in actions if a.icon().isNull()]
+    assert not blank, f"buttons with no icon: {blank}"
+
+
+@test
+def test_the_menu_is_present():
+    from ckwb.gui import spec
+
+    titles = [m.title() for m in main_window().menuBar().findChildren(QtWidgets.QMenu)]
+    assert spec.MENU in titles, titles
+
+
+@test
+def test_actions_are_disabled_when_there_is_nothing_to_act_on():
+    """Greying out honestly beats eight live buttons that all error."""
+    from ckwb.gui import actions, spec
+
+    for existing in list(FreeCAD.listDocuments()):
+        FreeCAD.closeDocument(existing)
+    pump()
+    bars = [b for b in main_window().findChildren(QtWidgets.QToolBar)
+            if b.windowTitle() == spec.TOOLBAR_NAME]
+    by_text = {a.text(): a for a in bars[0].actions() if not a.isSeparator()}
+    # Describe and Settings work with no document; the rest have nothing to do.
+    assert actions.DescribeCommand().IsActive() is True
+    assert actions.SettingsCommand().IsActive() is True
+    assert actions.InsertCommand().IsActive() is False
+    assert actions.CheckCommand().IsActive() is False
+
+
+# ----------------------------------------------------------------------------- checks panel
+
+@test
+def test_the_checks_panel_shows_not_run_then_results_then_stale():
+    """Staleness is the panel's whole claim; a green row must not outlive the edit."""
+    from ckwb.gui import panels
+    from ckwb.registry import registry
+
+    doc = new_doc()
+    panel = panels.show_panel("CK_ChecksPanel").widget()
+    panel.refresh()
+    pump()
+    assert "no checks" in panel.summary.text().lower(), panel.summary.text()
+
+    registry.call("insert_part", generator="plate", name="A")
+    panel.run()
+    pump()
+    assert panel.tree.topLevelItemCount() >= 3, panel.tree.topLevelItemCount()
+    rows = {panel.tree.topLevelItem(i).text(0): panel.tree.topLevelItem(i).text(1)
+            for i in range(panel.tree.topLevelItemCount())}
+    assert rows.get("interference") == "pass", rows
+    assert "passes" in panel.summary.text().lower(), panel.summary.text()
+
+    registry.call("set_param", part="A", name="thickness", value=20.0)
+    panel.refresh()
+    pump()
+    rows = {panel.tree.topLevelItem(i).text(0): panel.tree.topLevelItem(i).text(1)
+            for i in range(panel.tree.topLevelItemCount())}
+    assert set(rows.values()) == {"stale"}, rows
+    assert "changed" in panel.summary.text().lower(), panel.summary.text()
+
+
+@test
+def test_the_checks_panel_shows_a_clash_as_a_child_row():
+    from ckwb.gui import panels
+    from ckwb.registry import registry
+
+    doc = new_doc()
+    registry.call("insert_part", generator="plate", name="A")
+    registry.call("insert_part", generator="plate", name="B")
+    doc.getObject("B").Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0, 0, 4), FreeCAD.Rotation())
+    doc.recompute()
+
+    panel = panels.show_panel("CK_ChecksPanel").widget()
+    panel.run()
+    pump()
+    found = None
+    for i in range(panel.tree.topLevelItemCount()):
+        item = panel.tree.topLevelItem(i)
+        if item.text(0) == "interference":
+            found = item
+    assert found is not None and found.text(1) == "FAIL", found and found.text(1)
+    assert found.childCount() == 1, found.childCount()
+    assert "A" in found.child(0).text(2) and "B" in found.child(0).text(2)
+
+
+# ------------------------------------------------------------------------- provenance panel
+
+@test
+def test_the_provenance_panel_groups_by_origin_and_can_accept_a_guess():
+    from ckwb.gui import panels
+    from ckwb.registry import registry
+
+    new_doc()
+    registry.call("insert_part", generator="spacer", name="Sp")
+    FreeCADGui.Selection.clearSelection()
+    FreeCADGui.Selection.addSelection(FreeCAD.ActiveDocument.getObject("Sp"))
+    pump()
+
+    panel = panels.show_panel("CK_ProvenancePanel").widget()
+    panel.refresh()
+    pump()
+    assert "Sp" in panel.header.text(), panel.header.text()
+    assert "guessed" in panel.header.text(), panel.header.text()
+    groups = [panel.tree.topLevelItem(i).text(0)
+              for i in range(panel.tree.topLevelItemCount())]
+    assert "Guessed for you" in groups, groups
+
+    guessed = next(panel.tree.topLevelItem(i)
+                   for i in range(panel.tree.topLevelItemCount())
+                   if panel.tree.topLevelItem(i).text(0) == "Guessed for you")
+    before = guessed.childCount()
+    assert before >= 3, before
+    panel.tree.setCurrentItem(guessed.child(0))
+    panel.accept_selected()
+    pump()
+    assert "0 of" in panel.header.text() or str(before - 1) in panel.header.text(), \
+        panel.header.text()
+
+
+# ---------------------------------------------------------------------------- describe panel
+
+class FakeChat:
+    """Stands in for ckwb.llm.chat. Records calls; returns canned replies in order."""
+
+    def __init__(self, *replies, delay=0.0):
+        self.replies = list(replies)
+        self.calls = []
+        self.delay = delay
+
+    def __call__(self, messages, **kw):
+        self.calls.append(messages)
+        if self.delay:
+            time.sleep(self.delay)
+        if not self.replies:
+            raise AssertionError("the panel asked the model more often than expected")
+        return self.replies.pop(0)
+
+
+GOOD_PLAN = """{"parts": [
+    {"name": "Screw", "generator": "ball_screw",
+     "params": {"length": {"value": 500, "from_request": true},
+                "lead": {"value": 5, "from_request": true}}},
+    {"name": "Nut", "generator": "ball_nut", "params": {}}],
+ "mates": [{"kind": "align", "target": "Screw", "target_frame": "nut_travel",
+            "moving": "Nut", "moving_frame": "bore"}],
+ "notes": "SFU1605. Thread groove not modelled."}"""
+
+
+def describe_panel(cfg=None, chat=None):
+    """The panel with its settings and model call replaced. Never touches the real config."""
+    from ckwb import llm
+    from ckwb.gui import panels
+
+    panel = panels.show_panel("CK_DescribePanel").widget()
+    panels.llm_settings = lambda: dict(
+        cfg or {"base_url": "http://fake", "api_key": "", "planner_model": "fake-model",
+                "vision_model": ""})
+    if chat is not None:
+        llm.chat = chat
+    panel.refresh_model_label()
+    return panel
+
+
+@test
+def test_describe_says_so_when_no_model_is_configured_and_starts_no_worker():
+    new_doc()
+    panel = describe_panel(cfg={"base_url": "", "api_key": "", "planner_model": "",
+                                "vision_model": ""})
+    panel.entry.setText("a 500mm sfu1605 ball screw assembly")
+    panel.submit()
+    pump()
+    text = panel.transcript.toPlainText()
+    assert "No model endpoint is configured" in text, text[-300:]
+    assert panel._worker is None, "nothing should have been dispatched"
+    assert panel.build_btn.isEnabled() is False
+
+
+@test
+def test_describe_plans_off_thread_shows_the_program_and_builds_on_approval():
+    """The whole trust model, end to end: propose, show, approve, build.
+
+    Also the thread fix: the plan happens on a worker, so this drives the signal path rather
+    than the synchronous call that used to freeze the application.
+    """
+    doc = new_doc()
+    fake = FakeChat(GOOD_PLAN)
+    panel = describe_panel(chat=fake)
+    panel.entry.setText("a 500mm sfu1605 ball screw assembly")
+    panel.submit()
+
+    wait_for(lambda: panel.build_btn.isEnabled(), 30.0, "the program to arrive")
+    assert len(fake.calls) == 1, len(fake.calls)
+    program = panel.program.toPlainText()
+    assert panel.program.isVisible()
+    assert "ball_screw" in program and "500" in program, program[:300]
+    assert "stated" in program and "guessed" in program, program[:300]
+    # nothing built yet: the program is shown first, on purpose
+    assert not [o for o in doc.Objects if o.Name in ("Screw", "Nut")]
+
+    panel.build()
+    pump(200)
+    names = [o.Name for o in doc.Objects]
+    assert "Screw" in names and "Nut" in names, names
+    assert abs(doc.getObject("Screw").Length - 500.0) < 1e-9
+    assert panel.build_btn.isEnabled() is False, "Build must disarm once used"
+
+
+@test
+def test_describe_stays_responsive_while_the_model_is_slow():
+    """The defect this suite was written for: the GUI froze for the length of the request."""
+    new_doc()
+    delay = 2.0
+    fake = FakeChat(GOOD_PLAN, delay=delay)
+    panel = describe_panel(chat=fake)
+    panel.entry.setText("a plate")
+
+    # The direct measurement: submit() must HAND OFF, not wait. If the request ran on this
+    # thread, submit() could not return until the model did.
+    #
+    # An earlier version of this test counted event-loop spins after submit() returned, which
+    # proved nothing — a blocking submit() has already finished blocking by then. Verified by
+    # mutation: making the worker synchronous leaves the spin count untouched and trips this
+    # assertion instead.
+    t0 = time.time()
+    panel.submit()
+    handoff = time.time() - t0
+    assert handoff < delay / 2.0, (
+        f"submit() took {handoff:.2f}s with a {delay:.0f}s model; it is blocking the GUI thread")
+
+    assert panel.cancel_btn.isVisible(), "a Stop waiting button should be offered while waiting"
+    assert panel.entry.isEnabled() is False, "input should be disabled while waiting"
+
+    # And the loop really is alive while the model is slow.
+    spins = 0
+    deadline = time.time() + delay / 2.0
+    while time.time() < deadline:
+        QtWidgets.QApplication.instance().processEvents()
+        spins += 1
+        time.sleep(0.005)
+    assert spins > 20, f"the event loop only spun {spins} times while waiting"
+
+    wait_for(lambda: panel.build_btn.isEnabled(), 30.0, "the slow plan to arrive")
+    assert panel.cancel_btn.isVisible() is False
+
+
+@test
+def test_describe_repairs_once_and_says_that_it_did():
+    bad = '{"parts": [{"name": "X", "generator": "flux_capacitor", "params": {}}], "mates": []}'
+    new_doc()
+    fake = FakeChat(bad, GOOD_PLAN)
+    panel = describe_panel(chat=fake)
+    panel.entry.setText("a screw")
+    panel.submit()
+
+    wait_for(lambda: panel.build_btn.isEnabled(), 40.0, "the repaired program")
+    assert len(fake.calls) == 2, len(fake.calls)
+    text = panel.transcript.toPlainText()
+    assert "asking once more" in text.lower(), text[-400:]
+    assert "repaired once" in text.lower(), text[-400:]
+    repair_prompt = str(fake.calls[1])
+    assert "flux_capacitor" in repair_prompt
+
+
+@test
+def test_describe_surfaces_a_decline_calmly_and_builds_nothing():
+    doc = new_doc()
+    fake = FakeChat('{"unsupported": "no ball-screw thread form is modelled",'
+                    ' "nearest": "a plain 16 mm shaft"}')
+    panel = describe_panel(chat=fake)
+    panel.entry.setText("a ground C5 preloaded screw")
+    panel.submit()
+
+    wait_for(lambda: "will not build" in panel.transcript.toPlainText().lower(),
+             30.0, "the decline")
+    text = panel.transcript.toPlainText()
+    assert "thread form" in text and "plain 16 mm shaft" in text, text[-400:]
+    assert panel.build_btn.isEnabled() is False
+    assert panel.program.isVisible() is False
+    assert not doc.Objects, [o.Name for o in doc.Objects]
+
+
+@test
+def test_describe_reports_a_client_failure_as_a_sentence():
+    from ckwb.llm import LLMError
+
+    new_doc()
+
+    def boom(messages, **kw):
+        raise LLMError("the endpoint sent no response within 60s")
+
+    panel = describe_panel(chat=boom)
+    panel.entry.setText("a plate")
+    panel.submit()
+    wait_for(lambda: "did not work" in panel.transcript.toPlainText().lower(),
+             30.0, "the failure message")
+    assert "no response" in panel.transcript.toPlainText()
+    assert panel.build_btn.isEnabled() is False
+
+
+# ------------------------------------------------------------------------------- settings
+
+@test
+def test_the_settings_dialog_builds_without_touching_the_real_config():
+    from ckwb.gui import panels
+
+    dialog = panels.SettingsDialog(main_window())
+    try:
+        assert dialog.base.text() is not None
+        assert dialog.key.echoMode() == QtWidgets.QLineEdit.Password, \
+            "the API key must not be displayed in clear text"
+        assert "Agents" in dialog.agent_state.text()
+    finally:
+        dialog.reject()
+        dialog.deleteLater()
+    pump()
+
+
+# ------------------------------------------------------------------------------ the console
+
+@test
+def test_nothing_in_this_run_logged_an_error():
+    """A console full of warnings is how a real error gets overlooked."""
+    text = report_view_text()
+    bad = [ln for ln in text.splitlines()
+           if "Cannot find icon" in ln or "Traceback" in ln
+           or "[ConstraintKit] workbench failed" in ln]
+    assert not bad, "the Report view logged problems:\n" + "\n".join(bad[:10])
+
+
+def run():
+    passed, failed = 0, []
+    for fn in TESTS:
+        try:
+            fn()
+            passed += 1
+            LOG.append(f"  PASS  {fn.__name__}")
+        except Exception as exc:  # noqa: BLE001
+            failed.append(fn.__name__)
+            LOG.append(f"  FAIL  {fn.__name__}: {exc}")
+            LOG.append(traceback.format_exc())
+    LOG.append("")
+    LOG.append(f"{passed}/{passed + len(failed)} passed"
+               + (f"; FAILED: {failed}" if failed else ""))
+    LOG.append("EXIT 1" if failed else "EXIT 0")
+    with open(OUT, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(LOG) + "\n")
+
+
+try:
+    run()
+finally:
+    # Always quit, or a failing run leaves a FreeCAD window open forever.
+    QtCore.QTimer.singleShot(400, QtWidgets.QApplication.instance().quit)
