@@ -289,8 +289,15 @@ acceptance criteria.
 | 4 — manufacturing constraints | pieces exist in knee-exo `411_printability.py` | [#18](../../issues/18) |
 | 5 — topopt oracle | not started; `Grid.density` and SIMP interpolation already in place | [#19](../../issues/19) |
 | 6 — diagnosis / repair | structure exists in `validate.py`, causes do not | [#20](../../issues/20) |
-| 7 — agent surface | not started | [#21](../../issues/21) MCP · [#22](../../issues/22) retire the DSL |
-| — housekeeping | | [#23](../../issues/23) stale backlog · [#24](../../issues/24) dependency pins |
+| 7 — agent surface | **MCP delivered** ([#21](../../issues/21) closed); planner not wired | [#26](../../issues/26) planner in the Describe panel · [#22](../../issues/22) retire the DSL |
+| — the workbench | **built** — `workbench/`, 124 tests, installed via `install.py` | [#27](../../issues/27) Qt panel coverage · [#28](../../issues/28) Assembly joints · [#29](../../issues/29) requirements · [#30](../../issues/30) icons |
+| — housekeeping | | [#23](../../issues/23) closed · [#24](../../issues/24) dependency pins |
+
+**The workbench changed what Phase 2 means.** FreeCAD 1.0.2's Assembly solver already ships
+`Slider`, `Screw`, `Belt` and `RackPinion` — the four mates [#11](../../issues/11)–[#14](../../issues/14)
+were filed to implement — and `Part` already has `makeLoft`, `makePipeShell`, `makeThread` and the
+rest of the op set [#15](../../issues/15) wanted. All of it is scriptable headlessly. So Phase 2
+is largely wiring now rather than building, which is why the workbench was worth doing before it.
 
 **The critical path to an optimized machine is 1 -> 3.** Everything else is either already done
 (0), a prerequisite for describing the hardware at all (2), or an improvement to a loop that does
