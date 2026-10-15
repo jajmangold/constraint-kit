@@ -5,6 +5,95 @@ Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[
 Read this first every session; write it last. Log **decisions**, not just code — a decision that
 is not written down gets re-litigated, and the reason it was made is the expensive part.
 
+## 2026-10-15 — a FreeCAD workbench, and a load bug that mattered
+
+### The workbench (`workbench/`)
+
+- `[feat]` **A FreeCAD workbench built on FreeCAD's own `Part` kernel.** `python
+  workbench/install.py` links it into the Mod directory. One process, millisecond rebuilds, fully
+  headless-capable.
+- `[decision]` **Not cadquery, and not an out-of-process service.** FreeCAD 1.0.2 bundles OCCT
+  7.8.1; this stack runs OCP 7.9.3. Two OCCT builds cannot share a process, so importing cadquery
+  into FreeCAD is impossible and a service would mean marshalling STEP on every parameter edit.
+  Built on `Part` instead, a property change recomputes in milliseconds. Probed first: FreeCAD
+  ships numpy 1.26.4 and scipy 1.16.0, which is why the physics tier runs in-process unchanged.
+- `[decision]` **The `.FCStd` is a cache; `<Document>.params.json` is the source of truth.** This
+  is the discipline that keeps the workbench from re-creating the problem `PLAN.md` exists to
+  solve. Round-trip and byte-stability are tested as invariants, not assumed.
+- `[feat]` **Provenance rides on the property group**, so FreeCAD's own property editor IS the
+  provenance inspector — *You specified* / *Guessed for you* / *From a standard* / *Derived*, with
+  a `4 of 11 guessed` header and an explicit "accept this guess" action. No custom widget.
+- `[feat]` **One command registry for the toolbar, the palette and agents.** `ckwb/registry.py`
+  validates arguments, refuses unexpected ones, wraps every write in a single undo transaction
+  and aborts it on any exception, and generates the MCP tool list from itself. A test asserts
+  every toolbar button is backed by a registered command *and* that no command is unreachable
+  from the UI — so the two interfaces cannot drift.
+- `[feat]` **Eight toolbar entries, and that is the whole toolbar** (`ckwb/gui/spec.py`, declared
+  as data so it can be tested headlessly). The rest of the vocabulary is in the command palette.
+- `[feat]` **Part generators on `Part`**: plate with a bolt circle, spacer, bored block, shaft,
+  **involute spur gear**, 20x20 V-slot section, deep-groove bearing, ISO 4762 socket screw. Each
+  returns named mate frames, which is how a mate survives a parameter change instead of breaking
+  on a renamed face — the topological-naming problem sidestepped rather than fought.
+- `[feat]` **Mate kernel**: `seat` (faces in contact, gap exactly 0) and `align` (shared axis),
+  computed from frames rather than solved, so the same inputs always give the same placement. It
+  refuses an unplaced target, a double placement, and an unknown frame — and names the real
+  frames when it does.
+- `[feat]` **Checks with a fingerprint, so `stale` is a first-class state.** A stored verdict
+  carries a hash of the geometry it was computed against, including placements — moving a part
+  changes interference without changing any volume, so volume alone would miss it.
+- `[feat]` **Agent access**: MCP-shaped JSON-RPC on loopback, plus `workbench/mcp_bridge.py`
+  (stdlib only) speaking MCP on stdio for Claude Code, Codex and opencode. `claude mcp add
+  freecad -- python workbench/mcp_bridge.py`.
+- `[decision]` **Discovery never assumes a port**, for a reason this project paid for: instances
+  publish `~/.ck/instances/<pid>.json`, the port is found by connect-probing *before* binding, and
+  `allow_reuse_address` is off on Windows. Two servers are tested not to land on the same port.
+- `[test]` **124 tests across three tiers**, all green, wired into `tools/ci.sh` which reports a
+  tier it could not run as SKIPPED rather than passed. Host 59 (physics 21, convergence 16,
+  wb core 22) · FreeCAD 61 (geometry 21, document 16, commands 24) · cross-process 4.
+- `[test]` The agent path is tested **end to end across two processes and two Python versions** —
+  host 3.13 through the stdio bridge and a socket into FreeCAD's 3.11, building a 30-tooth gear
+  and reading its provenance back. Nothing mocked, because the boundary is what breaks.
+- `[broke]` **The Qt panels are not covered by any test.** The toolbar spec is tested and every
+  GUI module is compile-checked, but the dock widgets and dialogs need a human to click.
+
+### The load bug
+
+- `[fix]` **`Model.load` was silently losing force to empty nodes, and this invalidated the one
+  real result published yesterday.** A voxel grid is padded, so a selector like `x >= 59` catches
+  empty nodes beyond the part; `load` divided the total force across all selected nodes, and the
+  share landing on empty ones was dropped from the reduced system. Found by the workbench bridge,
+  where a cantilever read **0.288 mm against 0.968 mm of beam theory** — 200 N had arrived as
+  60.5 N. The solve converged to a residual of 9e-10 the whole time. Converged, plausible and
+  wrong by a factor of three is the worst failure this code can produce. Force is now divided
+  over material nodes only, and a restraint that holds nothing but padding raises.
+- `[test]` Two regression tests, one proving a padded grid and a bare grid now agree to within
+  2%, one proving a load with no material under it raises.
+- `[decision]` The lesson generalises past this bug: **when a selector feeds a physical quantity,
+  check what it actually caught.** The selector language was doing exactly what it was asked.
+- `[broke]` **The gantry-plate result published yesterday was wrong, and the corrected answer
+  reverses its conclusion.** Re-run with the load fix, same load case, pitches 1.82 / 1.30 / 0.93 mm:
+
+  | pitch mm | mass g | deflection mm | p99 MPa | SF |
+  |---|---|---|---|---|
+  | 1.82 | 112.4 | 2.832 | 13.89 | 1.08 |
+  | 1.30 | 100.2 | 3.463 | 16.32 | 0.92 |
+  | 0.93 | 101.6 | 4.558 | 19.99 | **0.75** |
+
+  Yesterday's figures (deflection 1.17 mm, p99 5.25 MPa, SF 2.9) were produced with roughly a
+  quarter of the intended force, because the load selector caught the empty padding around the
+  part. **Retract "stress is comfortable".** p99 exceeds the 15 MPa creep-aware PETG allowable at
+  every mesh below 1.8 mm, and the driver's own failure line now fires.
+- `[decision]` **Independent corroboration, which is the first real evidence this tier earns its
+  keep.** knee-exo's own BOM already concluded, on sourcing grounds, that the ball nut needed the
+  bought aluminium DSG16H housing because an aluminium face "does not creep under 764 N the way a
+  printed pocket does" — and that `P3_GantryPlate_Printed` has to be redrawn around it. The FEA
+  reaches the same verdict from geometry and a material allowable, with no knowledge of that
+  decision. Two independent methods agreeing is worth more than either alone.
+- `[broke]` Still not converged, and now adversely: deflection increments GROW (0.63 then 1.09
+  mm), so 4.56 mm is a lower bound and the trend is the wrong way. The caveats stand — the
+  boundary conditions are an assumption, not from the repo, and the analysed STL is a design the
+  repo has already superseded. A converged number needs a body-fitted mesh (issue #3).
+
 ## 2026-10-15 — the docs now match the code
 
 - `[docs]` **README was stale and is corrected.** It claimed "113 regression tests" in two places

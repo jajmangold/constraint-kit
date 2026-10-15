@@ -6,6 +6,10 @@ plan lives in [`PLAN.md`](PLAN.md); what changed and why lives in
 
 ## WHAT THIS IS
 
+Two things that share a doctrine. `constraint_kit/` is the kernel and `workbench/` is a FreeCAD
+workbench built on FreeCAD's own `Part` kernel, where the document is the live editing surface
+and a text params file is the source of truth.
+
 A kernel for building real machines: exact parametric B-rep geometry, a deterministic mate
 kernel, four solver classes, and a physics tier that says whether the thing is any good.
 The LLM decides *meaning*; deterministic math decides *geometry*. The model never places a vertex.
@@ -67,18 +71,35 @@ A loose tolerance on a single mesh passes for the wrong reasons.
 ## COMMANDS
 
 ```bash
-tools/ci.sh                      # everything available here; gates pushes. exit 0 = green
-python tests/test_fea.py         # physics tier      (host-capable: numpy + scipy only)
-python tests/test_convergence.py # convergence       (host-capable)
-bash  tests/run.sh               # kernel, 113 tests (needs the cadkit container)
+tools/ci.sh                      # all three tiers; gates pushes. exit 0 = green
 
-git config core.hooksPath .githooks   # enable the pre-push gate, once per clone
+# host tier - numpy + scipy only, runs anywhere
+python tests/test_fea.py                   # physics        (21)
+python tests/test_convergence.py           # convergence    (16)
+python workbench/tests/test_core.py        # wb core        (22)
+
+# freecad tier - needs freecadcmd
+freecadcmd workbench/tests/test_geometry.py # parts, mates   (21)
+freecadcmd workbench/tests/test_document.py # doc, checks    (16)
+freecadcmd workbench/tests/test_commands.py # commands, API  (24)
+python workbench/tests/test_agent_end_to_end.py  # MCP, cross-process (4)
+
+# container tier
+bash tests/run.sh                          # kernel        (113, needs cadkit)
+
+python workbench/install.py            # link the workbench into FreeCAD's Mod dir
+git config core.hooksPath .githooks    # enable the pre-push gate, once per clone
 ```
 
-**Two test tiers, on purpose.** `test_fea.py` and `test_convergence.py` run anywhere Python does.
-`test_kernel.py` needs `build123d`, `bd_warehouse`, `cq_gears`, `z3`, `python_solvespace` and
-`trimesh`, which live in the container — on a bare host it reports 86/113 with the other 27
-failing on imports, and that is expected, not a regression. `tools/ci.sh` knows the difference.
+**Three test tiers, on purpose.** The host tier needs nothing but numpy and scipy. The FreeCAD
+tier runs under `freecadcmd`. `test_kernel.py` needs `build123d`, `bd_warehouse`, `cq_gears`,
+`z3`, `python_solvespace` and `trimesh`, which live in the container — on a bare host it reports
+86/113 with the other 27 failing on imports, and that is expected, not a regression. `tools/ci.sh`
+knows the difference and reports a tier it could not run as SKIPPED, never as passed.
+
+**The Qt panels are not covered by any of it.** `ckwb/gui/spec.py` is tested (every button is
+checked against the command registry), and every GUI module is compile-checked, but the dock
+widgets and dialogs need a human to click. Say so rather than implying otherwise.
 
 ## GOTCHAS THAT HAVE COST TIME
 
@@ -94,5 +115,24 @@ failing on imports, and that is expected, not a regression. `tools/ci.sh` knows 
   fact. Use the 99th percentile; it moves with the structure.
 - **`DIRECT_DOF_LIMIT` is shape-dependent and cannot be right for everything.** A slender beam
   factorises nearly banded and stays cheap far past the threshold; a cube is the opposite.
+- **Load applied to empty nodes silently vanishes.** A voxel grid is padded, so a selector like
+  `x >= 59` catches empty nodes past the part; they are dropped from the reduced system, so any
+  share of the load given to them disappears. Measured: a cantilever read 0.288 mm against
+  0.968 mm of beam theory because 200 N arrived as 60.5 N — converged, residual 9e-10, plausible,
+  and wrong by three. `Model.load` now divides over material nodes only. The general lesson: when
+  a selector feeds a physical quantity, check what it actually caught.
+- **`freecadcmd` imports a script as a module named after its file.** `__name__` is
+  `"test_geometry"`, never `"__main__"`, so a guarded `main()` never runs and a suite exits 0
+  having tested nothing. The FreeCAD-side suites call `main()` unconditionally and say why.
+- **`sys.argv[1]` under `freecadcmd` is the script path**, not your first argument. Pass
+  parameters through the environment.
+- **scipy's sparse DIRECT solver does not work inside FreeCAD 1.0.2.** The bundle pairs numpy
+  1.26.4 with scipy 1.16.0 whose compiled SuperLU extension was built against a different numpy
+  ABI, so `spsolve` and `factorized` fail with `argument 3 must be numpy.ndarray, not
+  numpy.ndarray`. Pure-Python iterative solvers (`cg`, `minres`) and sparse matvec are fine.
+  `ckwb.physics.direct_solver_available()` probes this once rather than hardcoding it.
+- **Two OCCT builds cannot share a process.** FreeCAD 1.0.2 has OCCT 7.8.1; the host stack has
+  OCP 7.9.3. Never import cadquery or build123d inside FreeCAD. The workbench is built on
+  FreeCAD's own `Part` kernel for exactly this reason.
 - The repo's own hard-won geometry gotchas are in `CLAUDE.md`; the FreeCAD-side ones (BoundBox
   bounds control polygons, placement bakes into `Shape`) are in `PLAN.md` §2.

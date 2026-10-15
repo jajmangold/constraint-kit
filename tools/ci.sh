@@ -2,40 +2,71 @@
 # constraint-kit CI — the canonical "run all checks" entrypoint (gates pushes via .githooks/pre-push).
 # exit 0 = all green.
 #
-# Two tiers, on purpose. The physics tier needs only numpy + scipy, so it runs anywhere and is
-# ALWAYS gated. The kernel suite needs the container stack (build123d, bd_warehouse, cq_gears, z3,
-# python_solvespace, trimesh); on a bare host it fails 27 of 113 on imports, which is expected and
-# must not be read as a regression. So it runs only when cadkit is actually up, and its absence is
-# reported as skipped rather than passed -- a CI run that silently tests less than you think is
-# worse than one that fails.
+# Three tiers, each with a different dependency, and the point of this script is that it never
+# silently reports a tier it did not run:
+#
+#   host      numpy + scipy only          physics, convergence, workbench core  -- ALWAYS gated
+#   freecad   freecadcmd                  geometry, document, commands, agents  -- gated if found
+#   container docker exec cadkit          the 113 kernel tests                  -- gated if up
+#
+# A tier that cannot run is reported as SKIPPED, never as passed. A CI run that covers less than
+# you think is worse than one that fails.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+FREECADCMD="${FREECADCMD:-/c/Program Files/FreeCAD 1.0/bin/freecadcmd.exe}"
+
 fail=0
+ran=0
+skipped=()
+
 run() {   # run <label> <cmd...>
   local label="$1"; shift
   echo "[ci] $label ..."
-  if "$@"; then
-    echo "[ci] $label PASS"
+  if "$@" >/tmp/ck-ci.$$.log 2>&1; then
+    echo "[ci] $label PASS  ($(grep -cE '^  PASS' /tmp/ck-ci.$$.log) tests)"
+    ran=$((ran + 1))
   else
     echo "[ci] $label FAIL"
+    grep -E '^  FAIL|AssertionError|Error' /tmp/ck-ci.$$.log | head -12
     fail=1
   fi
+  rm -f /tmp/ck-ci.$$.log
 }
 
-run "physics tier (tests/test_fea.py)"          python tests/test_fea.py
-run "convergence (tests/test_convergence.py)"   python tests/test_convergence.py
+echo "=== host tier (numpy + scipy) ==="
+run "physics          tests/test_fea.py"            python tests/test_fea.py
+run "convergence      tests/test_convergence.py"    python tests/test_convergence.py
+run "workbench core   workbench/tests/test_core.py" python workbench/tests/test_core.py
 
-if docker exec cadkit true >/dev/null 2>&1; then
-  run "kernel suite (tests/run.sh, in cadkit)"  bash tests/run.sh
+echo "=== freecad tier ==="
+if [ -x "$FREECADCMD" ]; then
+  run "geometry        workbench/tests/test_geometry.py" "$FREECADCMD" workbench/tests/test_geometry.py
+  run "document        workbench/tests/test_document.py" "$FREECADCMD" workbench/tests/test_document.py
+  run "commands        workbench/tests/test_commands.py" "$FREECADCMD" workbench/tests/test_commands.py
+  run "agent end-to-end workbench/tests/test_agent_end_to_end.py" \
+      python workbench/tests/test_agent_end_to_end.py
 else
-  echo "[ci] kernel suite SKIPPED — the cadkit container is not running."
-  echo "[ci]   start it with: docker compose -f cadkit/docker-compose.yaml up -d"
-  echo "[ci]   the 113 kernel tests are NOT covered by this run."
+  echo "[ci] freecad tier SKIPPED — freecadcmd not found at:"
+  echo "[ci]   $FREECADCMD"
+  echo "[ci]   set FREECADCMD to its path. The workbench geometry, document, command and agent"
+  echo "[ci]   suites are NOT covered by this run."
+  skipped+=("freecad")
 fi
 
+echo "=== container tier ==="
+if docker exec cadkit true >/dev/null 2>&1; then
+  run "kernel          tests/run.sh (in cadkit)" bash tests/run.sh
+else
+  echo "[ci] container tier SKIPPED — the cadkit container is not running."
+  echo "[ci]   start it with: docker compose -f cadkit/docker-compose.yaml up -d"
+  echo "[ci]   the 113 kernel tests are NOT covered by this run."
+  skipped+=("container")
+fi
+
+echo
 if [ "$fail" -ne 0 ]; then
   echo "[ci] FAILED"
   exit 1
 fi
-echo "[ci] OK"
+echo "[ci] OK — $ran suite(s) green${skipped[*]+, skipped: ${skipped[*]}}"

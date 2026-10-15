@@ -349,6 +349,49 @@ tools/                 # utilities + ci.sh
 libraries/             # reusable assembly defs
 ```
 
+## The FreeCAD workbench
+
+```bash
+python workbench/install.py     # links into FreeCAD's Mod directory; edit in place
+```
+
+Describe a part, review the program, build it — in a 3D viewport you can already use, with a
+model tree, undo, measurement and an expression engine that came for free. Built on **FreeCAD's
+own `Part` kernel**, not cadquery: FreeCAD 1.0 bundles OCCT 7.8.1 and this stack runs OCP 7.9.3,
+and two OCCT builds cannot share a process. One process, millisecond rebuilds, fully headless.
+
+**Eight toolbar buttons, and that is the whole toolbar.** Describe · Insert · Join · Requirements
+· Check · Analyse · Export · Settings. The rest of the vocabulary lives in the command palette
+and tree context menus, because a workbench with forty buttons in six half-empty groups is worse
+than one with eight that always mean something.
+
+**Parameters are properties, and provenance rides on the property group.** A value the planner
+guessed lands in a group called *Guessed for you*; one you chose lands in *You specified*; one
+from a standard carries its ISO clause and the date it was resolved. FreeCAD's own property
+editor becomes the provenance inspector, with no custom widget — and the panel header reads
+`4 of 11 guessed`, so a guess can never pass for a decision.
+
+**The `.FCStd` is a cache. `<Document>.params.json` is the source of truth** — text, diffable,
+and what belongs in git. That discipline is what keeps a parametric project from decaying into a
+pile of one-way edits to a binary document.
+
+**Checks are a dock, not a modal, and `stale` is a first-class state.** Change the model and a
+green verdict goes grey rather than staying green. A stored result carries a fingerprint of the
+geometry it was computed against, so it cannot outlive the edit that invalidated it.
+
+### Agents drive it through the same commands you do
+
+```bash
+claude mcp add freecad -- python workbench/mcp_bridge.py
+```
+
+Everything the interface does is a registered command; the toolbar calls `registry.call(...)` and
+so does the MCP server. There is no button that reaches past the registry, which is what stops the
+human and agent interfaces from drifting apart — and it is enforced by a test, not by discipline.
+Agents get the same observability a human has, including `get_params` with provenance and
+`get_checks` with staleness. Discovery is via `~/.ck/instances/<pid>.json`; **no fixed port is
+ever assumed.**
+
 ## Documentation
 
 | file | what it is |

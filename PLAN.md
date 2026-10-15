@@ -174,30 +174,39 @@ HTD-8M grooves, reacted at the ball-nut end plate),** over pitches 1.82 / 1.30 /
 | | 1.82 mm | 1.30 mm | 0.93 mm |
 |---|---|---|---|
 | mass, g | 112.4 | 100.2 | 101.6 |
-| p99 stress, MPa | 3.42 | 4.73 | 6.06 |
-| safety factor | 4.39 | 3.17 | 2.48 |
-| deflection, mm | 0.696 | 1.005 | 1.381 |
+| p99 stress, MPa | 13.89 | 16.32 | 19.99 |
+| safety factor | 1.08 | 0.92 | **0.75** |
+| deflection, mm | 2.832 | 3.463 | 4.558 |
 
-**Stress has margin at every mesh. Deflection is the finding, and it is not converged:** the
-increments grow (+0.309 then +0.376), so `fea/convergence.py` declines to extrapolate. What can
-be said honestly is that the plate gives on the order of a millimetre or more, in series with the
-knee drive -- and that no hand calculation in the repo looks at it, because closed-form checks are
-per-feature and this is a whole-body load path.
+**The part does not pass its own documented load.** p99 stress exceeds the 15 MPa creep-aware
+PETG allowable at every mesh below 1.8 mm pitch, and deflection is on the order of several
+millimetres in series with the knee drive.
 
-**Why it will not converge here, and what that costs.** A 2% pitch change (0.910 -> 0.929 mm)
-moved deflection by 18% and mass by 2.6%. The 3.45 mm groove walls and the thin V-wheel arms are
-only three or four elements through, so whether a wall happens to land on element centres changes
-the stiffness more than the refinement does. Refining further is impractical: 0.93 mm is already
-336k DOF and 154 s. **This part needs a body-fitted mesh (Gmsh + CalculiX, issue #3) for a
-trustworthy number** -- which is exactly the division of labour this phase assumed: the voxel tier
-for the loop, a conventional solver for the final figure.
+**And the repo had already reached the same conclusion by another route.** knee-exo's BOM moved
+the ball nut into the bought aluminium DSG16H housing on sourcing grounds, noting that aluminium
+"does not creep under 764 N the way a printed pocket does", and that `P3_GantryPlate_Printed`
+must be redrawn around it. The FEA agrees from geometry and a material allowable alone, knowing
+nothing of that decision. Two independent methods reaching the same verdict is the first real
+evidence this tier earns its keep.
 
-Two notes on believing any of it: the boundary conditions are an assumption (mine, stated on the
-command line, not inferred), and the Y restraint at the V-wheel arms carries no load at all --
-releasing it moved the answer by nothing, which locates the load path as nut -> plate body ->
-groove wall.
+**What it still cannot tell you, and why.** The ladder is not converging — deflection increments
+*grow* (0.63 then 1.09 mm) — so 4.56 mm is a lower bound rather than an answer. A 2% pitch change
+moves it by double figures, because the 3.45 mm groove walls and thin V-wheel arms are three or
+four elements through and whether a wall lands on element centres matters more than the
+refinement does. Refining out of it is impractical: 0.93 mm is already 336k DOF and 139 s.
+**A converged number for this part needs a body-fitted mesh** (Gmsh + CalculiX, issue #3) — which
+is exactly the division of labour this phase assumed: the voxel tier for the loop, a conventional
+solver for the final figure.
 
+Two notes on believing any of it. The boundary conditions are an assumption — mine, stated on the
+command line, not inferred and not taken from the repo. And the Y restraint at the V-wheel arms
+carries no load at all; releasing it moved the answer by nothing, which locates the load path as
+nut -> plate body -> groove wall.
 
+**An earlier version of this section reported SF 2.9 and "stress is comfortable". That was wrong**
+and is retracted: `Model.load` was dividing the applied force across the grid's empty padding as
+well as its material, so roughly a quarter of the intended 764 N reached the structure. The solve
+converged cleanly throughout. See CHANGELOG 2026-10-15.
 
 ### Phase 1 — Parametric source of truth
 The precondition. Per machine, one program; the document becomes a build artifact.
