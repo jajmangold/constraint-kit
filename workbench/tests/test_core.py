@@ -20,6 +20,7 @@ The three things under test are the three load-bearing ideas of the workbench:
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import sys
@@ -316,6 +317,62 @@ def test_registry_aborts_the_transaction_when_a_command_raises():
     except RuntimeError:
         pass
     assert events == [("open", "boom"), ("abort",)], events
+
+
+# ------------------------------------------------------------------- the FreeCAD entry points
+
+_WB = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+@test
+def test_the_entry_points_never_reference_dunder_file():
+    """`__file__` is NOT defined when FreeCAD executes Init.py or InitGui.py.
+
+    This cost a silent failure that took a user opening FreeCAD to find. `InitGui.py` computed
+    `os.path.abspath(__file__)` at module level, raised NameError, and FreeCAD logged one line and
+    carried on — so the workbench simply did not appear in the selector. No dialog, no empty
+    toolbar, nothing to notice. The trap was already known and recorded in AGENTS.md, and applied
+    to Init.py but not to the file two directories away.
+
+    Checked by parsing, not by grepping. The first version of this test grepped and failed
+    against correct code, because both files *document* the trap in their docstrings — the word
+    appears in prose that never executes. An AST walk sees only real references.
+    """
+    for name in ("Init.py", "InitGui.py"):
+        with open(os.path.join(_WB, name), encoding="utf-8") as fh:
+            tree = ast.parse(fh.read(), filename=name)
+        hits = [n.lineno for n in ast.walk(tree)
+                if isinstance(n, ast.Name) and n.id == "__file__"]
+        assert not hits, (
+            f"{name} references __file__ at line(s) {hits}, and it is undefined when FreeCAD "
+            "execs the file; locate the directory by searching sys.path for the package instead")
+
+
+@test
+def test_initgui_wraps_everything_so_a_failure_is_reported():
+    """A bare statement outside the try takes the whole workbench down with one logged line.
+
+    FreeCAD reports an init failure as a single log line and carries on, so the only symptom is a
+    workbench missing from the selector. Nothing may sit outside the handler.
+    """
+    with open(os.path.join(_WB, "InitGui.py"), encoding="utf-8") as fh:
+        tree = ast.parse(fh.read(), filename="InitGui.py")
+    body = list(tree.body)
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body.pop(0)                        # the module docstring is inert
+    kinds = [type(n).__name__ for n in body]
+    assert kinds == ["Try"], (
+        f"InitGui.py's module body is {kinds}; it must be exactly one Try (plus a docstring). "
+        "Anything outside it removes the workbench with no visible error.")
+
+
+@test
+def test_the_toolbar_spec_has_no_qt_import():
+    """The spec must stay importable without a GUI, or it cannot be tested at all."""
+    with open(os.path.join(_WB, "ckwb", "gui", "spec.py"), encoding="utf-8") as fh:
+        body = fh.read()
+    for forbidden in ("import FreeCADGui", "from PySide", "import PySide"):
+        assert forbidden not in body, f"spec.py must not {forbidden}; it is the testable layer"
 
 
 def main():
