@@ -268,13 +268,23 @@ Each of these is defensible work that does not move a machine onto the bench:
 
 ## 7. Status
 
-| phase | state |
-|---|---|
-| 0 — physics core | **done** — `constraint_kit/fea/`, 19/19 verified, driver in `drivers/fea_part.py` |
-| 1 — parametric source | not started; gear-cutter nearly there |
-| 2 — kernel gaps | not started |
-| 3 — closed-loop optimization | not started |
-| 4 — manufacturing constraints | pieces exist in knee-exo |
-| 5 — topopt oracle | not started |
-| 6 — diagnosis / repair | structure exists, causes do not |
-| 7 — agent surface | not started |
+Tracked in GitHub issues, milestoned by phase. This table is the index; the issues carry the
+acceptance criteria.
+
+| phase | state | issues |
+|---|---|---|
+| 0 — physics core | **done** — `constraint_kit/fea/`, 35 tests verified against ground truth, driver in `drivers/fea_part.py` | [#1](../../issues/1) buckling · [#2](../../issues/2) anisotropy · [#3](../../issues/3) Gmsh/CalculiX cross-check · [#4](../../issues/4) load-case envelope · [#5](../../issues/5) AMG |
+| 1 — parametric source | not started; gear-cutter nearly there. **Blocked on a scope call: [#8](../../issues/8)** | [#6](../../issues/6) gear-cutter variants · [#7](../../issues/7) axis_x pattern · [#8](../../issues/8) knee-exo v9/v10 · [#9](../../issues/9) params + datums |
+| 2 — kernel gaps | not started | [#10](../../issues/10) STEP import · [#11](../../issues/11) prismatic · [#12](../../issues/12) screw · [#13](../../issues/13) belt · [#14](../../issues/14) gear_rack · [#15](../../issues/15) freeform |
+| 3 — closed-loop optimization | not started; needs Phase 1 for a machine to sweep | [#16](../../issues/16) build cache · [#17](../../issues/17) the optimizer |
+| 4 — manufacturing constraints | pieces exist in knee-exo `411_printability.py` | [#18](../../issues/18) |
+| 5 — topopt oracle | not started; `Grid.density` and SIMP interpolation already in place | [#19](../../issues/19) |
+| 6 — diagnosis / repair | structure exists in `validate.py`, causes do not | [#20](../../issues/20) |
+| 7 — agent surface | not started | [#21](../../issues/21) MCP · [#22](../../issues/22) retire the DSL |
+| — housekeeping | | [#23](../../issues/23) stale backlog · [#24](../../issues/24) dependency pins |
+
+**The critical path to an optimized machine is 1 -> 3.** Everything else is either already done
+(0), a prerequisite for describing the hardware at all (2), or an improvement to a loop that does
+not exist yet (4, 5). Phase 1 on `axis_x` ([#7](../../issues/7)) is days of work and establishes
+the pattern; `gear-cutter` ([#6](../../issues/6)) is close already. knee-exo waits on
+[#8](../../issues/8).
