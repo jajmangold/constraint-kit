@@ -1,0 +1,19 @@
+# Line endings are not cosmetic here. `cadkit/` bind-mounts this tree into a Linux container and
+# the shell scripts are executed there; a CRLF shebang fails with `\r: command not found`, which
+# reads as a missing interpreter rather than as a line-ending problem. core.autocrlf is true on
+# the Windows box this repo is developed on, so without this file a fresh clone would check out
+# CRLF copies of every script. Normalise to LF in the repo AND in the working tree.
+* text=auto eol=lf
+
+# Things that must never be touched by text conversion.
+*.png   binary
+*.jpg   binary
+*.gif   binary
+*.glb   binary
+*.stl   binary
+*.step  binary
+*.stp   binary
+*.FCStd binary
+*.gguf  binary
+*.pdf   binary
+*.sqlite binary
