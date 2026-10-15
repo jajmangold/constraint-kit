@@ -516,6 +516,196 @@ def test_analyse_refuses_a_malformed_case():
 
 
 @test
+def test_optimise_sizes_a_real_part_to_its_constraint_and_restores_the_document():
+    """The loop closed all the way: parameters -> geometry -> physics -> better parameters.
+
+    A PETG bracket, free to be between 4 and 20 mm thick, asked for the lightest version that
+    keeps a safety factor of 1.5. The answer must be ON the constraint (a lighter one would fail,
+    a heavier one is wasted material), and the command must put the part back how it found it --
+    it is declared read-only, and a search that silently leaves the model at its last trial
+    position is a side effect wearing a verdict as a disguise.
+    """
+    doc = new_doc()
+    obj = D.make_part(doc, "plate", None, name="Bracket")
+    obj.Width, obj.Depth, obj.Thickness = 120.0, 20.0, 10.0
+    doc.recompute()
+    before = obj.Thickness
+
+    out = registry.call(
+        "optimise", part="Bracket", material="petg", pitch=2.0, tol=1.0,
+        fix="x<=-58", load="x>=58", force=[0.0, 0.0, -60.0],
+        parameters=[{"name": "thickness", "low": 4.0, "high": 20.0}],
+        objective="mass_g",
+        constraints=[{"name": "strength", "metric": "safety_factor", "op": ">=",
+                      "limit": 1.5}])
+
+    assert out["feasible"] is True, out
+    t = out["best"]["thickness"]
+    assert 4.0 < t < 20.0, t
+    assert out["metrics"]["safety_factor"] >= 1.5 - 1e-3, out["metrics"]
+    # Tight against the constraint -- but only to within what the MESH can resolve. A voxel grid
+    # quantises the thickness, so SF is a staircase in it: at 2 mm pitch the treads are 2 mm
+    # wide, and the optimum can only sit on the first tread that passes. Demanding more than
+    # that of the search would be demanding it of the mesh, and an earlier version of this test
+    # did exactly that and failed against entirely correct code.
+    assert out["metrics"]["safety_factor"] < 1.5 * 1.8, (
+        "the optimum is more than a mesh tread inside the constraint: %s"
+        % out["metrics"]["safety_factor"])
+    assert not out["warnings"], (
+        "tol 1.0 against pitch 2.0 needs no warning: %s" % out["warnings"])
+    # `blocking`, not `active`: the mesh quantises the thickness, so the best feasible point
+    # sits on a tread strictly inside the constraint rather than exactly on it -- measured 21%
+    # inside. Strength is still unambiguously what refused every lighter design the search
+    # tried, and that is the useful claim and a provable one.
+    assert out["blocking_constraints"] == ["strength"], (
+        out["blocking_constraints"], out["metrics"]["safety_factor"])
+    assert out["evaluations"] >= 2, out["evaluations"]
+    assert "local" in out["report"].lower(), out["report"]
+
+    assert abs(obj.Thickness - before) < 1e-9, (
+        "the document was left at %s instead of the %s it started at"
+        % (obj.Thickness, before))
+
+
+@test
+def test_optimise_warns_when_the_mesh_is_too_coarse_for_the_tolerance():
+    """A search tolerance finer than the mesh can resolve is chasing a plateau.
+
+    Measured at 4 mm pitch on a 20 mm wide plate: thickness 7.0 and thickness 10.0 sample to the
+    same 300 elements and report the same safety factor to three decimals, because the voxeliser
+    rounds the thickness to a whole number of voxels. The search is then walking across a flat
+    tread and will stop wherever that tread ends, with an answer good to about one pitch. Saying
+    so is the difference between a result and a number.
+    """
+    doc = new_doc()
+    obj = D.make_part(doc, "plate", None, name="Bracket")
+    obj.Width, obj.Depth, obj.Thickness = 120.0, 20.0, 10.0
+    doc.recompute()
+
+    out = registry.call(
+        "optimise", part="Bracket", material="petg", pitch=4.0, tol=0.05,
+        fix="x<=-58", load="x>=58", force=[0.0, 0.0, -60.0],
+        parameters=[{"name": "thickness", "low": 4.0, "high": 20.0}],
+        objective="mass_g",
+        constraints=[{"name": "strength", "metric": "safety_factor", "op": ">=", "limit": 1.0}])
+    assert out["warnings"], "a 0.05 mm tolerance on a 4 mm mesh must be called out"
+    joined = " ".join(out["warnings"]).lower()
+    assert "pitch" in joined and "quantised" in joined, out["warnings"]
+
+
+@test
+def test_mass_comes_from_the_exact_geometry_not_the_voxel_count():
+    """A staircase is the wrong thing to weigh, and the gap between the two is a mesh signal.
+
+    The voxel count rounds the geometry to whole cells, so a voxel-derived mass is a step
+    function of the parameters -- which makes it both a wrong number to quote and a terrible
+    objective to minimise. The exact B-rep volume is free and smooth. Both are reported, because
+    their difference says whether this pitch is resolving the part at all.
+    """
+    doc = new_doc()
+    obj = D.make_part(doc, "plate", None, name="Slab")
+    obj.Width, obj.Depth, obj.Thickness = 120.0, 20.0, 9.0
+    doc.recompute()
+
+    out = registry.call("analyse", part="Slab", material="petg", pitch=4.0,
+                        fix="x<=-58", load="x>=58", force=[0.0, 0.0, -60.0])
+    exact = 120.0 * 20.0 * 9.0 / 1000.0 * 1.27          # cm3 -> g at PETG density
+    assert abs(out["mass_g"] - exact) < 1e-2, (out["mass_g"], exact)
+    assert out["voxel_mass_g"] != out["mass_g"], (
+        "at 4 mm pitch on a 9 mm plate the staircase cannot match the exact volume")
+    assert out["voxel_volume_error_pct"] is not None
+    assert abs(out["voxel_volume_error_pct"]) > 1.0, out["voxel_volume_error_pct"]
+
+    # and the exact mass must move when the thickness moves, even inside one voxel tread
+    D.set_param(obj, "thickness", 10.0)
+    doc.recompute()
+    again = registry.call("analyse", part="Slab", material="petg", pitch=4.0,
+                          fix="x<=-58", load="x>=58", force=[0.0, 0.0, -60.0])
+    assert again["mass_g"] > out["mass_g"] + 1e-6, (
+        "the exact mass is flat across a voxel tread, so it is still the voxel count")
+    assert again["voxel_mass_g"] == out["voxel_mass_g"], (
+        "this fixture needs the two thicknesses to voxelise identically, or it proves nothing")
+
+
+@test
+def test_optimise_can_be_constrained_to_designs_the_physics_is_valid_for():
+    """Without this, the lightest design in the box is very often one the solver cannot judge.
+
+    The physics is linear, so a part that deflects through a tenth of its own span is outside
+    what the solve can speak about -- and "lightest" pushes straight at that region, because
+    thin is light. `linear_valid` is reported as 1.0 / 0.0 so it can be constrained like
+    anything else, and the two runs below differ by exactly that constraint.
+    """
+    doc = new_doc()
+    obj = D.make_part(doc, "plate", None, name="Floppy")
+    obj.Width, obj.Depth, obj.Thickness = 160.0, 20.0, 12.0
+    doc.recompute()
+
+    common = dict(part="Floppy", material="petg", pitch=4.0, tol=1.0,
+                  fix="x<=-78", load="x>=78", force=[0.0, 0.0, -80.0],
+                  parameters=[{"name": "thickness", "low": 4.0, "high": 24.0, "step": 2.0}],
+                  objective="mass_g", max_evaluations=40)
+
+    loose = registry.call("optimise", constraints=[], **common)
+    assert loose["feasible"] is True, loose
+    # with nothing to satisfy, "lightest" walks to the thinnest allowed -- which is exactly the
+    # region where the linear answer stops meaning anything
+    assert loose["best"]["thickness"] <= 6.0, loose["best"]
+    assert loose["metrics"]["linear_valid"] == 0.0, (
+        "this fixture needs the unconstrained optimum to be outside linear validity, or it "
+        "proves nothing: %s" % loose["metrics"])
+
+    strict = registry.call(
+        "optimise",
+        constraints=[{"name": "small deflection", "metric": "linear_valid",
+                      "op": ">=", "limit": 1.0}],
+        **common)
+    assert strict["feasible"] is True, strict
+    assert strict["metrics"]["linear_valid"] == 1.0, strict["metrics"]
+    assert strict["best"]["thickness"] > loose["best"]["thickness"], (
+        strict["best"], loose["best"])
+    assert strict["blocking_constraints"] == ["small deflection"], \
+        strict["blocking_constraints"]
+
+
+@test
+def test_optimise_refuses_a_parameter_the_part_does_not_have():
+    doc = new_doc()
+    D.make_part(doc, "plate", None, name="Bracket")
+    doc.recompute()
+    try:
+        registry.call("optimise", part="Bracket", material="petg", pitch=6.0,
+                      fix="x<=-28", load="x>=28", force=[0, 0, -10],
+                      parameters=[{"name": "wibble", "low": 1.0, "high": 2.0}],
+                      objective="mass_g", constraints=[])
+    except Exception as exc:                                        # noqa: BLE001
+        assert "wibble" in str(exc), str(exc)
+        assert "thickness" in str(exc), "the real parameters should be listed: " + str(exc)
+        return
+    raise AssertionError("an unknown parameter must be refused, with the real ones named")
+
+
+@test
+def test_optimise_reports_an_unreachable_requirement_rather_than_the_nearest_miss():
+    """A safety factor nothing in the box can reach is a "no", and the "no" has to be legible."""
+    doc = new_doc()
+    obj = D.make_part(doc, "plate", None, name="Bracket")
+    obj.Width, obj.Depth, obj.Thickness = 120.0, 20.0, 6.0
+    doc.recompute()
+    out = registry.call(
+        "optimise", part="Bracket", material="petg", pitch=6.0,
+        fix="x<=-58", load="x>=58", force=[0.0, 0.0, -600.0],
+        parameters=[{"name": "thickness", "low": 4.0, "high": 6.0}],
+        objective="mass_g",
+        constraints=[{"name": "strength", "metric": "safety_factor", "op": ">=",
+                      "limit": 20.0}])
+    assert out["feasible"] is False, out
+    assert out["best"], "the nearest miss must still be reported, so the gap is visible"
+    assert out["violations"], out
+    assert "strength" in " ".join(out["violations"]), out["violations"]
+
+
+@test
 def test_analyse_refuses_an_unknown_part_and_an_unknown_material():
     doc = new_doc()
     D.make_part(doc, "plate", None, name="Beam")

@@ -453,6 +453,219 @@ def analyse(part: str, fix: str, load: str = "", force: list = None,
     return _checks._stamp(obj.Document, out)
 
 
+@registry.command(
+    "optimise",
+    "Find the best parameter values that still satisfy every requirement. You choose the "
+    "requirements; the search reports which one binds",
+    params={"part": {"type": str, "required": True},
+            "parameters": {"type": list, "required": True,
+                           "doc": "what may change: a list of {name, low, high, step?} in the "
+                                  "part own units. `step` puts it on a lattice -- a 0.8 mm wall "
+                                  "rather than 0.73"},
+            "objective": {"type": str, "default": "mass_g",
+                          "doc": "the metric to MINIMISE: mass_g, max_disp_mm, stress_p99_mpa "
+                                 "or compliance"},
+            "constraints": {"type": list, "default": None,
+                            "doc": "requirements as {name, metric, op, limit}, op being >= or "
+                                   "<=. e.g. {name: strength, metric: safety_factor, op: '>=', "
+                                   "limit: 1.5}"},
+            "fix": {"type": str, "required": True, "doc": "where the part is HELD"},
+            "load": {"type": str, "default": "", "doc": "where the force is applied"},
+            "force": {"type": list, "default": [0.0, 0.0, -100.0], "doc": "newtons [fx, fy, fz]"},
+            "cases": {"type": list, "default": None,
+                      "doc": "several named load cases instead of one load; the optimum is then "
+                             "taken against the ENVELOPE over them"},
+            "material": {"type": str, "default": "petg"},
+            "pitch": {"type": float, "default": 4.0,
+                      "doc": "voxel pitch in mm. Coarser than you would quote a result at: an "
+                             "optimizer wants many cheap evaluations, and the shape of the "
+                             "answer is what matters here. Re-analyse the winner properly"},
+            "size": {"type": str, "default": "",
+                     "doc": "optional: one parameter to BISECT to the constraint boundary while "
+                            "the rest are searched. The right choice when one dimension is pure "
+                            "sizing (a thickness) and the others are shape"},
+            "tol": {"type": float, "default": 0.05,
+                    "doc": "parameter tolerance in mm. 0.05 is finer than a printer holds"},
+            "max_evaluations": {"type": int, "default": 60,
+                                "doc": "budget. Each evaluation is a mesh and a solve, so this "
+                                       "is a wall-clock decision"}})
+def optimise(part: str, parameters: list, fix: str, objective: str = "mass_g",
+             constraints: list = None, load: str = "", force: list = None,
+             cases: list = None, material: str = "petg", pitch: float = 4.0,
+             size: str = "", tol: float = 0.05, max_evaluations: int = 60) -> dict:
+    """Parameters -> geometry -> physics -> better parameters, closed.
+
+    Everything this needs already existed and was verified separately: `set_param` rebuilds the
+    geometry from a parameter, `analyse` says whether the result holds, and
+    `constraint_kit.optimise` does the search against closed-form optima in its own suite. This
+    is the wiring, and the wiring is the point -- a loop that is not connected is not a loop.
+
+    Three things it is careful about.
+
+    **It is declared read-only and keeps the promise.** A search sets parameters dozens of
+    times; every one is restored in a `finally`, because a search that leaves the model at its
+    last trial value has edited the document while reporting a verdict.
+
+    **The pitch is deliberately coarse.** An optimizer wants many cheap evaluations, and what it
+    needs from each is the right *shape* of answer, not a quotable number. Re-run `analyse` on
+    the winner at a proper pitch -- and the report says so.
+
+    **The binding constraint is the real output.** Knowing the answer is 7.3 mm is useful;
+    knowing that stiffness rather than strength stopped you is what tells you to add a rib
+    instead of more material.
+
+    One constraint worth adding by default on a flexible part:
+    `{"name": "small deflection", "metric": "linear_valid", "op": ">=", "limit": 1.0}`. The
+    physics is linear, so a design that deflects through a tenth of its own span is outside what
+    the solver can speak about -- and without that constraint the lightest design in the box is
+    very often exactly such a design. Booleans are reported as 1.0 / 0.0 precisely so this can
+    be written.
+    """
+    import sys as _sys
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+    if root not in _sys.path:
+        _sys.path.insert(0, root)
+    from constraint_kit import optimise as _opt
+
+    obj = _part(part)
+    doc = obj.Document
+    meta = _doc.paramset_of(obj)
+    known = sorted(name for name, _v in meta.items())
+
+    specs = []
+    for i, entry in enumerate(parameters or []):
+        if not isinstance(entry, dict):
+            raise ValueError("parameter %d must be an object with name, low and high" % i)
+        name = str(entry.get("name") or "").strip()
+        if name not in meta:
+            raise ValueError(
+                "%s has no parameter %r; it has %s" % (part, name, ", ".join(known)))
+        specs.append(_opt.Parameter(name=name, low=float(entry["low"]),
+                                    high=float(entry["high"]),
+                                    step=(float(entry["step"]) if entry.get("step") else None)))
+    if not specs:
+        raise ValueError("at least one parameter must be free to change")
+
+    wants = []
+    for i, entry in enumerate(constraints or []):
+        if not isinstance(entry, dict):
+            raise ValueError("constraint %d must be an object with name, metric, op and limit" % i)
+        wants.append(_opt.Constraint(name=str(entry.get("name") or "c%d" % i),
+                                     key=str(entry["metric"]),
+                                     op=str(entry["op"]),
+                                     limit=float(entry["limit"])))
+
+    original = {p.name: _doc.paramset_of(obj)[p.name].value for p in specs}
+
+    # A voxel grid quantises the geometry, so the search cannot resolve a parameter finer than
+    # the mesh can see it. Measured at 4 mm pitch: a plate 7 mm thick and one 10 mm thick sample
+    # to the same 300 elements and report the same safety factor to three decimals. Asking for
+    # 0.05 mm from that is chasing a plateau, and the answer that comes back is only good to
+    # about one pitch. Said rather than enforced -- a coarse search is a legitimate choice -- but
+    # never left for the reader to discover.
+    warnings = []
+    if float(tol) < float(pitch) / 2.0:
+        warnings.append(
+            "tol is %.3g mm but the voxel pitch is %.3g mm, so the geometry is quantised far "
+            "more coarsely than the search tolerance. The result is resolved to about one pitch, "
+            "not to tol; either coarsen tol or refine the pitch."
+            % (float(tol), float(pitch)))
+
+    def evaluate(x: dict) -> dict:
+        for name, value in x.items():
+            _doc.set_param(obj, name, value)
+        doc.recompute()
+        return _physics_stiffness(obj, material, pitch, fix, load, force, cases)
+
+    try:
+        if size:
+            if size not in {p.name for p in specs}:
+                raise ValueError(
+                    "size=%r is not one of the free parameters (%s)"
+                    % (size, ", ".join(sorted(p.name for p in specs))))
+            found = _opt.minimise_sized(
+                evaluate, specs, size=size, objective=objective, constraints=wants,
+                tol=float(tol), max_evaluations=int(max_evaluations))
+        else:
+            found = _opt.minimise(
+                evaluate, specs, objective=objective, constraints=wants,
+                tol=float(tol), max_evaluations=int(max_evaluations))
+    except _opt.InfeasibleBox as exc:
+        best = exc.best
+        return _checks._stamp(doc, {
+            "check": "optimise",
+            "feasible": False,
+            "reason": str(exc),
+            "best": dict(best.x) if best else {},
+            "metrics": {k: v for k, v in (best.metrics if best else {}).items()
+                        if not isinstance(v, (dict, list))},
+            "violations": list(best.violations) if best else [],
+            "warnings": warnings,
+            "note": "no setting of these parameters within these bounds satisfies the "
+                    "requirements. Widen a bound, loosen a requirement, or change the material "
+                    "-- this is not reachable by sizing.",
+        })
+    finally:
+        # Read-only means read-only, even on the exception paths.
+        for name, value in original.items():
+            _doc.set_param(obj, name, value)
+        doc.recompute()
+
+    return _checks._stamp(doc, {
+        "check": "optimise",
+        "feasible": True,
+        "best": {k: round(float(v), 6) for k, v in found.best.x.items()},
+        "objective": objective,
+        "objective_value": round(float(found.best.objective), 6),
+        "metrics": {k: v for k, v in found.best.metrics.items()
+                    if not isinstance(v, (dict, list))},
+        # Both notions, because they answer different questions. `blocking` is what refused
+        # every better design the search tried -- evidence, and the useful answer. `active` is
+        # whether the optimum sits exactly on a constraint surface, which on a voxel-quantised
+        # evaluation is often false even when the constraint is unambiguously the limit.
+        "blocking_constraints": found.blocking_constraints,
+        "active_constraints": found.active_constraints,
+        "at_bounds": found.at_bounds,
+        "evaluations": found.evaluations,
+        "cache_hits": found.cache_hits,
+        "failures": found.failures,
+        "converged": found.converged,
+        "method": found.method,
+        "report": found.report(),
+        "warnings": warnings,
+        "note": "the document was restored to the values it started with; nothing was changed. "
+                "Apply the winner with set_param, then re-run analyse at a finer pitch -- %.2f "
+                "mm was chosen for search speed, not for a quotable number." % float(pitch),
+    })
+
+
+def _physics_stiffness(obj, material, pitch, fix, load, force, cases) -> dict:
+    """One evaluation, flattened to the metrics an objective and a constraint can name."""
+    from . import physics as _physics
+
+    out = _physics.stiffness(
+        obj, material=material, pitch=float(pitch), fix=fix, load=load,
+        force=tuple(float(v) for v in (force or [0.0, 0.0, -100.0])), cases=cases)
+    flat = {}
+    for key, value in out.items():
+        if isinstance(value, bool):
+            # Booleans become 1.0 / 0.0 rather than being dropped, which makes them
+            # CONSTRAINABLE -- and `linear_valid` is the one that matters. Without this an
+            # optimizer could happily return the lightest design in the box while that design
+            # deflects through a tenth of its own span, where the linear solve it was judged by
+            # does not hold. `{metric: linear_valid, op: ">=", limit: 1.0}` refuses those
+            # outright, which is the right way to say "only designs the physics can speak about".
+            flat[key] = 1.0 if value else 0.0
+        elif isinstance(value, (int, float)):
+            flat[key] = float(value)
+    # `safety_factor` is None when there is no stress at all, which an optimizer cannot order.
+    # Treat it as unbounded rather than dropping the key, so a constraint on it still resolves.
+    if out.get("safety_factor") is None:
+        flat["safety_factor"] = float("inf")
+    return flat
+
+
 @registry.command("undo", "Undo the last transaction", writes=False)
 def undo() -> dict:
     doc = active_document()

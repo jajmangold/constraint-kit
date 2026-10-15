@@ -2,6 +2,87 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-17 (later) — the loop closes: parameters to performance to better parameters (closes #16, #17)
+
+The piece everything else was built toward, and deliberately the smallest piece. The hard parts
+were already done: a parametric source of truth means a design *has* parameters to vary, and a
+cross-validated physics tier means varying them produces a number you can believe.
+
+- `[feat]` **`constraint_kit/optimise.py`** — compass search with a feasibility filter, plus
+  `minimise_monotone` (bisection) and `minimise_sized` (nested). Nothing in it imports CAD or
+  FEA: `evaluate` is any callable from parameters to metrics, which is what lets all 22 tests
+  assert against closed-form optima rather than against a mesh.
+- `[feat]` **`optimise` is a registered command**, so an agent can run the whole loop. On a
+  120 x 24 PETG bracket, thickness and depth free on a 0.4 mm lattice, 60 N at the end,
+  SF >= 1.5 and deflection <= 3 mm: **33 evaluations in 16 s**, 26 of 59 lookups cached, answer
+  17.2 x 12 mm at 31.5 g, both constraints blocking, depth driven to its lower bound, and the
+  document restored to exactly where it started.
+- `[feat]` **The evaluation cache (#16)** is not a micro-optimisation, it is most of the speed: a
+  compass search steps out, fails, halves, and steps back over ground it has covered. Keyed on
+  the quantised parameter vector, so two genuinely different designs can never share an answer.
+- `[decision]` **Why a compass search and not something more impressive.** Each evaluation is
+  seconds, so the method must be frugal and no gradient is available at any price; the space is
+  a handful of dimensions, so a population method would spend its budget on diversity nobody
+  needs; and bounds and quantisation are hard constraints, because a wall cannot be 1.7 mm when
+  the nozzle lays 0.4 mm lines and an optimizer that returns 1.73 mm has not answered the
+  question.
+- `[feat]` **It never claims to be global.** `report()` says "no improving move from here, at
+  this step size" every time, not only when it happens to be wrong. There is a test that traps
+  the search in the shallower of two wells on purpose and asserts the wording.
+
+### Four real defects found by using it, each now a test
+
+- `[fix]` **A pure coordinate search stalls on a curved constraint boundary.** Minimise `b*h`
+  subject to `b*h^2/6 >= S` and it stops at area 170 against a true 80, because every axis move
+  either raises the area or breaks the constraint while the improving direction runs *along* the
+  boundary at `db/dh = -12S/h^3`. Diagonals (added up to 4 parameters, since 2^n) help and do not
+  fix it. **`minimise_sized` fixes it** by reducing the dimension: one parameter is bisected to
+  the boundary for every setting of the others, so every point the outer search sees is already
+  a sized design. Exact closed-form answer, and a warm start — resuming the inner bisection from
+  the previous boundary — takes it from 484 evaluations to 349 with the same answer to every
+  digit. The stall itself is now a test, asserting the plain search still returns a *valid*
+  design and still says "local".
+- `[fix]` **A BINARY constraint carries no gradient, and the filter got it backwards.**
+  `linear_valid >= 1` is 0 or 1, so every infeasible point has violation exactly 1.0, the filter
+  cannot order them, and the objective decides — sending the walk to the lightest *infeasible*
+  design. Measured: a 160 mm plate feasible only above 20 mm, started at 14, walked
+  14 -> 10 -> 6 -> 4 and **refused a problem whose answer was 20**. Fixed by a **bound scan**:
+  2n evaluations at the box extremes before the walk, which are the points a person would try
+  first.
+- `[fix]` **`mass_g` was coming from the voxel count, which is a staircase.** At 4 mm pitch a
+  plate 7 mm thick and one 10 mm thick sample to the same 300 elements and weigh the same to the
+  gram — so the objective was a step function and the search stopped on a plateau. Worse, that
+  number was being *quoted*, and it is up to 10% out (+10.7% measured on the gantry plate). Mass
+  now comes from the exact B-rep volume, which is free and smooth; `voxel_mass_g` and
+  `voxel_volume_error_pct` are reported beside it, because their difference is a mesh-quality
+  signal worth having.
+- `[fix]` **"Which constraint binds" needed two different answers, and a slack threshold is
+  neither.** On a quantised evaluation the optimum sits on a tread, strictly inside the
+  constraint — measured 21% inside a safety factor it was unambiguously limited by. A 10% window
+  called that unconstrained; a 30% window would call almost anything constrained; neither is a
+  fact about the design. So: `active_constraints` is exact tightness (the mathematical notion,
+  often legitimately empty), and **`blocking_constraints` is read off the history** — every
+  point tried with a better objective was infeasible, so what those points violate is exactly
+  what stands between here and a better design. Ordered by frequency, so the first is the
+  dominant blocker. Evidence rather than a threshold.
+
+### And two honesty guards
+
+- `[feat]` **The command warns when the mesh is too coarse for the tolerance.** A 0.05 mm search
+  tolerance against a 4 mm pitch is chasing a plateau, and the answer is resolved to about one
+  pitch. Said, not enforced — a coarse search is a legitimate choice — but never left for the
+  reader to discover.
+- `[feat]` **Booleans are reported as 1.0 / 0.0 so they can be CONSTRAINED**, and
+  `linear_valid >= 1.0` is the one that matters: "lightest" pushes straight at the thin designs
+  where the linear solve no longer holds, and without that constraint the winner is very often
+  exactly such a design. There is a test where the two runs differ by nothing but that
+  constraint and the answers differ accordingly.
+- `[feat]` **`optimise` is declared read-only and keeps it.** Every trial parameter is restored
+  in a `finally`, including on the exception paths, because a search that leaves the model at
+  its last trial value has edited the document while reporting a verdict.
+
+**291 tests across 15 suites.**
+
 ## 2026-10-17 — several load cases, and the field that bounds all of them (closes #4)
 
 A real machine part does not have *a* load. The gantry plate carries belt tension when the drive

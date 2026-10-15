@@ -52,6 +52,8 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
     printed.py         #   FDM anisotropy: traction on the LAYER PLANE (peel/shear), orientation ranking
     tet.py             #   INDEPENDENT reference: gmsh quadratic tets -> CalculiX (both ship in FreeCAD)
     crosscheck.py      #   voxel vs tet: measures the gap and ATTRIBUTES it (too stiff / too soft / agree)
+  optimise.py          # CLOSED LOOP [#17]: compass search + feasibility filter, monotone bisection,
+                       #   nested sized search; evaluation cache [#16]; numpy-free, CAD-free, testable
   massprops.py         # mass properties: exact CG + inertia tensor (OCC GProp, density-weighted) [T4.1]
   bom.py               # BOM document export (Markdown/CSV) from a build-tree roll-up [T7.3]
   drawing.py           # 2D drawing export [T7.2]: cross-section DXF + orthographic projection SVGs + overall dims

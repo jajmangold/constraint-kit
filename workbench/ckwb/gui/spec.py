@@ -49,6 +49,9 @@ PALETTE_ONLY = (
     # have to guess where the part is held, and a guessed restraint produces a number that looks
     # like analysis and is not.
     "analyse",
+    # Optimise from the palette for the same reason as analyse, doubled: it needs requirements,
+    # and a requirement nobody typed is a requirement nobody chose.
+    "optimise",
 )
 
 #: Dockable panels. `area` is a Qt dock area name resolved in panels.py.

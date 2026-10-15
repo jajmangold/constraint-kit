@@ -51,6 +51,7 @@ run "physics          tests/test_fea.py"            python tests/test_fea.py
 run "convergence      tests/test_convergence.py"    python tests/test_convergence.py
 run "workbench core   workbench/tests/test_core.py" python workbench/tests/test_core.py
 run "load cases      tests/test_cases.py"         python tests/test_cases.py
+run "optimiser      tests/test_optimise.py"      python tests/test_optimise.py
 run "printed parts   tests/test_printed.py"       python tests/test_printed.py
 run "crosscheck      tests/test_crosscheck.py"    python tests/test_crosscheck.py
 

@@ -139,6 +139,13 @@ def prepare(obj, pitch: float = 2.0, material: str = "petg") -> dict:
         "material": key,
         "pitch": float(pitch),
         "triangles": triangles_of(shape, max(float(pitch) / 4.0, 1e-3)),
+        # The EXACT B-rep volume, captured here because this is where the shape is. Mass used to
+        # be reported from the voxel count, which is a staircase: at 4 mm pitch a plate 7 mm
+        # thick and one 10 mm thick voxelise identically and weigh the same to the gram. An
+        # optimizer minimising that is minimising a step function and stops on a plateau; worse,
+        # the number was being quoted, and it is up to 10% out (+10.7% measured on the gantry
+        # plate at 1.82 mm). The exact volume is free, smooth in the parameters, and correct.
+        "shape_volume_mm3": float(shape.Volume),
     }
 
 
@@ -228,7 +235,9 @@ def solve_prepared(bundle: dict, *, fix: str, load: str = "",
         load_sel, _axes = _selector(load)
         model.load(load_sel, tuple(float(v) for v in force))
         res = model.solve(method=method)
-    volume_cm3 = grid.material_volume / 1000.0
+    voxel_cm3 = grid.material_volume / 1000.0
+    exact_cm3 = float(bundle.get("shape_volume_mm3") or 0.0) / 1000.0
+    volume_cm3 = exact_cm3 or voxel_cm3
     peak = res.von_mises_percentile(99.0)
     out = {
         "part": bundle.get("part", ""),
@@ -241,6 +250,12 @@ def solve_prepared(bundle: dict, *, fix: str, load: str = "",
                      else envelope.cases[envelope.worst_case_for_stress].residual),
         "volume_cm3": round(volume_cm3, 4),
         "mass_g": round(volume_cm3 * density, 3),
+        # The voxel figure beside the exact one, because their DIFFERENCE is a mesh-quality
+        # signal worth having: a staircase that adds 10% material is a staircase whose stress
+        # and stiffness are not to be trusted either.
+        "voxel_mass_g": round(voxel_cm3 * density, 3),
+        "voxel_volume_error_pct": (round(100.0 * (voxel_cm3 / exact_cm3 - 1.0), 2)
+                                   if exact_cm3 else None),
         "max_disp_mm": round(res.max_displacement, 6),
         "stress_p99_mpa": round(peak, 4),
         "stress_peak_mpa": round(res.peak_von_mises, 4),
@@ -249,7 +264,9 @@ def solve_prepared(bundle: dict, *, fix: str, load: str = "",
         "compliance": (res.compliance if envelope is None
                        else envelope.cases[envelope.worst_case_for_stress].compliance),
         "direct_solver": direct_solver_available(),
-        "note": "one mesh is not a converged answer; run a ladder and extrapolate",
+        "note": "one mesh is not a converged answer; run a ladder and extrapolate. mass_g is "
+                "from the exact B-rep volume; voxel_mass_g is what the grid sampled, and a "
+                "large gap between them means this pitch is not resolving the geometry.",
     }
     if envelope is not None:
         out.update(_envelope_rows(envelope))

@@ -78,6 +78,7 @@ CK_GUI=1 CK_LIVE=1 tools/ci.sh   # ...plus a FreeCAD window and the configured m
 python tests/test_fea.py                   # physics        (23)
 python tests/test_convergence.py           # convergence    (16)
 python tests/test_cases.py                 # load cases     (16)
+python tests/test_optimise.py              # the optimizer  (22)
 python tests/test_printed.py               # FDM anisotropy (15)
 python tests/test_crosscheck.py            # vs gmsh+ccx    (15, skips if they are absent)
 python workbench/tests/test_core.py        # wb core        (32)
@@ -85,7 +86,7 @@ python workbench/tests/test_core.py        # wb core        (32)
 # freecad tier - needs freecadcmd
 freecadcmd workbench/tests/test_geometry.py # parts, mates   (30)
 freecadcmd workbench/tests/test_document.py # doc, checks    (16)
-freecadcmd workbench/tests/test_commands.py # commands, API  (33)
+freecadcmd workbench/tests/test_commands.py # commands, API  (39)
 freecadcmd workbench/tests/test_planner.py  # plan + repair  (15)
 freecadcmd workbench/tests/test_import.py   # STEP import    (14)
 freecadcmd workbench/tests/test_motion.py   # travel, sweep  (17)
@@ -161,6 +162,19 @@ with a 2s model".
   a 120 mm part, with the composure of a 5 mm answer. `physics` now reports `linear_valid`. The
   criterion is deflection over SPAN, not over thickness — thickness was tried first and flagged a
   valid 4.5%-of-span answer, which is how a warning gets trained out of a reader.
+- **A voxel mesh QUANTISES the geometry, so an optimizer sees a staircase.** At 4 mm pitch a
+  plate 7 mm thick and one 10 mm thick sample to the same 300 elements and report the same safety
+  factor to three decimals. A search tolerance finer than the pitch is chasing a plateau, and the
+  answer is resolved to about one pitch -- `optimise` warns when `tol < pitch/2`. The same reason
+  `mass_g` now comes from the exact B-rep volume: a voxel-derived mass is a step function and was
+  up to 10% out.
+- **A BINARY constraint carries no gradient and a feasibility filter gets it backwards.** Every
+  infeasible point has violation 1.0, so the objective decides among them and the walk goes to
+  the lightest *infeasible* design. `minimise` scans the parameter bounds before walking, which
+  is what fixes it; if you write a new search, do the same.
+- **A pure coordinate search stalls on a curved constraint boundary**, where the improving
+  direction is neither axial nor diagonal. Use `minimise_sized` when one parameter is pure sizing
+  and the rest are shape -- it reduces the dimension and gets the closed-form answer.
 - **von Mises is the wrong allowable check for a printed part.** It presumes a material with no
   preferred direction; an FDM wall is a stack of welds at roughly half the in-plane strength
   across them. Use `fea.printed.check` on the layer plane. Measured on the gantry plate: the
