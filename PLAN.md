@@ -289,7 +289,7 @@ acceptance criteria.
 | 4 — manufacturing constraints | pieces exist in knee-exo `411_printability.py` | [#18](../../issues/18) |
 | 5 — topopt oracle | not started; `Grid.density` and SIMP interpolation already in place | [#19](../../issues/19) |
 | 6 — diagnosis / repair | structure exists in `validate.py`, causes do not | [#20](../../issues/20) |
-| 7 — agent surface | **MCP delivered** ([#21](../../issues/21) closed); planner not wired | [#26](../../issues/26) planner in the Describe panel · [#22](../../issues/22) retire the DSL |
+| 7 — agent surface | **done**: MCP ([#21](../../issues/21)) and the planner ([#26](../../issues/26)) both delivered and both verified live | [#22](../../issues/22) retire the DSL |
 | — the workbench | **built** — `workbench/`, 124 tests, installed via `install.py` | [#27](../../issues/27) Qt panel coverage · [#28](../../issues/28) Assembly joints · [#29](../../issues/29) requirements · [#30](../../issues/30) icons |
 | — housekeeping | | [#23](../../issues/23) closed · [#24](../../issues/24) dependency pins |
 
