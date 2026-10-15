@@ -246,6 +246,51 @@ def test_cantilever_bending_converges_to_beam_theory():
 # ------------------------------------------------------------------------------- honest failure
 
 @test
+def test_load_delivers_the_whole_force_even_when_the_selector_catches_empty_nodes():
+    """A node with no material around it cannot carry load, and must not absorb a share of it.
+
+    Found by the workbench bridge: a cantilever reported 0.288 mm where beam theory said 0.968.
+    The solve was clean -- residual 9e-10 -- but the load selector had caught the empty pad nodes
+    outside the part as well as the material ones, and `load` divided the total between all of
+    them. The share landing on pad nodes was then dropped from the reduced system, so 200 N of
+    requested force arrived as 60.5 N and the answer was quietly wrong by a factor of three.
+
+    That is the worst failure shape there is: converged, plausible, and wrong. So the whole force
+    is spread over the nodes that actually carry stiffness.
+    """
+    grid = Grid(density=np.ones((20, 4, 4)), pitch=(1.0,) * 3, origin=(0.0, 0.0, 0.0))
+    # A padded grid, where the +x selector also catches a layer of empty nodes.
+    padded = np.zeros((22, 4, 4))
+    padded[:20] = 1.0
+    gp = Grid(density=padded, pitch=(1.0,) * 3, origin=(0.0, 0.0, 0.0))
+
+    def tip(g):
+        m = Model(g, AL_E, AL_NU)
+        m.fix(lambda p: p[:, 0] <= EPS)
+        m.load(lambda p: p[:, 0] >= 19.0, (0.0, 0.0, -100.0))
+        res = m.solve()
+        return res.max_displacement
+
+    bare, with_pad = tip(grid), tip(gp)
+    rel = abs(with_pad - bare) / bare
+    assert rel < 0.02, (
+        f"empty nodes absorbed load: {bare:.6f} mm vs {with_pad:.6f} mm ({rel:.0%} apart)")
+
+
+@test
+def test_load_refuses_a_selector_that_touches_no_material():
+    grid = Grid(density=np.ones((6, 4, 4)), pitch=(1.0,) * 3)
+    m = Model(grid, AL_E, AL_NU)
+    m.fix(lambda p: p[:, 0] <= EPS)
+    try:
+        m.load(lambda p: p[:, 2] > 100.0, (0.0, 0.0, -1.0))
+    except ValueError as exc:
+        assert "material" in str(exc).lower() or "no nodes" in str(exc).lower(), str(exc)
+        return
+    raise AssertionError("loading where there is no material must raise, not silently do nothing")
+
+
+@test
 def test_refuses_to_solve_an_unrestrained_model():
     m = Model(_bar(), AL_E, AL_NU)
     m.load_face("x", "max", (10.0, 0.0, 0.0))

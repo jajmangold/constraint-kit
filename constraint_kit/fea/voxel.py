@@ -212,15 +212,44 @@ class Model:
             self._fixed[idx, "xyz".index(a)] = True
         return self
 
+    def _material_nodes(self) -> np.ndarray:
+        """Boolean mask of nodes belonging to at least one element above the density floor.
+
+        Not cached: `Grid.density` is a live array (a topology optimizer mutates it in place),
+        and a stale mask here would put load on nodes that no longer carry material.
+        """
+        active = self._active()
+        mask = np.zeros(self.grid.n_nodes, dtype=bool)
+        if active.size:
+            mask[self.grid.element_nodes(active).ravel()] = True
+        return mask
+
     def load(self, where, force: tuple[float, float, float]) -> "Model":
-        """Spread a TOTAL force vector equally over the selected nodes.
+        """Spread a TOTAL force vector equally over the selected nodes THAT CARRY MATERIAL.
 
         Equal division is a uniform-traction approximation. It is right for a pad or a flange
         face and wrong for a Hertzian contact; for the machine load cases here -- a cutter
         pushing on a spindle mount, a strap pulling on a cuff -- it is the honest model.
+
+        Nodes with no material around them are excluded before the force is divided, and this is
+        the whole point rather than a detail. A grid is padded with empty voxels, so a selector
+        like `x >= 59` legitimately catches a layer of empty nodes beyond the part. Those nodes
+        are dropped from the reduced system at solve time, so any share of the load given to them
+        simply vanishes -- and the solve still converges, cleanly, on a fraction of the force
+        that was asked for. Measured when this was wrong: a cantilever reported 0.288 mm against
+        0.968 mm of beam theory because 200 N had arrived as 60.5 N. Converged, plausible, and
+        wrong by a factor of three is the worst failure this code can produce, so the division is
+        over material nodes only and the full requested force always reaches the structure.
         """
         idx = self._select_nodes(where)
-        self._force[idx] += np.asarray(force, dtype=float) / len(idx)
+        material = self._material_nodes()
+        kept = idx[material[idx]]
+        if kept.size == 0:
+            raise ValueError(
+                f"the load selector matched {len(idx)} node(s) but none of them touch material "
+                "at this density threshold, so there is nothing to push on -- check the "
+                "coordinate bounds against the part's actual extent")
+        self._force[kept] += np.asarray(force, dtype=float) / len(kept)
         return self
 
     def load_face(self, axis: str, side: str, force: tuple[float, float, float]) -> "Model":
@@ -333,6 +362,10 @@ class Model:
         if not self._fixed.any():
             raise SolveFailure(
                 "no restraints applied: the system has six rigid-body modes and is singular")
+        if not (self._fixed.any(axis=1) & self._material_nodes()).any():
+            raise SolveFailure(
+                "every restrained node sits in empty space, so nothing is actually held: the "
+                "restraint selector matched only padding outside the part")
         if not np.any(self._force):
             raise SolveFailure("no loads applied: the solution is trivially zero")
 
