@@ -43,6 +43,7 @@ PALETTE_ONLY = (
     # to see a program before committing to it exactly as a human does.
     "plan",
     "import_step",
+    "sweep",
 )
 
 #: Dockable panels. `area` is a Qt dock area name resolved in panels.py.

@@ -316,6 +316,86 @@ def import_step(path: str, name: str = "", split: bool = False) -> dict:
             "frames": sorted(_frames(objs[0]))}
 
 
+@registry.command(
+    "sweep",
+    "Drive one part along a travel and check interference at every station",
+    params={"moving": {"type": str, "required": True, "doc": "the part that travels"},
+            "target": {"type": str, "required": True, "doc": "the part it travels along"},
+            "target_frame": {"type": str, "required": True,
+                             "doc": "frame on the target; travel runs along its +Z"},
+            "moving_frame": {"type": str, "required": True},
+            "start": {"type": float, "required": True, "doc": "mm"},
+            "stop": {"type": float, "required": True, "doc": "mm"},
+            "stations": {"type": int, "default": 11,
+                         "doc": "positions sampled, both ends included"}})
+def sweep(moving: str, target: str, target_frame: str, moving_frame: str,
+          start: float, stop: float, stations: int = 11) -> dict:
+    """Check a mechanism through its travel instead of at one pose.
+
+    This is the check a static clash test cannot do. A gantry that clears at both ends of its
+    rail can still hit a post halfway along, and nothing about examining either end reveals it.
+
+    Declared read-only, and it keeps that promise: the moving part is restored to the placement
+    it started from, in a `finally`, even if a station raises. A check that quietly leaves the
+    model somewhere else would be a side effect wearing a verdict as a disguise.
+    """
+    from . import motion as _motion
+
+    tgt, mov = _part(target), _part(moving)
+    tf, mf = _frames(tgt), _frames(mov)
+    if target_frame not in tf:
+        raise ValueError(
+            f"{target} has no frame {target_frame!r}; it has {', '.join(sorted(tf))}")
+    if moving_frame not in mf:
+        raise ValueError(
+            f"{moving} has no frame {moving_frame!r}; it has {', '.join(sorted(mf))}")
+
+    doc = tgt.Document
+    others = [o for o in _doc.all_parts(doc) if o.Name != mov.Name]
+    positions = _motion.sweep_stations(start, stop, stations)
+    original = mov.Placement
+
+    clash_stations, worst = [], None
+    details = []
+    try:
+        for where in positions:
+            mov.Placement = _motion.slide(tgt.Placement, tf[target_frame], mf[moving_frame],
+                                          where)
+            hit, gap = [], None
+            for other in others:
+                shape = getattr(other, "Shape", None)
+                if shape is None or shape.isNull():
+                    continue
+                common = mov.Shape.common(shape)
+                volume = common.Volume if not common.isNull() else 0.0
+                if volume > _checks.CLASH_TOL_MM3:
+                    hit.append({"with": other.Name, "volume_mm3": round(volume, 4)})
+                else:
+                    d = float(mov.Shape.distToShape(shape)[0])
+                    gap = d if gap is None else min(gap, d)
+            if hit:
+                clash_stations.append(round(where, 6))
+                details.append({"at_mm": round(where, 6), "clashes": hit})
+            if gap is not None:
+                worst = gap if worst is None else min(worst, gap)
+    finally:
+        mov.Placement = original
+        doc.recompute()
+
+    return _checks._stamp(doc, {
+        "check": "sweep",
+        "ok": not clash_stations,
+        "moving": mov.Name,
+        "along": f"{tgt.Name}.{target_frame}",
+        "start_mm": float(start),
+        "stop_mm": float(stop),
+        "stations": len(positions),
+        "clash_stations": clash_stations,
+        "clashes": details,
+        "min_gap_mm": round(worst, 6) if worst is not None else None,
+    })
+
+
 @registry.command("undo", "Undo the last transaction", writes=False)
 def undo() -> dict:
     doc = active_document()

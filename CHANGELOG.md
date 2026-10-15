@@ -5,6 +5,63 @@ Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[
 Read this first every session; write it last. Log **decisions**, not just code — a decision that
 is not written down gets re-litigated, and the reason it was made is the expensive part.
 
+## 2026-10-16 (later) — coupled motion, and checking a mechanism through its travel
+
+- `[feat]` **`ckwb/motion.py`**: slides, screw travel, belt arithmetic, pulley rotation, and
+  `sweep` — a registered command that drives one part along a travel and checks interference at
+  every station.
+- `[feat]` **The sweep is the part that earns its keep.** A static clash check at either end of a
+  travel passes a mechanism that collides in the middle, and the test for it is built exactly
+  that way: a carriage on a shaft with a post beside it partway along. The static check passes —
+  that it passes is the point — and the sweep reports which stations collide and with what.
+  Declared read-only and keeps the promise: the moving part is restored in a `finally`, because a
+  check that quietly leaves the model somewhere else is a side effect wearing a verdict as a
+  disguise.
+- `[feat]` Closed-form arithmetic in one place, because this is what goes wrong by hand and then
+  goes wrong in the BOM: `pitch_diameter`, `belt_ratio`, `belt_length` (the exact two-pulley wrap,
+  not the `2C + 1.57(D1+D2)` approximation), `belt_centre_distance` by bisection — the number you
+  actually need, since you buy a 93-tooth belt and then have to place the pulleys —
+  `screw_travel`, `screw_turns`, and `steps_per_mm`, which reproduces the measured 320 steps/mm
+  for a 1605 at 1600 steps/rev and 160 for a 1610. The lead is carried, never inferred from a
+  part name.
+
+### Why not FreeCAD's Assembly solver — and a correction
+
+I claimed on #11-#14, #28 and in PLAN.md that FreeCAD 1.0.2's Assembly solver is *"fully
+scriptable headlessly"*. **That was too strong.** What probing actually established:
+
+- `Assembly::AssemblyObject` creates headlessly and exposes `solve()` / `undoSolve()`. True.
+- A `Slider` / `Screw` / `Belt` / `RackPinion` joint proxy **does** construct headlessly — but only
+  once the joint object is already inside the assembly, since `getAssembly()` walks `InList`. And
+  `JointObject.Joint(obj, index)` takes an **integer index** into `JointObject.JointTypes`, not a
+  type name.
+- Grounding through `GroundedJoint` works; `isPartGrounded` returns True.
+- `Placement1` / `Placement2` / `Offset1` / `Offset2` are plain `App::PropertyPlacement`, so a
+  joint **need not name "Face3"** — the topological-naming problem is avoidable, which was the
+  main worry.
+- **But `isPartConnected` stays False and driving the joint moves nothing.** The solver wants its
+  `Reference` properties in a path form that is undocumented and that I did not crack.
+
+- `[decision]` So: closed-form placements rather than the solver, for now. Every motion this
+  hardware has is closed form — a nut at a travel, a carriage at a position, a pulley at an angle,
+  a belt length for a centre distance. A numerical solver would return an approximation to what
+  arithmetic gives exactly, and bring an iteration count and a convergence failure along with it.
+  What that forgoes is real and worth naming: **mechanism DOF analysis and loop closure.** Nothing
+  on this bench needs it yet, and `constraint_kit/linkage.py` already does four-bars through
+  SolveSpace when it does.
+- `[fix]` **A design gap the sweep test found: a slot's outward normal is not its travel axis.**
+  `extrusion_2020` offered only outward slot normals, so sliding a carriage "along the rail"
+  pushed it sideways off the face. The rail now has its own `axis` frame. Seating and travelling
+  are different questions and need different frames.
+- `[fix]` Three of my own test bugs, each worth the note: a belt-growth assertion that demanded
+  more than the physics allows (doubling the centre distance adds slightly *less* than two
+  straight runs, because the wrap angles shrink and give some back); `Shape.BoundBox` on something
+  that was already a Shape; and `CenterOfMass` on a `Part.Compound`, which FreeCAD 1.0 does not
+  expose — the bounding-box centre is exact for that check anyway, since 90 degrees is six whole
+  tooth pitches on a 24-tooth gear.
+
+**214 tests across 11 suites.**
+
 ## 2026-10-16 — the kernel can see geometry it did not make (closes #10)
 
 Until now it could only reason about shapes it generated, which ruled out the most useful

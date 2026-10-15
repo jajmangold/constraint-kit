@@ -262,6 +262,10 @@ def extrusion_2020(length: float = 100.0):
 
     half = w / 2.0
     return shape, {
+        # A slot's outward normal is for SEATING something on the face. Travelling along the rail
+        # is a different direction entirely, so the axis is its own frame -- a distinction a
+        # sweep test found the hard way by sliding a carriage sideways off the rail.
+        "axis": frame((0, 0, 0), (0, 0, 1)),
         "slot_x+": frame((half, 0, length / 2.0), (1, 0, 0)),
         "slot_x-": frame((-half, 0, length / 2.0), (-1, 0, 0)),
         "slot_y+": frame((0, half, length / 2.0), (0, 1, 0)),
