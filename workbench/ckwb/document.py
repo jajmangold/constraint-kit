@@ -22,18 +22,24 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 
 import FreeCAD
 
 from . import parts
+from .mates import frame
 from .params import FORMAT, VERSION
 from .provenance import LABELS, STATED, ParamSet, Value
 
 #: Properties the workbench owns on every part. Prefixed so they never collide with a parameter.
 GENERATOR_PROP = "CkGenerator"
 PROVENANCE_PROP = "CkProvenance"
+SOURCE_PROP = "CkSource"
 GROUP_INTERNAL = "ConstraintKit"
+
+#: Shown where a generator name would go, so a bought component is never mistaken for a made one.
+IMPORTED_GENERATOR = "(imported)"
 
 _TYPE_PROPS = {float: "App::PropertyFloat", int: "App::PropertyInteger",
                str: "App::PropertyString", bool: "App::PropertyBool"}
@@ -141,12 +147,97 @@ def make_part(doc, generator: str, params: ParamSet | None = None, name: str | N
 
 
 def is_ck_part(obj) -> bool:
+    """A parametric part: has a generator and provenance, so it rebuilds from its values."""
     return hasattr(obj, GENERATOR_PROP) and hasattr(obj, PROVENANCE_PROP)
 
 
+def is_imported(obj) -> bool:
+    """Geometry read from a file. Has a shape and a source, but no generator and no parameters."""
+    return hasattr(obj, SOURCE_PROP) and not is_ck_part(obj)
+
+
 def ck_parts(doc) -> list:
-    """Every constraint-kit part in the document, in document order."""
+    """Parametric parts only, in document order. This is what the params file describes."""
     return [o for o in doc.Objects if is_ck_part(o)]
+
+
+def all_parts(doc) -> list:
+    """Everything with geometry the workbench manages: parametric AND imported.
+
+    The distinction matters in exactly one direction. The params file can only describe
+    parametric parts, so `ck_parts` is right there. Checks, mass, export and physics must see
+    bought components too — a vendor bearing escaping clash detection is the failure that makes
+    the whole verdict worthless, so those all use this.
+    """
+    return [o for o in doc.Objects if is_ck_part(o) or is_imported(o)]
+
+
+def frames_of(obj) -> dict:
+    """Named mate frames for any part.
+
+    A parametric part declares real, semantic frames and they are rebuilt from its current
+    values. An import has none: a vendor STEP carries no statement about which face is a
+    mounting face. Rather than invent one, the bounding box is offered under names that say so —
+    `bbox_top`, never `top`. The prefix is the honesty.
+    """
+    if is_ck_part(obj):
+        _, frames = parts.build(getattr(obj, GENERATOR_PROP), **paramset_of(obj).values())
+        return frames
+    if not is_imported(obj):
+        raise TypeError(f"{getattr(obj, 'Name', obj)} is not a workbench part")
+
+    shape = getattr(obj, "Shape", None)
+    if shape is None or shape.isNull():
+        return {}
+    # Local coordinates: the caller composes with obj.Placement, exactly as for a generated part.
+    local = shape.copy()
+    local.Placement = FreeCAD.Placement()
+    bb = local.BoundBox
+    cx, cy, cz = (bb.XMin + bb.XMax) / 2.0, (bb.YMin + bb.YMax) / 2.0, (bb.ZMin + bb.ZMax) / 2.0
+    return {
+        "bbox_top": frame((cx, cy, bb.ZMax), (0, 0, 1)),
+        "bbox_bottom": frame((cx, cy, bb.ZMin), (0, 0, -1)),
+        "bbox_x+": frame((bb.XMax, cy, cz), (1, 0, 0)),
+        "bbox_x-": frame((bb.XMin, cy, cz), (-1, 0, 0)),
+        "bbox_y+": frame((cx, bb.YMax, cz), (0, 1, 0)),
+        "bbox_y-": frame((cx, bb.YMin, cz), (0, -1, 0)),
+        "bbox_centre": frame((cx, cy, cz), (0, 0, 1)),
+    }
+
+
+def import_step(doc, path: str, name: str | None = None, split: bool = False):
+    """Read a STEP/IGES/BREP file into the document as imported geometry.
+
+    Returns one object, or a list of them when `split` is set. `split` exists because a vendor
+    assembly legitimately holds many solids while a generated part never should: keeping it whole
+    preserves the file as supplied, splitting it lets each solid be mated and checked separately.
+    """
+    import Part
+
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"no such file: {path}")
+    try:
+        shape = Part.read(path)
+    except Exception as exc:  # noqa: BLE001 - OCC raises a bare Exception on a bad file
+        raise ValueError(f"cannot read {os.path.basename(path)} as CAD geometry: {exc}") from exc
+    if shape is None or shape.isNull() or not shape.Solids:
+        raise ValueError(
+            f"{os.path.basename(path)} contains no solids — a surface-only or empty file cannot "
+            "be checked, weighed or analysed, so it is refused rather than imported as nothing")
+
+    base = name or os.path.splitext(os.path.basename(path))[0]
+    shapes = list(shape.Solids) if split else [shape]
+    made = []
+    for i, piece in enumerate(shapes):
+        obj = doc.addObject("Part::Feature", f"{base}_{i + 1}" if split and len(shapes) > 1
+                            else base)
+        obj.Shape = piece
+        obj.addProperty("App::PropertyString", SOURCE_PROP, GROUP_INTERNAL,
+                        "The file this geometry was read from")
+        setattr(obj, SOURCE_PROP, os.path.abspath(path))
+        obj.setEditorMode(SOURCE_PROP, 1)   # read-only: editing it would be a lie
+        made.append(obj)
+    return made if split else made[0]
 
 
 def paramset_of(obj) -> ParamSet:

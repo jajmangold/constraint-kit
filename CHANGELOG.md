@@ -5,6 +5,46 @@ Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[
 Read this first every session; write it last. Log **decisions**, not just code — a decision that
 is not written down gets re-litigated, and the reason it was made is the expensive part.
 
+## 2026-10-16 — the kernel can see geometry it did not make (closes #10)
+
+Until now it could only reason about shapes it generated, which ruled out the most useful
+geometry there is: a vendor STEP for a bearing, a profile, a motor. An approximation is fine for
+mass and envelope and wrong for anything that has to fit.
+
+- `[feat]` **`import_step`** reads STEP/IGES/BREP into the document, as a command so an agent can
+  call it too. `split=True` makes one object per solid for a vendor assembly; left off, the file
+  is kept exactly as supplied.
+- `[decision]` **The real question was not "can we read a file" but "what IS an imported part".**
+  It has no generator and no parameters, so it cannot be parametric; it has a shape, so it must
+  be checked, weighed, analysed and exported like anything else. Hence two collections:
+  `ck_parts()` stays parametric (it is what the params file can describe) and **`all_parts()` is
+  everything with geometry**, which is now what checks, mass, export and the tree use. Getting
+  that split wrong in the other direction would let a bought component escape clash detection —
+  the single failure that makes a verdict worthless. There is a test for exactly that.
+- `[decision]` **Derived frames are named `bbox_top`, never `top`.** A vendor STEP carries no
+  statement about which face is a mounting face. Inventing one would be precisely the plausible
+  lie this project exists to avoid, so the bounding box is offered under names that admit what
+  they are. An import can still be seated on a generated part by `bbox_bottom`, with the exact
+  zero gap the mate kernel always gives.
+- `[decision]` **The one-solid rule now applies only to generated parts.** It is a correctness
+  invariant there — a boolean that severs a part returns a *valid* shape with two solids rather
+  than an error, and that has slipped downstream twice in this project. A vendor assembly
+  legitimately holds many, and flagging it would train people to ignore the check, so those are
+  reported under `multi_solid_imports` as information.
+- `[feat]` **The payoff: the physics tier analyses imported geometry.** A 120x12x12 beam
+  exported to STEP, re-imported and solved gives 0.9521 mm against 0.9676 mm of beam theory —
+  98%, identical to the generated case. So a bought bearing or extrusion can now be structurally
+  checked instead of stood in for by my approximation of it.
+- `[test]` 14 tests: volume-preserving round trip through a real file written by the suite
+  itself (no fixture to rot), the source path recorded on the object, refusal of a missing file
+  and of a file with no solids, whole-versus-split, membership in the right collections, clash
+  detection against a generated part, mass, the solids nuance, tree reporting, export, the
+  derived frames, seating by one, and the registry command.
+- `[broke]` Known: the provenance panel shows nothing for an imported part, since it has no
+  parameters to show. Correct but unhelpful; it should show the source file instead.
+
+**197 tests across 10 suites.**
+
 ## 2026-10-15 (night) — the untestable layer is now tested
 
 Closes the gap that produced the day's two worst bugs. Both shipped while 150 headless tests

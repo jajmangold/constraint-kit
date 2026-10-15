@@ -156,22 +156,33 @@ def mass(objs: list, density_g_cm3: float = 1.27) -> dict:
 
 
 def solids(objs: list) -> dict:
-    """Every part must be exactly one valid, closed solid.
+    """Every GENERATED part must be exactly one valid, closed solid.
 
     Worth its own check because a boolean that severs a part returns a perfectly valid shape with
-    two solids in it rather than an error -- two fragmentation bugs in this project's history got
+    two solids in it rather than an error -- two fragmentation bugs in this project history got
     several steps downstream before anyone noticed.
+
+    Imported geometry is held to validity and closedness but NOT to the one-solid rule: a vendor
+    assembly legitimately contains many solids, and reporting that as broken would train people
+    to ignore this check. Those are listed under `multi_solid_imports` as information instead.
     """
+    from .document import is_imported
+
     objs = [o for o in objs if getattr(o, "Shape", None) is not None and not o.Shape.isNull()]
     doc = _doc_of(objs)
-    bad = []
+    bad, multi_imports = [], []
     for o in objs:
         s = o.Shape
         n = len(s.Solids)
-        if n != 1 or not s.isValid() or not s.isClosed():
-            bad.append({"name": o.Name, "solids": n,
+        imported = is_imported(o)
+        if imported and n > 1:
+            multi_imports.append(o.Name)
+        broken = (not s.isValid()) or (not s.isClosed()) or n < 1 or (n != 1 and not imported)
+        if broken:
+            bad.append({"name": o.Name, "solids": n, "imported": imported,
                         "valid": bool(s.isValid()), "closed": bool(s.isClosed())})
-    return _stamp(doc, {"check": "solids", "ok": not bad, "n_parts": len(objs), "bad": bad})
+    return _stamp(doc, {"check": "solids", "ok": not bad, "n_parts": len(objs), "bad": bad,
+                        "multi_solid_imports": multi_imports})
 
 
 #: Checks a "Run all" invokes, in the order a human wants to read them.

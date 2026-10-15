@@ -42,6 +42,7 @@ PALETTE_ONLY = (
     # plan without building: useful from the palette and essential to agents, who should be able
     # to see a program before committing to it exactly as a human does.
     "plan",
+    "import_step",
 )
 
 #: Dockable panels. `area` is a Qt dock area name resolved in panels.py.

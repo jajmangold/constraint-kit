@@ -50,18 +50,19 @@ def _part(name: str):
     doc = active_document()
     obj = doc.getObject(name)
     if obj is None:
-        have = ", ".join(o.Name for o in _doc.ck_parts(doc)) or "none"
+        have = ", ".join(o.Name for o in _doc.all_parts(doc)) or "none"
         raise KeyError(f"no part named {name!r} in {doc.Name}; have {have}")
-    if not _doc.is_ck_part(obj):
+    if not (_doc.is_ck_part(obj) or _doc.is_imported(obj)):
         raise TypeError(f"{name!r} is not a constraint-kit part")
     return obj
 
 
 def _frames(obj) -> dict:
-    """Frames for a part, rebuilt from its current parameters (never cached, never stale)."""
-    _, frames = _parts.build(getattr(obj, _doc.GENERATOR_PROP),
-                             **_doc.paramset_of(obj).values())
-    return frames
+    """Frames for a part, derived fresh every time (never cached, so never stale).
+
+    Semantic for a generated part, bounding-box-derived and prefixed `bbox_` for an import.
+    """
+    return _doc.frames_of(obj)
 
 
 # ------------------------------------------------------------------------------------- read
@@ -77,17 +78,22 @@ def list_generators() -> dict:
 def get_tree() -> dict:
     doc = active_document()
     out = []
-    for obj in _doc.ck_parts(doc):
+    for obj in _doc.all_parts(doc):
         shape = getattr(obj, "Shape", None)
         pl = obj.Placement
-        out.append({
+        imported = _doc.is_imported(obj)
+        entry = {
             "name": obj.Name,
-            "generator": getattr(obj, _doc.GENERATOR_PROP, ""),
+            "generator": (_doc.IMPORTED_GENERATOR if imported
+                          else getattr(obj, _doc.GENERATOR_PROP, "")),
             "volume_mm3": round(float(shape.Volume), 4) if shape and not shape.isNull() else 0.0,
             "position": [round(pl.Base.x, 6), round(pl.Base.y, 6), round(pl.Base.z, 6)],
-            "guessed": _doc.paramset_of(obj).guessed(),
+            "guessed": [] if imported else _doc.paramset_of(obj).guessed(),
             "frames": sorted(_frames(obj)),
-        })
+        }
+        if imported:
+            entry["source"] = getattr(obj, _doc.SOURCE_PROP, "")
+        out.append(entry)
     return {"document": doc.Name, "parts": out,
             "fingerprint": _checks.fingerprint(doc)}
 
@@ -115,7 +121,7 @@ def get_params(part: str) -> dict:
                                       "doc": "g/cm3 for the mass roll-up; PETG by default"}})
 def run_checks(density: float = 1.27) -> dict:
     doc = active_document()
-    objs = _doc.ck_parts(doc)
+    objs = _doc.all_parts(doc)
     if not objs:
         raise RuntimeError(f"{doc.Name} has no constraint-kit parts to check")
     out = {
@@ -151,7 +157,7 @@ def get_checks() -> dict:
 def export(path: str) -> dict:
     import Part
     doc = active_document()
-    objs = _doc.ck_parts(doc)
+    objs = _doc.all_parts(doc)
     if not objs:
         raise RuntimeError(f"{doc.Name} has nothing to export")
     shapes = [o.Shape for o in objs if getattr(o, "Shape", None) is not None]
@@ -286,6 +292,28 @@ def describe(request: str) -> dict:
     made = _planner.build(p, doc)
     return {"declined": False, "built": [o.Name for o in made], "summary": p.summary(),
             "notes": p.notes, "program": p.render()}
+
+
+@registry.command("import_step", "Read a STEP/IGES/BREP file in as imported geometry",
+                  writes=True,
+                  params={"path": {"type": str, "required": True,
+                                   "doc": "path to a .step / .stp / .iges / .brep file"},
+                          "name": {"type": str, "default": "",
+                                   "doc": "document name; defaults to the file stem"},
+                          "split": {"type": bool, "default": False,
+                                    "doc": "one object per solid, for a vendor assembly"}})
+def import_step(path: str, name: str = "", split: bool = False) -> dict:
+    doc = active_document()
+    made = _doc.import_step(doc, path, name=name or None, split=split)
+    doc.recompute()
+    objs = made if isinstance(made, list) else [made]
+    total = sum(float(o.Shape.Volume) for o in objs)
+    return {"name": objs[0].Name if len(objs) == 1 else [o.Name for o in objs],
+            "imported": True,
+            "source": getattr(objs[0], _doc.SOURCE_PROP, ""),
+            "solids": sum(len(o.Shape.Solids) for o in objs),
+            "volume_mm3": round(total, 4),
+            "frames": sorted(_frames(objs[0]))}
 
 
 @registry.command("undo", "Undo the last transaction", writes=False)
