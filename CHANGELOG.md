@@ -5,6 +5,58 @@ Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[
 Read this first every session; write it last. Log **decisions**, not just code — a decision that
 is not written down gets re-litigated, and the reason it was made is the expensive part.
 
+## 2026-10-15 (later still) — the planner, and an SFU1605
+
+Prompted by a user typing "a 500mm sfu1605 ball screw assembly" into the Describe panel and
+being told the planner was not connected. Two separate gaps behind that, and neither was the
+panel's fault.
+
+- `[feat]` **`ckwb/parts.py`: `ball_screw` and `ball_nut`.** The request was unservable because
+  the catalogue had no ball screw — a wired planner would have had to decline it. Defaults are
+  SFU1605 from the measured hardware: 16 mm nominal, **5 mm lead**, turned-down ends for BK/BF
+  supports, flanged single nut with its M6 bolt circle. `ball_screw_lead()` exists so nobody
+  infers the lead from the name — SFU16**05** and SFU16**10** share a diameter and differ by 2x,
+  and on this hardware the lead is what makes 1600 steps/rev into 320 steps/mm.
+- `[decision]` The thread groove is **not** modelled. A 500 mm screw at 5 mm lead is a hundred
+  turns of swept helix, costly geometry that no assembly check uses; the envelope, the mass and
+  the end journals are what a bearing block and a clash check care about. Said at the definition
+  rather than discovered later.
+- `[decision]` The nut bore is modelled at the screw's **nominal** diameter. The balls carry the
+  load, not the bore, so a nut that touched the screw would be wrong — and modelling it at
+  nominal keeps a clash against the nut bore meaningful rather than reporting the running fit.
+- `[feat]` **`ckwb/planner.py` + `ckwb/llm.py`: plain English to a reviewable program.** The
+  model chooses parts, values and mates; the kernel builds. `plan()` returns a `Plan` a human
+  reads, and `build()` is a separate explicit step, so nothing exists until Build is pressed.
+- `[feat]` **Validated before it can build.** An unknown generator, parameter or frame is refused
+  with a message naming what exists. Frames are checked **by building the proposed part**, so the
+  check cannot drift from the geometry the way a maintained list would.
+- `[decision]` **One repair attempt, not a loop.** A refusal is handed back once with the exact
+  error, per the execute-and-repair pattern 2026 text-to-CAD work converged on. A model that
+  cannot fix its program given the precise error will not fix it on the fifth try, and an
+  unbounded loop spends money proving that.
+- `[decision]` **A decline is never retried.** Retrying an honest refusal is how a refusal gets
+  talked out of, which would destroy the one property that makes declining worth having.
+- `[decision]` **The planner cannot launder its guesses.** Values the request actually stated
+  become `stated`; values the model chose become `default` and show up as guesses in the property
+  editor. The model is asked to mark each one and is told plainly not to claim the user's
+  authority for its own choices.
+- `[feat]` `ckwb/llm.py` uses `urllib` and nothing else — adding `requests` to a CAD application
+  to make one POST is a poor trade, and FreeCAD's interpreter has no access to the host's
+  site-packages anyway. Works against DeepSeek, OpenAI, OpenRouter, or a local vLLM / llama.cpp /
+  Ollama / LM Studio, which is the case worth optimising for because it needs no key.
+- `[feat]` `ckwb/settings.py` reads the endpoint from FreeCAD's parameter store and falls back to
+  the environment (`LLM_BASE_URL`, `DEEPSEEK_API_KEY`, `MODEL_PLANNER` and friends), so a
+  headless session or an agent runs without anyone opening a dialog.
+- `[test]` 15 planner tests with the model call **injected**: no network, no key, no
+  non-determinism. They cover the happy path, provenance mapping, declines, the single repair,
+  unknown generators/params/frames, mate ordering, malformed JSON, fenced JSON, and building.
+- `[broke]` The orphan guard earned its place immediately: registering `plan` and `describe`
+  failed `test_every_registered_command_is_reachable_from_the_interface` until both were declared
+  reachable. That is the test preventing exactly the GUI/agent drift it was written for.
+- `[broke]` **Still unverified: a live model call.** There is no API key configured anywhere and
+  no local server running on this machine, so `llm.py` has never made a real request. Everything
+  above the network is tested; the HTTP call itself is not.
+
 ## 2026-10-15 (later) — the workbench did not load, and then its console was noisy
 
 - `[broke]` **ConstraintKit never appeared in FreeCAD's workbench selector.** `InitGui.py`

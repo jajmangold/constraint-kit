@@ -254,6 +254,40 @@ def load_params(path: str) -> dict:
     return {"path": os.path.abspath(path), "parts": [o.Name for o in made]}
 
 
+@registry.command("plan", "Turn a plain-English request into a reviewable program (builds nothing)",
+                  params={"request": {"type": str, "required": True,
+                                      "doc": "what you want, in plain English"}})
+def plan(request: str) -> dict:
+    from . import planner as _planner
+    from .settings import llm_settings
+
+    cfg = llm_settings()
+    p = _planner.plan(request, base_url=cfg["base_url"], api_key=cfg["api_key"],
+                      model=cfg["planner_model"])
+    if p.declined:
+        return {"declined": True, "reason": p.reason, "nearest": p.nearest,
+                "attempts": p.attempts}
+    return {"declined": False, "parts": p.parts, "mates": p.mates, "notes": p.notes,
+            "summary": p.summary(), "program": p.render(), "attempts": p.attempts}
+
+
+@registry.command("describe", "Plan from plain English and build it in one step", writes=True,
+                  params={"request": {"type": str, "required": True}})
+def describe(request: str) -> dict:
+    from . import planner as _planner
+    from .settings import llm_settings
+
+    doc = active_document()
+    cfg = llm_settings()
+    p = _planner.plan(request, base_url=cfg["base_url"], api_key=cfg["api_key"],
+                      model=cfg["planner_model"])
+    if p.declined:
+        return {"declined": True, "reason": p.reason, "nearest": p.nearest, "built": []}
+    made = _planner.build(p, doc)
+    return {"declined": False, "built": [o.Name for o in made], "summary": p.summary(),
+            "notes": p.notes, "program": p.render()}
+
+
 @registry.command("undo", "Undo the last transaction", writes=False)
 def undo() -> dict:
     doc = active_document()

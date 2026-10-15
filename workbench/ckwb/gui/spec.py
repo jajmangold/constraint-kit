@@ -39,6 +39,9 @@ TOOLBAR = (
 PALETTE_ONLY = (
     "list_generators", "get_tree", "get_params", "get_checks",
     "set_param", "promote_param", "save_params", "load_params", "undo",
+    # plan without building: useful from the palette and essential to agents, who should be able
+    # to see a program before committing to it exactly as a human does.
+    "plan",
 )
 
 #: Dockable panels. `area` is a Qt dock area name resolved in panels.py.

@@ -271,6 +271,106 @@ def extrusion_2020(length: float = 100.0):
     }
 
 
+# --------------------------------------------------------------------------------- ball screw
+
+def ball_screw_lead(nominal_d: float = 16.0, lead: float = 5.0) -> float:
+    """The lead in mm per revolution. Exists so no caller ever infers it from the diameter.
+
+    SFU**16**05 means 16 mm nominal and **5 mm lead**, and those two numbers are independent --
+    an SFU1610 is the same diameter with twice the lead. Getting it from the part name is a
+    coin flip, and on this hardware the lead is what sets 1600 steps/rev to 320 steps/mm.
+    """
+    _require_positive(nominal_d=nominal_d, lead=lead)
+    return float(lead)
+
+
+def ball_screw(nominal_d: float = 16.0, lead: float = 5.0, length: float = 500.0,
+               end_d: float = 10.0, end_length: float = 20.0):
+    """Rolled ball screw (SFU1605 by default), axis on +Z, with turned-down ends.
+
+    The thread groove is **not** modelled. A 500 mm screw at 5 mm lead is a hundred turns of
+    swept helix, which costs a great deal of geometry and buys nothing an assembly needs: the
+    envelope, the mass and the end journals are what a bearing block, a nut and an interference
+    check actually care about. `Part.makeHelix` is right there if a rendered thread is ever
+    wanted for a drawing.
+
+    The ends are turned down for BK/BF-style supports, which is how these are actually supplied.
+    `lead` is carried as a parameter rather than implied, so a screw joint can read it.
+    """
+    _require_positive(nominal_d=nominal_d, lead=lead, length=length)
+    if end_d > nominal_d:
+        raise ValueError(f"end_d={end_d} cannot exceed the screw diameter {nominal_d}")
+    if end_length < 0:
+        raise ValueError(f"end_length must not be negative, got {end_length}")
+    if 2.0 * end_length >= length:
+        raise ValueError(
+            f"machined ends of {end_length} each consume a {length} screw; "
+            "reduce end_length or lengthen the screw")
+
+    body = Part.makeCylinder(nominal_d / 2.0, length - 2.0 * end_length,
+                             V(0, 0, end_length), _Z)
+    shape = body
+    if end_length > 0.0 and end_d > 0.0:
+        shape = shape.fuse(Part.makeCylinder(end_d / 2.0, end_length, V(0, 0, 0), _Z))
+        shape = shape.fuse(Part.makeCylinder(end_d / 2.0, end_length,
+                                             V(0, 0, length - end_length), _Z))
+    shape = shape.removeSplitter()
+    return shape, {
+        "axis": frame((0, 0, 0), (0, 0, 1)),
+        "end_a": frame((0, 0, 0), (0, 0, -1)),
+        "end_b": frame((0, 0, length), (0, 0, 1)),
+        # Mid-travel, where a nut sits by default. Named so a mate does not have to do arithmetic.
+        "nut_travel": frame((0, 0, length / 2.0), (0, 0, 1)),
+    }
+
+
+def ball_nut(nominal_d: float = 16.0, body_od: float = 28.0, flange_od: float = 48.0,
+             flange_t: float = 10.0, length: float = 48.0, bolt_circle: float = 38.0,
+             bolt_d: float = 6.5, n_bolts: int = 4):
+    """Flanged single ball nut (SFU1605 by default), axis on +Z, flange at z=0.
+
+    Bore is the screw's nominal diameter: the balls, not the bore, carry the load, so a nut that
+    touched the screw would be wrong. Modelling it at nominal keeps a clash check meaningful --
+    an interference against the nut bore then means a real collision, not the running fit.
+    """
+    _require_positive(nominal_d=nominal_d, body_od=body_od, flange_od=flange_od,
+                      flange_t=flange_t, length=length)
+    if body_od <= nominal_d:
+        raise ValueError(f"body_od={body_od} must exceed the bore {nominal_d}")
+    if flange_od <= body_od:
+        raise ValueError(f"flange_od={flange_od} must exceed body_od={body_od}")
+    if flange_t >= length:
+        raise ValueError(f"flange_t={flange_t} must be less than the nut length {length}")
+
+    shape = Part.makeCylinder(body_od / 2.0, length)
+    shape = shape.fuse(Part.makeCylinder(flange_od / 2.0, flange_t))
+    shape = shape.cut(Part.makeCylinder(nominal_d / 2.0, length + 2.0, V(0, 0, -1.0), _Z))
+
+    n = int(n_bolts)
+    if n > 0:
+        r = bolt_circle / 2.0
+        if r - bolt_d / 2.0 <= body_od / 2.0:
+            raise ValueError(
+                f"bolt circle {bolt_circle} with {bolt_d} holes cuts into the nut body "
+                f"({body_od} OD)")
+        if r + bolt_d / 2.0 >= flange_od / 2.0:
+            raise ValueError(f"bolt circle {bolt_circle} breaks the flange rim ({flange_od} OD)")
+        for i in range(n):
+            a = 2.0 * math.pi * i / n + math.pi / n
+            c = _polar(r, a)
+            shape = shape.cut(Part.makeCylinder(bolt_d / 2.0, flange_t + 2.0,
+                                                V(c.x, c.y, -1.0), _Z))
+    shape = shape.removeSplitter()
+    if len(shape.Solids) != 1:
+        raise ValueError("the bolt circle severed the flange")
+    return shape, {
+        "flange": frame((0, 0, 0), (0, 0, -1)),
+        "back": frame((0, 0, length), (0, 0, 1)),
+        # The nut runs ON the screw, so its bore frame is centred for an `align` mate.
+        "bore": frame((0, 0, length / 2.0), (0, 0, 1)),
+    }
+
+
 # ----------------------------------------------------------------------------------- vitamins
 
 def ball_bearing(od: float = 22.0, id_: float = 8.0, width: float = 7.0):
@@ -348,6 +448,8 @@ PARTS = {
     "extrusion_2020": extrusion_2020,
     "ball_bearing": ball_bearing,
     "screw": screw,
+    "ball_screw": ball_screw,
+    "ball_nut": ball_nut,
 }
 
 

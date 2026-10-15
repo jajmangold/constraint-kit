@@ -28,11 +28,7 @@ _PANELS: dict[str, QtGui.QDockWidget] = {}
 _AREAS = {"left": QtCore.Qt.LeftDockWidgetArea, "right": QtCore.Qt.RightDockWidgetArea,
           "bottom": QtCore.Qt.BottomDockWidgetArea, "top": QtCore.Qt.TopDockWidgetArea}
 
-SETTINGS_GROUP = "User parameter:BaseApp/Preferences/Mod/ConstraintKit"
-
-
-def _prefs():
-    return FreeCAD.ParamGet(SETTINGS_GROUP)
+from ..settings import llm_settings, prefs as _prefs, save_llm_settings
 
 
 # ------------------------------------------------------------------------------------- checks
@@ -131,45 +127,74 @@ class ChecksPanel(QtGui.QWidget):
 class DescribePanel(QtGui.QWidget):
     """Say what you want; see the program; then build it.
 
-    The planner is not wired in yet — connecting a model endpoint is the next step, and the
-    panel says so plainly rather than pretending. What already works is the half that matters
-    architecturally: a program is shown, and a human presses Build.
+    The order is the trust model, not a convenience. A plan is shown and nothing exists until
+    Build is pressed, so a wrong program is something you read rather than something you then
+    have to undo. The model writes a program; the kernel builds it.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._plan = None
         layout = QtGui.QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
 
         self.transcript = QtGui.QTextBrowser()
-        self.transcript.setOpenExternalLinks(False)
-        layout.addWidget(self.transcript, 1)
+        layout.addWidget(self.transcript, 3)
+
+        self.program = QtGui.QPlainTextEdit()
+        self.program.setReadOnly(True)
+        self.program.setPlaceholderText("The proposed program appears here before it is built.")
+        self.program.setVisible(False)
+        layout.addWidget(self.program, 2)
+
+        row = QtGui.QHBoxLayout()
+        self.build_btn = QtGui.QPushButton("Build it")
+        self.build_btn.clicked.connect(self.build)
+        self.build_btn.setEnabled(False)
+        self.discard_btn = QtGui.QPushButton("Discard")
+        self.discard_btn.clicked.connect(self.discard)
+        self.discard_btn.setEnabled(False)
+        row.addWidget(self.build_btn, 1)
+        row.addWidget(self.discard_btn)
+        layout.addLayout(row)
 
         self.entry = QtGui.QLineEdit()
-        self.entry.setPlaceholderText("Describe a part or a change…")
+        self.entry.setPlaceholderText("Describe a part or an assembly...")
         self.entry.returnPressed.connect(self.submit)
         layout.addWidget(self.entry)
 
-        row = QtGui.QHBoxLayout()
+        bottom = QtGui.QHBoxLayout()
         self.model_label = QtGui.QLabel()
-        row.addWidget(self.model_label, 1)
+        self.model_label.setWordWrap(True)
+        bottom.addWidget(self.model_label, 1)
         send = QtGui.QPushButton("Send")
         send.clicked.connect(self.submit)
-        row.addWidget(send)
-        layout.addLayout(row)
+        bottom.addWidget(send)
+        layout.addLayout(bottom)
+
         self.refresh_model_label()
         self._say("Constraint Kit",
                   "Describe a part and you will see the program before anything is built. "
                   "Nothing is placed by a language model.")
 
     def refresh_model_label(self) -> None:
-        base = _prefs().GetString("BaseUrl", "")
-        model = _prefs().GetString("PlannerModel", "")
-        self.model_label.setText(
-            f"{model} · {base}" if base and model else "No model configured — see Settings")
+        cfg = llm_settings()
+        if cfg["base_url"] and cfg["planner_model"]:
+            self.model_label.setText(f"{cfg['planner_model']} · {cfg['base_url']}")
+        else:
+            self.model_label.setText("No model configured — see Settings")
 
     def _say(self, who: str, text: str) -> None:
         self.transcript.append(f"<p><b>{who}</b><br>{text}</p>")
+        self.transcript.verticalScrollBar().setValue(
+            self.transcript.verticalScrollBar().maximum())
+
+    def discard(self) -> None:
+        self._plan = None
+        self.program.setVisible(False)
+        self.build_btn.setEnabled(False)
+        self.discard_btn.setEnabled(False)
+        self._say("Constraint Kit", "Discarded. Nothing was built.")
 
     def submit(self) -> None:
         text = self.entry.text().strip()
@@ -177,17 +202,71 @@ class DescribePanel(QtGui.QWidget):
             return
         self.entry.clear()
         self._say("You", text)
-        base = _prefs().GetString("BaseUrl", "")
-        if not base:
+
+        cfg = llm_settings()
+        if not cfg["base_url"] or not cfg["planner_model"]:
             self._say("Constraint Kit",
                       "No model endpoint is configured, so I will not guess at what you meant. "
-                      "Open <b>Settings</b> and point it at any OpenAI-compatible endpoint — "
-                      "hosted, or a local server.")
+                      "Open <b>Settings</b> and point it at any OpenAI-compatible endpoint. A "
+                      "local server needs no key at all — Ollama is "
+                      "<code>http://127.0.0.1:11434/v1</code>, LM Studio "
+                      "<code>http://127.0.0.1:1234/v1</code>.")
             return
+
+        from .. import planner as _planner
+
+        QtGui.QApplication.setOverrideCursor(QtGui.Qt.WaitCursor)
+        try:
+            plan = _planner.plan(text, base_url=cfg["base_url"], api_key=cfg["api_key"],
+                                 model=cfg["planner_model"])
+        except Exception as exc:  # noqa: BLE001
+            FreeCAD.Console.PrintError("[ConstraintKit] planner: %s\n" % exc)
+            self._say("Constraint Kit", f"That did not work: {exc}")
+            return
+        finally:
+            QtGui.QApplication.restoreOverrideCursor()
+
+        if plan.declined:
+            msg = f"<b>I will not build that.</b> {plan.reason}"
+            if plan.nearest:
+                msg += f"<br><br>Nearest thing I can build: {plan.nearest}"
+            self._say("Constraint Kit", msg)
+            self.discard()
+            return
+
+        self._plan = plan
+        self.program.setPlainText(plan.render())
+        self.program.setVisible(True)
+        self.build_btn.setEnabled(True)
+        self.discard_btn.setEnabled(True)
+        note = f" {plan.notes}" if plan.notes else ""
+        extra = " (repaired once)" if plan.attempts > 1 else ""
         self._say("Constraint Kit",
-                  "The planner is not connected to this panel yet. In the meantime "
-                  "<b>Insert</b> builds any generator directly, and every value it guesses is "
-                  "tagged as a guess in the property editor.")
+                  f"Here is the program{extra} — {plan.summary()}. "
+                  f"Read it, then press <b>Build it</b>.{note}")
+
+    def build(self) -> None:
+        if self._plan is None:
+            return
+        from .. import planner as _planner
+
+        try:
+            made = _planner.build(self._plan)
+        except Exception as exc:  # noqa: BLE001
+            FreeCAD.Console.PrintError("[ConstraintKit] build: %s\n" % exc)
+            self._say("Constraint Kit", f"That would not build: {exc}")
+            return
+        names = ", ".join(o.Name for o in made)
+        self._say("Constraint Kit", f"Built: {names}. Every guessed value is marked in the "
+                                    "property editor.")
+        self._plan = None
+        self.build_btn.setEnabled(False)
+        self.discard_btn.setEnabled(False)
+        try:
+            FreeCADGui.SendMsgToActiveView("ViewFit")
+        except Exception:  # noqa: BLE001
+            pass
+        refresh_checks()
 
 
 # ------------------------------------------------------------------------------- provenance

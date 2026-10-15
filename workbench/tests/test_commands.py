@@ -383,7 +383,9 @@ def test_every_registered_command_is_reachable_from_the_interface():
     from ckwb.gui import spec
     reachable = set(spec.backing_commands()) | set(spec.PALETTE_ONLY)
     # These are opened through a picker or dialog rather than run directly by one button.
-    via_dialog = {"insert_part", "join", "export", "run_checks"}
+    via_dialog = {"insert_part", "join", "export", "run_checks",
+                  # run by the Describe panel's Build button rather than by a toolbar entry
+                  "describe"}
     orphans = set(registry.names()) - reachable - via_dialog
     assert not orphans, f"registered but unreachable from the UI: {sorted(orphans)}"
 

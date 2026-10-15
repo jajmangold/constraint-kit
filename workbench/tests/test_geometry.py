@@ -200,6 +200,67 @@ def test_extrusion_2020_has_the_right_envelope_and_is_lighter_than_solid():
     assert {"slot_x+", "slot_x-", "slot_y+", "slot_y-", "end"} <= set(frames), sorted(frames)
 
 
+# ----------------------------------------------------------------------------- ball screw
+
+@test
+def test_ball_screw_volume_and_machined_ends_are_exact():
+    """SFU1605: 16 mm nominal, 5 mm lead. Ends turned down for BK/BF supports."""
+    shape, frames = P.ball_screw(nominal_d=16.0, lead=5.0, length=500.0,
+                                 end_d=10.0, end_length=20.0)
+    expect = (math.pi / 4 * 16.0 ** 2 * (500.0 - 40.0)
+              + 2 * math.pi / 4 * 10.0 ** 2 * 20.0)
+    assert abs(shape.Volume - expect) < 1e-3, (shape.Volume, expect)
+    assert len(shape.Solids) == 1 and shape.isClosed()
+    bb = shape.BoundBox
+    assert abs(bb.ZLength - 500.0) < 1e-9, bb.ZLength
+    assert abs(bb.XLength - 16.0) < 1e-6, bb.XLength
+    assert {"axis", "end_a", "end_b", "nut_travel"} <= set(frames), sorted(frames)
+
+
+@test
+def test_ball_screw_reports_its_lead_so_a_screw_joint_can_use_it():
+    """The lead is the number that turns rotation into travel; it must be carried, not implied."""
+    _, frames = P.ball_screw(nominal_d=16.0, lead=5.0, length=300.0)
+    assert abs(P.ball_screw_lead(nominal_d=16.0, lead=5.0) - 5.0) < 1e-12
+    # 1600 steps/rev on a 5 mm lead is 320 steps/mm -- the measured figure for this hardware
+    assert abs(1600.0 / P.ball_screw_lead(nominal_d=16.0, lead=5.0) - 320.0) < 1e-9
+
+
+@test
+def test_ball_screw_refuses_ends_that_consume_the_shaft():
+    try:
+        P.ball_screw(nominal_d=16.0, lead=5.0, length=30.0, end_d=10.0, end_length=20.0)
+    except ValueError as exc:
+        assert "end" in str(exc).lower(), str(exc)
+        return
+    raise AssertionError("machined ends longer than the screw must be refused")
+
+
+@test
+def test_ball_nut_volume_matches_its_flange_and_bores():
+    shape, frames = P.ball_nut()
+    body_od, flange_od, flange_t, ln = 28.0, 48.0, 10.0, 48.0
+    bore, bc, bd, n = 16.0, 38.0, 6.5, 4
+    expect = (math.pi / 4 * body_od ** 2 * ln
+              + math.pi / 4 * (flange_od ** 2 - body_od ** 2) * flange_t
+              - math.pi / 4 * bore ** 2 * ln
+              - n * math.pi / 4 * bd ** 2 * flange_t)
+    assert abs(shape.Volume - expect) < 1e-2, (shape.Volume, expect)
+    assert len(shape.Solids) == 1, "the bolt circle must not sever the flange"
+    assert {"flange", "bore", "back"} <= set(frames), sorted(frames)
+
+
+@test
+def test_a_nut_runs_on_its_screw_without_interfering():
+    """The whole point of the pair: the nut's bore clears the screw's nominal diameter."""
+    screw, sf = P.ball_screw(nominal_d=16.0, lead=5.0, length=200.0)
+    nut, nf = P.ball_nut()
+    placement = align(FreeCAD.Placement(), sf["nut_travel"], nf["bore"])
+    moved = nut.copy()
+    moved.Placement = placement
+    assert screw.common(moved).Volume < 1e-6, "a 16.0 bore on a 16.0 screw must be modelled clear"
+
+
 # ---------------------------------------------------------------------------- the registry
 
 @test
