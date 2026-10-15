@@ -396,6 +396,48 @@ def sweep(moving: str, target: str, target_frame: str, moving_frame: str,
     })
 
 
+@registry.command(
+    "analyse",
+    "Deflection, stress and safety factor for one part. You choose where it is held and "
+    "where it is pushed; nothing is inferred",
+    params={"part": {"type": str, "required": True},
+            "fix": {"type": str, "required": True,
+                    "doc": "where it is HELD, as a selector over placed coordinates in mm: "
+                           "'x<=-59', or 'x>=24@xz' to restrain two axes as a roller does"},
+            "load": {"type": str, "required": True,
+                     "doc": "where the force is applied, same selector language"},
+            "force": {"type": list, "default": [0.0, 0.0, -100.0],
+                      "doc": "total force in newtons as [fx, fy, fz], divided over the "
+                             "selected material nodes"},
+            "material": {"type": str, "default": "petg",
+                         "doc": "petg, pla, abs, al6061 or steel"},
+            "pitch": {"type": float, "default": 2.0, "doc": "voxel pitch in mm"}})
+def analyse(part: str, fix: str, load: str, force: list = None,
+            material: str = "petg", pitch: float = 2.0) -> dict:
+    """Is it strong enough? The question the agent surface could not previously ask.
+
+    `physics.stiffness` existed and was verified against beam theory, and it was not a registered
+    command — so an agent could insert a part, mate it, check it for interference and export it,
+    and could not find out whether it would hold. A closed loop from parameters to performance
+    cannot exist while the loop is not connected.
+
+    Two things are deliberately NOT done here. **The boundary conditions are not guessed.**
+    Choosing where a part is held and where it is pushed is the engineering; a tool that infers
+    them produces something that looks like analysis. And **one mesh is not a converged answer** —
+    the verdict carries its pitch and element count so a number is never quoted without the
+    resolution it came from. Call it at two or three pitches and watch whether the answer moves.
+
+    For a printed material the interlayer verdict comes back as well, without being asked for,
+    because the isotropic answer is the wrong default for a part made of welds.
+    """
+    from . import physics as _physics
+
+    obj = _part(part)
+    out = _physics.stiffness(obj, material=material, pitch=float(pitch), fix=fix, load=load,
+                             force=tuple(float(v) for v in (force or [0.0, 0.0, -100.0])))
+    return _checks._stamp(obj.Document, out)
+
+
 @registry.command("undo", "Undo the last transaction", writes=False)
 def undo() -> dict:
     doc = active_document()

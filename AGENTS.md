@@ -84,14 +84,14 @@ python workbench/tests/test_core.py        # wb core        (32)
 # freecad tier - needs freecadcmd
 freecadcmd workbench/tests/test_geometry.py # parts, mates   (30)
 freecadcmd workbench/tests/test_document.py # doc, checks    (16)
-freecadcmd workbench/tests/test_commands.py # commands, API  (25)
+freecadcmd workbench/tests/test_commands.py # commands, API  (30)
 freecadcmd workbench/tests/test_planner.py  # plan + repair  (15)
 freecadcmd workbench/tests/test_import.py   # STEP import    (14)
 freecadcmd workbench/tests/test_motion.py   # travel, sweep  (17)
 python workbench/tests/test_agent_end_to_end.py  # MCP, cross-process (4)
 
 # gui tier - opens a real FreeCAD window for ~30 s
-python workbench/tests/run_gui_tests.py    # qt layer       (15)
+python workbench/tests/run_gui_tests.py    # qt layer       (17)
 
 # live tier - calls the configured endpoint, costs money
 CK_LIVE=1 freecadcmd workbench/tests/test_planner_live.py   # NL -> built  (4)
@@ -154,6 +154,12 @@ with a 2s model".
   **A safety factor read off a voxel bending stress is too high by that factor.** Four elements
   through a thickness still over-states SF by a quarter. See
   `tests/test_crosscheck.py::test_the_voxel_stress_bias_is_the_predicted_1_minus_pitch_over_thickness`.
+- **A linear solve reports deflection it has no right to.** Linear elasticity assumes rotations
+  stay small; past about a tenth of the span they are not, and the real part stiffens as it
+  deflects so the linear figure OVERSTATES the movement. Measured: a 4 mm bracket read 124 mm on
+  a 120 mm part, with the composure of a 5 mm answer. `physics` now reports `linear_valid`. The
+  criterion is deflection over SPAN, not over thickness — thickness was tried first and flagged a
+  valid 4.5%-of-span answer, which is how a warning gets trained out of a reader.
 - **von Mises is the wrong allowable check for a printed part.** It presumes a material with no
   preferred direction; an FDM wall is a stack of welds at roughly half the in-plane strength
   across them. Use `fea.printed.check` on the layer plane. Measured on the gantry plate: the

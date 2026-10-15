@@ -346,6 +346,138 @@ def test_physics_refuses_a_selector_that_matches_no_material():
     raise AssertionError("a restraint that selects nothing must raise, not solve a free body")
 
 
+@test
+def test_analyse_is_a_registered_command_so_an_agent_can_reach_the_physics():
+    """The gap this closes: the physics tier was reachable only by typing Python by hand.
+
+    `physics.stiffness` existed and was tested, but it was not a registered command, so an agent
+    driving the workbench over MCP could insert a part, mate it, check it for interference and
+    export it — and could not find out whether it was strong enough. A closed loop from
+    parameters to performance cannot exist while the loop is not connected, which makes this the
+    smallest change with the largest reach.
+    """
+    doc = new_doc()
+    obj = D.make_part(doc, "plate", None, name="Beam")
+    obj.Width, obj.Depth, obj.Thickness = 120.0, 12.0, 12.0
+    doc.recompute()
+
+    out = registry.call("analyse", part="Beam", material="al6061", pitch=2.0,
+                        fix="x<=-59", load="x>=59", force=[0.0, 0.0, -200.0])
+    analytic = 200.0 * 120.0 ** 3 / (3.0 * 68900.0 * (12.0 ** 4 / 12.0))
+    assert 0.45 * analytic < out["max_disp_mm"] < 1.10 * analytic, (out, analytic)
+    assert out["part"] == "Beam" and out["material"] == "al6061"
+    assert out["safety_factor"] > 0 and out["mass_g"] > 0
+    # it is a read: a verdict must not move the model
+    assert out.get("fingerprint"), "an analysis must be stamped like the other checks"
+    assert [t for t in registry.schema() if t["name"] == "analyse"][0]["writes"] is False
+
+
+@test
+def test_analyse_reports_the_interlayer_verdict_for_a_printed_material():
+    """A printed part has a weak direction, and the command must say so without being asked.
+
+    Leaving this behind a flag would mean the default answer for a printed part is the one that
+    presumes isotropy — which is the wrong default, because for the knee-exo gantry plate the
+    welds govern at SF 0.74 in the worst orientation against 1.63 in the best.
+    """
+    doc = new_doc()
+    obj = D.make_part(doc, "plate", None, name="Printed")
+    obj.Width, obj.Depth, obj.Thickness = 120.0, 12.0, 12.0
+    doc.recompute()
+
+    out = registry.call("analyse", part="Printed", material="petg", pitch=2.0,
+                        fix="x<=-59", load="x>=59", force=[0.0, 0.0, -40.0])
+    layers = out.get("interlayer")
+    assert layers, "a printed material must carry an interlayer verdict: " + repr(out)
+    assert set(layers) >= {"X", "Y", "Z"}, sorted(layers)
+    for name, entry in layers.items():
+        assert {"peel_mpa", "shear_mpa", "sf_peel", "sf_shear", "governing"} <= set(entry), entry
+    assert out["best_print_orientation"] in ("X", "Y", "Z"), out["best_print_orientation"]
+    # bending about Z: the layers worth avoiding are the ones normal to the bending stress
+    assert out["factors"]["tensile"] > 0.0 and out["factors"]["shear"] > 0.0, out["factors"]
+    assert "assum" in out["interlayer_note"].lower(), out["interlayer_note"]
+
+    # and NOT for an isotropic one, where the number would mean nothing
+    iso = registry.call("analyse", part="Printed", material="al6061", pitch=2.0,
+                        fix="x<=-59", load="x>=59", force=[0.0, 0.0, -40.0])
+    assert iso.get("interlayer") is None, iso.get("interlayer")
+
+
+@test
+def test_analyse_says_so_when_the_deflection_leaves_linear_theory_behind():
+    """Found by using it: a 4 mm bracket reported 124 mm of deflection, on a 120 mm part.
+
+    Linear small-displacement elasticity assumes rotations stay small enough that the geometry
+    does not change as the load is applied. A deflection on the order of the span breaks that
+    outright: the real structure stiffens as it deflects and the linear answer overshoots,
+    sometimes by a lot. The number is not merely imprecise, it is the answer to a different
+    question.
+
+    The criterion is deflection over SPAN, not over thickness -- rotation is what matters, and a
+    cantilever can move through several times its own thickness at a few degrees of rotation. A
+    thickness-based rule was tried first and flagged a valid 4.5%-of-span answer, which is how a
+    warning gets trained out of a reader.
+
+    Nothing in this tier can solve the nonlinear problem, and that is fine. What is not fine is
+    returning 124 mm with the same confidence as 5 mm, which is the plausible-failure mode
+    AGENTS.md rule 4 exists to prevent. So the verdict carries whether linear theory still holds.
+    """
+    doc = new_doc()
+    obj = D.make_part(doc, "plate", None, name="Floppy")
+    obj.Width, obj.Depth, obj.Thickness = 120.0, 20.0, 4.0
+    doc.recompute()
+
+    big = registry.call("analyse", part="Floppy", material="petg", pitch=2.0,
+                        fix="x<=-58", load="x>=58", force=[0.0, 0.0, -60.0])
+    assert big["max_disp_mm"] > 20.0, big["max_disp_mm"]
+    assert big["linear_valid"] is False, big
+    assert "linear" in big["linear_note"].lower(), big["linear_note"]
+    # it must say what it is large COMPARED TO, or the reader cannot judge it
+    assert "span" in big["linear_note"].lower(), big["linear_note"]
+    assert "120" in big["linear_note"], big["linear_note"]
+
+    # and a stiff version of the same part must NOT carry the warning
+    obj.Thickness = 12.0
+    doc.recompute()
+    small = registry.call("analyse", part="Floppy", material="petg", pitch=2.0,
+                          fix="x<=-58", load="x>=58", force=[0.0, 0.0, -60.0])
+    assert small["max_disp_mm"] < 10.0, small["max_disp_mm"]
+    assert small["linear_valid"] is True, small
+    assert small.get("linear_note") in (None, ""), small.get("linear_note")
+
+
+@test
+def test_analyse_refuses_an_unknown_part_and_an_unknown_material():
+    doc = new_doc()
+    D.make_part(doc, "plate", None, name="Beam")
+    doc.recompute()
+    for kwargs, expect in (
+            ({"part": "Nope", "material": "petg"}, "nope"),
+            ({"part": "Beam", "material": "unobtainium"}, "unobtainium")):
+        try:
+            registry.call("analyse", pitch=4.0, fix="x<=-29", load="x>=29",
+                          force=[0.0, 0.0, -10.0], **kwargs)
+        except Exception as exc:                                        # noqa: BLE001
+            assert expect in str(exc).lower(), (kwargs, str(exc))
+            continue
+        raise AssertionError("%s should have been refused" % kwargs)
+
+
+@test
+def test_analyse_appears_in_the_mcp_schema_with_its_arguments():
+    """An agent can only call what the schema advertises."""
+    tools = {t["name"]: t for t in registry.schema()}
+    assert "analyse" in tools, sorted(tools)
+    props = tools["analyse"]["input_schema"]["properties"]
+    assert {"part", "material", "pitch", "fix", "load", "force"} <= set(props), sorted(props)
+    required = tools["analyse"]["input_schema"].get("required", [])
+    for name in ("part", "fix", "load"):
+        assert name in required, (name, required)
+    # the description has to say the boundary conditions are the caller's to choose
+    text = tools["analyse"]["description"].lower()
+    assert "fix" in text or "boundary" in text or "held" in text, text
+
+
 # --------------------------------------------------------------------------- the interface spec
 
 @test

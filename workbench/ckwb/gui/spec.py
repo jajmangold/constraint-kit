@@ -44,6 +44,11 @@ PALETTE_ONLY = (
     "plan",
     "import_step",
     "sweep",
+    # Physics from the palette rather than the toolbar, because it needs boundary conditions
+    # typed in and those are a decision, not a click. A one-button "is it strong enough?" would
+    # have to guess where the part is held, and a guessed restraint produces a number that looks
+    # like analysis and is not.
+    "analyse",
 )
 
 #: Dockable panels. `area` is a Qt dock area name resolved in panels.py.

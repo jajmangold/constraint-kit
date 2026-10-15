@@ -117,6 +117,31 @@ def _selector(expr: str):
     return parse_fix(expr)
 
 
+def prepare(obj, pitch: float = 2.0, material: str = "petg") -> dict:
+    """Everything that must happen on the GUI thread, and nothing that need not.
+
+    Tessellation is OCCT, so it has to run where OCCT is safe. The solve after it is numpy and
+    scipy only and is safe anywhere — which is the whole reason the physics tier was built with
+    no CAD dependency, and it pays off exactly here: a 60k-DOF solve can go to a worker thread
+    while the triangles are produced on the thread that owns the geometry.
+
+    Returns the argument bundle `solve_prepared` wants. Call it from the GUI thread, hand the
+    result to a worker.
+    """
+    key = str(material).lower()
+    if key not in MATERIALS:
+        raise ValueError(f"unknown material {material!r}; have {', '.join(sorted(MATERIALS))}")
+    shape = getattr(obj, "Shape", None)
+    if shape is None or shape.isNull():
+        raise ValueError(f"{getattr(obj, 'Name', obj)} has no shape to analyse")
+    return {
+        "part": getattr(obj, "Name", ""),
+        "material": key,
+        "pitch": float(pitch),
+        "triangles": triangles_of(shape, max(float(pitch) / 4.0, 1e-3)),
+    }
+
+
 def stiffness(obj, material: str = "petg", pitch: float = 2.0, *,
               fix: str, load: str, force=(0.0, 0.0, -100.0)) -> dict:
     """Solve one part for deflection and stress. Boundary conditions are arguments, never guessed.
@@ -129,18 +154,19 @@ def stiffness(obj, material: str = "petg", pitch: float = 2.0, *,
     resolution it came from. For a converged answer run several pitches and extrapolate with
     `constraint_kit.fea.richardson`, which declines rather than inventing a limit.
     """
+    bundle = prepare(obj, pitch=pitch, material=material)
+    return solve_prepared(bundle, fix=fix, load=load, force=force)
+
+
+def solve_prepared(bundle: dict, *, fix: str, load: str,
+                   force=(0.0, 0.0, -100.0)) -> dict:
+    """The numpy half: voxelise the triangles and solve. Safe on any thread."""
     fea = _import_fea()
-    key = str(material).lower()
-    if key not in MATERIALS:
-        raise ValueError(f"unknown material {material!r}; have {', '.join(sorted(MATERIALS))}")
+    key = bundle["material"]
     E, nu, density, allowable, _note = MATERIALS[key]
+    pitch = float(bundle["pitch"])
 
-    shape = getattr(obj, "Shape", None)
-    if shape is None or shape.isNull():
-        raise ValueError(f"{getattr(obj, 'Name', obj)} has no shape to analyse")
-
-    tri = triangles_of(shape, max(pitch / 4.0, 1e-3))
-    grid = fea.occupancy_from_triangles(tri, float(pitch), pad=1)
+    grid = fea.occupancy_from_triangles(bundle["triangles"], pitch, pad=1)
 
     model = fea.Model(grid, E, nu)
     for expr in (fix,) if isinstance(fix, str) else fix:
@@ -154,10 +180,10 @@ def stiffness(obj, material: str = "petg", pitch: float = 2.0, *,
     res = model.solve(method="auto" if direct_solver_available() else "cg")
     volume_cm3 = grid.material_volume / 1000.0
     peak = res.von_mises_percentile(99.0)
-    return {
-        "part": getattr(obj, "Name", ""),
+    out = {
+        "part": bundle.get("part", ""),
         "material": key,
-        "pitch_mm": float(pitch),
+        "pitch_mm": pitch,
         "elements": int(len(res.active_elements)),
         "dof": int(res.n_dof),
         "method": res.method,
@@ -172,4 +198,97 @@ def stiffness(obj, material: str = "petg", pitch: float = 2.0, *,
         "compliance": res.compliance,
         "direct_solver": direct_solver_available(),
         "note": "one mesh is not a converged answer; run a ladder and extrapolate",
+    }
+    out.update(_linearity(res.max_displacement, grid))
+    if key in PRINTED:
+        out.update(_interlayer(fea, res, allowable))
+    return out
+
+
+# Deflection beyond this fraction of the part's SPAN means linear theory has been left behind.
+#
+# Against the span, not the thickness -- which was the first thing tried here and is the wrong
+# criterion. What linear elasticity actually assumes is that ROTATIONS stay small enough for
+# sin(theta) ~ theta and for the geometry not to change as the load is applied, and rotation
+# scales with deflection over span. A cantilever can deflect through several times its own
+# thickness while its rotations are still a few degrees; a thickness-based rule flagged a
+# perfectly valid 4.5%-of-span answer and would have taught everyone to ignore the warning.
+#
+# A tenth of the span is the conventional line: about 6 degrees of rotation.
+LINEAR_LIMIT = 0.10
+
+
+def _linearity(deflection: float, grid) -> dict:
+    """Does the answer still satisfy the assumption it was computed under?
+
+    Found by using the thing: a 4 mm bracket reported 124 mm of deflection on a 120 mm part, with
+    the same composure as a 5 mm answer. Linear small-displacement elasticity assumes the
+    geometry does not change as the load is applied; a deflection comparable to the part's own
+    thickness breaks that outright. The number is then not imprecise, it is the answer to a
+    different question.
+
+    Nothing here can solve the nonlinear problem, and that is fine. Reporting the linear number
+    without saying so is not -- it is exactly the believable-wrong-answer failure that has been
+    the expensive kind in this codebase.
+    """
+    import numpy as np
+
+    occupied = np.argwhere(grid.density > 0.0)
+    if occupied.size == 0:
+        return {"linear_valid": True, "linear_note": ""}
+    extent = (occupied.max(axis=0) - occupied.min(axis=0) + 1) * np.asarray(grid.pitch)
+    span = float(extent.max())
+    ratio = deflection / span if span > 0 else 0.0
+    if ratio <= LINEAR_LIMIT:
+        return {"linear_valid": True, "linear_note": ""}
+    return {
+        "linear_valid": False,
+        "linear_note": (
+            "deflection is %.3g mm across a span of %.3g mm (%.0f%%), so rotations are no longer "
+            "small and linear small-displacement theory does not hold here. The real part "
+            "stiffens as it deflects, so this figure OVERSTATES the movement -- read it as 'far "
+            "too floppy', not as a number. Stiffen it and run again; nothing in this tier solves "
+            "the large-displacement problem." % (deflection, span, 100.0 * ratio)),
+    }
+
+
+# Which materials are PRINTED, and so have a weak direction no isotropic measure can see. An
+# interlayer check on wrought aluminium or mild steel would be a number that means nothing.
+PRINTED = {"petg", "pla", "abs"}
+
+
+def _interlayer(fea, res, allowable: float) -> dict:
+    """Rank the three printable orientations by whether the WELDS survive.
+
+    Reported by default rather than behind a flag, because for a printed part the isotropic
+    answer is the wrong default. On the knee-exo gantry plate the welds govern at SF 0.74 printed
+    on its end against 1.63 printed flat, from the same load and the same geometry -- so the
+    orientation is a structural decision, and one a von Mises number cannot express.
+    """
+    from constraint_kit.fea import printed
+
+    if getattr(res, "stress", None) is None:
+        return {}
+    ranked = printed.best_orientation(res.stress, in_plane_allowable=allowable)
+    table = {}
+    for name, check in ranked:
+        table[name] = {
+            "peel_mpa": round(check.peel, 4),
+            "shear_mpa": round(check.shear, 4),
+            "sf_peel": None if check.sf_peel == float("inf") else round(check.sf_peel, 3),
+            "sf_shear": None if check.sf_shear == float("inf") else round(check.sf_shear, 3),
+            "governing": None if check.governing == float("inf") else round(check.governing, 3),
+            "governing_mode": check.governing_mode,
+            "passes": check.passes,
+        }
+    return {
+        "interlayer": table,
+        "best_print_orientation": ranked[0][0],
+        "worst_print_orientation": ranked[-1][0],
+        "factors": dict(ranked[0][1].factors),
+        "interlayer_note": (
+            "across-layer allowables are ASSUMED from the in-plane one by the factors above: "
+            "literature-typical for unannealed FDM, not measured for this filament, nozzle "
+            "temperature, layer height or printer. Measure them if the margin is thin. The "
+            "orientation named is the layer-plane normal to print with."),
     }

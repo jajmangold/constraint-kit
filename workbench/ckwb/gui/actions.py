@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import FreeCAD
 import FreeCADGui
-from PySide import QtGui
+from PySide import QtCore, QtGui
 
 from ..registry import registry
 from . import spec
@@ -27,8 +27,12 @@ def _report(title: str, body: str, icon=QtGui.QMessageBox.Information) -> None:
     box.exec_()
 
 
-def _fail(title: str, exc: BaseException) -> None:
-    """Show a failure as a sentence, and log it. Never a bare traceback in a dialog."""
+def _fail(title: str, exc) -> None:
+    """Show a failure as a sentence, and log it. Never a bare traceback in a dialog.
+
+    Takes an exception or a plain message: a worker thread delivers its failure as a string
+    through a Qt signal, because an exception cannot cross one.
+    """
     FreeCAD.Console.PrintError(f"[ConstraintKit] {title}: {exc}\n")
     _report(title, str(exc), QtGui.QMessageBox.Warning)
 
@@ -157,31 +161,123 @@ class CheckCommand(_Base):
         refresh_checks()
 
 
+class AnalyseWorker(QtCore.QThread):
+    """The structural solve, off the GUI thread.
+
+    **The tessellation happens in `__init__`, deliberately.** A constructor runs on whoever
+    called it, which here is the GUI thread, and `Shape.tessellate` is OCCT — not safe anywhere
+    else. Only `run()` crosses onto the worker, and everything it touches is numpy and scipy.
+    That split is the whole reason the physics tier was built with no CAD dependency.
+
+    Without this the interface freezes for the length of the solve: a 60k-DOF conjugate-gradient
+    run is tens of seconds, and FreeCAD painting nothing while it happens is the same defect the
+    planner already had and had fixed.
+    """
+
+    finished_ok = QtCore.Signal(dict)
+    failed = QtCore.Signal(str)
+
+    def __init__(self, kwargs: dict, parent=None):
+        super().__init__(parent)
+        from .. import physics as _physics
+
+        self._kwargs = dict(kwargs)
+        self._bundle = None
+        self._error = None
+        try:
+            doc = FreeCAD.ActiveDocument
+            obj = doc.getObject(self._kwargs["part"]) if doc else None
+            if obj is None:
+                raise ValueError("no part named %r in this document" % self._kwargs["part"])
+            self._bundle = _physics.prepare(obj, pitch=self._kwargs.get("pitch", 2.0),
+                                            material=self._kwargs.get("material", "petg"))
+        except Exception as exc:                                     # noqa: BLE001
+            self._error = str(exc)
+
+    def run(self):
+        from .. import physics as _physics
+
+        if self._error is not None:
+            self.failed.emit(self._error)
+            return
+        try:
+            out = _physics.solve_prepared(
+                self._bundle,
+                fix=self._kwargs["fix"], load=self._kwargs["load"],
+                force=tuple(float(v) for v in self._kwargs.get("force", (0, 0, -100))))
+        except Exception as exc:                                     # noqa: BLE001
+            self.failed.emit(str(exc))
+            return
+        self.finished_ok.emit(out)
+
+
 class AnalyseCommand(_Base):
     cid, label = "CK_Analyse", "Analyse"
     tip = "Stiffness and stress for the selected part"
     pixmap = "ck-analyse"
 
+    _worker = None          # held so Qt does not collect the thread mid-solve
+
     def Activated(self):
+        from . import panels as _panels
+
         sel = FreeCADGui.Selection.getSelection()
         if not sel:
             return _report("Analyse", "Select one part first.")
         obj = sel[0]
-        bb = obj.Shape.BoundBox
-        _report(
-            "Analyse",
-            f"Structural analysis needs boundary conditions, and guessing them would produce "
-            f"something that looks like analysis and is not.\n\n"
-            f"{obj.Name} spans\n"
-            f"  x {bb.XMin:.1f} … {bb.XMax:.1f}\n"
-            f"  y {bb.YMin:.1f} … {bb.YMax:.1f}\n"
-            f"  z {bb.ZMin:.1f} … {bb.ZMax:.1f}  (mm)\n\n"
-            f"Run it with the restraint and load you intend, e.g. from the Python console:\n\n"
-            f"  from ckwb import physics\n"
-            f"  physics.stiffness(App.ActiveDocument.{obj.Name}, material='petg', pitch=2.0,\n"
-            f"      fix='x<={bb.XMin + 1:.0f}', load='x>={bb.XMax - 1:.0f}',\n"
-            f"      force=(0, 0, -100))\n\n"
-            f"Use '@xz' on a restraint for a roller that reacts in two axes only.")
+        if getattr(obj, "Shape", None) is None or obj.Shape.isNull():
+            return _report("Analyse", "%s has no shape to analyse." % obj.Name)
+
+        dialog = _panels.AnalyseDialog(FreeCADGui.getMainWindow(), obj)
+        if dialog.exec_() != QtGui.QDialog.Accepted:
+            return
+        kwargs = dialog.arguments()
+        if not kwargs["fix"] or not kwargs["load"]:
+            return _report("Analyse", "Both a restraint and a load are needed; neither is "
+                                      "something this can choose for you.")
+        if not any(kwargs["force"]):
+            return _report("Analyse", "The force is zero in every axis, so there is nothing to "
+                                      "solve.")
+
+        FreeCAD.Console.PrintMessage(
+            "[ConstraintKit] analysing %s at %.2f mm pitch...%s"
+            % (kwargs["part"], kwargs["pitch"], chr(10)))
+        AnalyseCommand._worker = AnalyseWorker(kwargs, FreeCADGui.getMainWindow())
+        AnalyseCommand._worker.finished_ok.connect(self._done)
+        AnalyseCommand._worker.failed.connect(
+            lambda msg: _fail("Analysis could not run", msg))
+        AnalyseCommand._worker.start()
+
+    @staticmethod
+    def _done(out: dict):
+        lines = [
+            "%s, %s at %.2f mm pitch -- %d elements, %d DOF (%s)"
+            % (out["part"], out["material"], out["pitch_mm"], out["elements"], out["dof"],
+               out["method"]),
+            "",
+            "  mass          %8.1f g" % out["mass_g"],
+            "  deflection    %8.4f mm" % out["max_disp_mm"],
+            "  stress p99    %8.2f MPa  against %.0f allowable" % (out["stress_p99_mpa"],
+                                                                   out["allowable_mpa"]),
+            "  safety factor %8s" % ("n/a" if out["safety_factor"] is None
+                                     else "%.2f" % out["safety_factor"]),
+            "",
+            "One mesh is not a converged answer. Run it again at a finer pitch; if the numbers "
+            "move, the coarse one was not telling you about the part.",
+        ]
+        if out.get("interlayer"):
+            best, worst = out["best_print_orientation"], out["worst_print_orientation"]
+            lines += ["", "Printed, so the WELDS are a separate failure mode:"]
+            for name in ("X", "Y", "Z"):
+                entry = out["interlayer"][name]
+                gov = entry["governing"]
+                lines.append("  layers normal to %s   SF %s  (%s)"
+                             % (name, "n/a" if gov is None else "%.2f" % gov,
+                                entry["governing_mode"]))
+            lines.append("  Print it with the layers normal to %s. Normal to %s the welds are "
+                         "the binding constraint, not the material." % (best, worst))
+            lines.append("  " + out["interlayer_note"])
+        _report("Analysis", chr(10).join(lines))
 
 
 class ExportCommand(_Base):

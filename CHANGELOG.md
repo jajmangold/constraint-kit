@@ -2,6 +2,59 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-16 (finally) — connecting the loop: parameters to performance
+
+The physics tier was verified, cross-validated against CalculiX, and **unreachable**. `stiffness`
+existed in the workbench bridge and was tested against beam theory, and it was not a registered
+command — so an agent driving the workbench could insert a part, mate it, check it for
+interference and export it, and could not find out whether it would hold. A closed loop from
+parameters to performance cannot exist while the loop is not connected.
+
+- `[feat]` **`analyse` is now a registered command.** Reachable over MCP, in the palette, and in
+  the MCP schema with its arguments documented. One sweep an agent can now do unaided, on a
+  120 x 20 PETG bracket held at one end and pushed with 60 N at the other:
+
+  | thickness | mass g | deflection | p99 MPa | SF | linear? |
+  |---|---|---|---|---|---|
+  | 4 mm | 12.2 | 124.26 mm | 51.81 | 0.29 | **NO** |
+  | 6 mm | 18.3 | 40.51 mm | 32.80 | 0.46 | **NO** |
+  | 8 mm | 24.4 | 17.76 mm | 21.46 | 0.70 | **NO** |
+  | 12 mm | 36.6 | 5.44 mm | 10.84 | **1.38** | yes |
+
+- `[feat]` **The verdict says when linear theory has been left behind** — which the table above
+  is the reason for. A 4 mm bracket reported 124 mm of deflection on a 120 mm part with exactly
+  the composure of a 5 mm answer. Linear elasticity assumes rotations stay small enough that the
+  geometry does not change under load; at 103% of span that is simply false, and the real part
+  stiffens as it deflects so the figure *overstates* the movement. Nothing in this tier solves
+  the nonlinear problem and that is fine; reporting the linear number without saying so is the
+  believable-wrong-answer failure that rule 4 exists to prevent. Only the 12 mm row is a number
+  anyone should quote.
+- `[fix]` **The criterion is deflection over SPAN, not over thickness.** Thickness was tried
+  first and is wrong: rotation is what matters, and a cantilever can move through several times
+  its own thickness at a few degrees. The thickness rule flagged a valid 4.5%-of-span answer,
+  which is how a warning gets trained out of a reader. A tenth of the span is about 6 degrees.
+- `[feat]` **A printed part gets its interlayer verdict without being asked**, because for a part
+  made of welds the isotropic answer is the wrong default.
+- `[feat]` **`physics.prepare` / `physics.solve_prepared`** split the bridge along the only line
+  that matters: tessellation is OCCT and must run on the GUI thread, the solve is numpy and runs
+  anywhere. `stiffness` still composes both, so nothing that called it changed.
+- `[feat]` **The Analyse button now analyses.** It used to print a Python snippet to paste into
+  the console — right about not inferring a restraint, wrong about what to ask of a person.
+  `AnalyseDialog` pre-fills the selectors from the part's own bounding box along its longest
+  axis, in editable fields, beside the span they refer to. **That is a proposal, not a guess: the
+  difference is whether a human had to look at it before it ran**, and here they do. The solve
+  then goes to `AnalyseWorker`, whose constructor tessellates on the GUI thread and whose `run()`
+  touches nothing but numpy — the same freeze the planner already had, not repeated.
+- `[test]` Six new tests (four headless, two in the real GUI), including that `analyse` is
+  read-only and stamped like the other checks, that the dialog's proposals are editable, and that
+  `worker.start()` returns immediately rather than solving in place.
+- `[fix]` An existing test earned its keep: `test_every_registered_command_is_reachable_from_the_interface`
+  failed the moment `analyse` was registered without a home in the UI, which is exactly the drift
+  between the two surfaces it was written to prevent.
+
+**243 tests across 13 suites.**
+
+
 ## 2026-10-16 (last) — printed parts are anisotropic and von Mises does not know that (closes #2)
 
 - `[feat]` **`fea/printed.py`** — the check an isotropic stress measure cannot express. An FDM

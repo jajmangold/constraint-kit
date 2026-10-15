@@ -417,6 +417,81 @@ def test_the_settings_dialog_builds_without_touching_the_real_config():
     pump()
 
 
+# ------------------------------------------------------------------------------- analyse
+
+@test
+def test_the_analyse_dialog_proposes_boundary_conditions_without_committing_to_them():
+    """The line this walks: do not guess the engineering, do not make them type Python either.
+
+    Before this, Analyse printed a Python snippet to paste into the console — right about not
+    inferring a restraint, wrong about what a user should have to do. The dialog pre-fills the
+    selectors from the part's own bounding box, which is a *proposal* sitting in an editable
+    field, and nothing runs until Analyse is pressed. The difference between a proposal and a
+    guess is whether a human had to look at it.
+    """
+    from ckwb import document as D
+    from ckwb.gui import panels
+
+    doc = new_doc()
+    obj = D.make_part(doc, "plate", None, name="Beam")
+    obj.Width, obj.Depth, obj.Thickness = 120.0, 12.0, 12.0
+    doc.recompute()
+
+    dialog = panels.AnalyseDialog(main_window(), obj)
+    try:
+        # the span is shown, so the selectors can be read against something
+        assert "120" in dialog.span.text() or "60" in dialog.span.text(), dialog.span.text()
+        # and the proposals are real selectors over this part, not placeholders
+        for field in (dialog.fix, dialog.load):
+            assert field.text().strip(), "the dialog must propose a selector, not an empty box"
+            assert field.text().strip()[0] in "xyz", field.text()
+            assert field.isReadOnly() is False, "a proposal the user cannot edit is a guess"
+        assert dialog.material.currentText() in ("petg", "pla", "abs", "al6061", "steel")
+        assert dialog.pitch.value() > 0.0
+
+        kwargs = dialog.arguments()
+        assert kwargs["part"] == "Beam", kwargs
+        assert len(kwargs["force"]) == 3, kwargs
+        assert any(v != 0.0 for v in kwargs["force"]), "a zero load would solve nothing"
+    finally:
+        dialog.reject()
+        dialog.deleteLater()
+    pump()
+
+
+@test
+def test_analyse_runs_off_the_gui_thread_and_reports_a_safety_factor():
+    """A 60k-DOF solve on the GUI thread freezes FreeCAD, which is the defect already fixed once."""
+    import time
+
+    from ckwb import document as D
+    from ckwb.gui import actions
+
+    doc = new_doc()
+    obj = D.make_part(doc, "plate", None, name="Beam")
+    obj.Width, obj.Depth, obj.Thickness = 120.0, 12.0, 12.0
+    doc.recompute()
+
+    worker = actions.AnalyseWorker(
+        {"part": "Beam", "material": "al6061", "pitch": 3.0,
+         "fix": "x<=-59", "load": "x>=59", "force": [0.0, 0.0, -200.0]})
+    done = {}
+    worker.finished_ok.connect(lambda out: done.update(out))
+    worker.failed.connect(lambda msg: done.update({"error": msg}))
+
+    started = time.time()
+    worker.start()
+    assert time.time() - started < 0.5, (
+        "start() took %.2fs; the solve is running on the GUI thread" % (time.time() - started))
+
+    wait_for(lambda: bool(done), timeout=120.0, what="the analysis to report back")
+    assert "error" not in done, done["error"]
+    assert done["safety_factor"] > 0, done
+    assert done["dof"] > 1000, done
+    worker.wait(5000)
+    pump()
+
+
 # ------------------------------------------------------------------------------ the console
 
 @test

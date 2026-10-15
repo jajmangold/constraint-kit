@@ -385,6 +385,108 @@ class ProvenancePanel(QtGui.QWidget):
 
 # -------------------------------------------------------------------------------- settings
 
+class AnalyseDialog(QtGui.QDialog):
+    """Boundary conditions, proposed from the part's own geometry and editable before they run.
+
+    The line this walks is worth stating, because the previous version got one half right and
+    the other half wrong. It refused to guess a restraint — correct, because choosing where a
+    part is held IS the engineering and a tool that infers it produces something that looks like
+    analysis — and then told the user to go and type Python in the console, which is not a
+    reasonable thing to ask of anyone.
+
+    So the selectors arrive **pre-filled from the bounding box and sitting in editable fields**,
+    beside the span they refer to. That is a proposal, not a guess: the difference is whether a
+    human had to look at it before it ran, and here they do. Nothing solves until Analyse is
+    pressed.
+    """
+
+    def __init__(self, parent=None, obj=None):
+        super().__init__(parent)
+        from .. import physics as _physics
+
+        self._obj = obj
+        self.setWindowTitle("Analyse %s" % getattr(obj, "Name", ""))
+        form = QtGui.QFormLayout(self)
+
+        bb = obj.Shape.BoundBox
+        self.span = QtGui.QLabel(
+            "x %.1f to %.1f    y %.1f to %.1f    z %.1f to %.1f  (mm)"
+            % (bb.XMin, bb.XMax, bb.YMin, bb.YMax, bb.ZMin, bb.ZMax))
+        self.span.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        form.addRow("This part spans", self.span)
+
+        # Propose along the LONGEST axis: it is the one a part is usually held at one end of and
+        # loaded at the other, and being wrong about it is visible in a field the user is reading.
+        spans = {"x": (bb.XMin, bb.XMax), "y": (bb.YMin, bb.YMax), "z": (bb.ZMin, bb.ZMax)}
+        axis = max(spans, key=lambda k: spans[k][1] - spans[k][0])
+        lo, hi = spans[axis]
+        inset = max((hi - lo) * 0.02, 0.5)
+
+        self.fix = QtGui.QLineEdit("%s<=%.3g" % (axis, lo + inset))
+        self.load = QtGui.QLineEdit("%s>=%.3g" % (axis, hi - inset))
+        self.fix.setToolTip("Where the part is HELD. Add '@xz' to restrain two axes only, which "
+                            "is what a roller or a V-wheel actually does.")
+        self.load.setToolTip("Where the force is applied. Same selector language.")
+        form.addRow("Held where", self.fix)
+        form.addRow("Loaded where", self.load)
+
+        row = QtGui.QHBoxLayout()
+        self.fx, self.fy, self.fz = (self._force_box(0.0), self._force_box(0.0),
+                                     self._force_box(-100.0))
+        for label, box in (("X", self.fx), ("Y", self.fy), ("Z", self.fz)):
+            row.addWidget(QtGui.QLabel(label))
+            row.addWidget(box)
+        holder = QtGui.QWidget()
+        holder.setLayout(row)
+        form.addRow("Total force, N", holder)
+
+        self.material = QtGui.QComboBox()
+        self.material.addItems(sorted(_physics.MATERIALS))
+        self.material.setCurrentIndex(max(0, self.material.findText("petg")))
+        form.addRow("Material", self.material)
+
+        self.pitch = QtGui.QDoubleSpinBox()
+        self.pitch.setRange(0.1, 50.0)
+        self.pitch.setDecimals(2)
+        self.pitch.setSingleStep(0.5)
+        self.pitch.setValue(2.0)
+        self.pitch.setToolTip("Voxel pitch in mm. One mesh is not a converged answer -- run two "
+                              "or three and watch whether the number moves.")
+        form.addRow("Mesh pitch, mm", self.pitch)
+
+        note = QtGui.QLabel(
+            "These are proposals from the bounding box, not a judgement about how the part is "
+            "mounted. Choosing where it is held and pushed is the engineering; read them before "
+            "you run them.")
+        note.setWordWrap(True)
+        form.addRow(note)
+
+        buttons = QtGui.QDialogButtonBox(QtGui.QDialogButtonBox.Ok
+                                         | QtGui.QDialogButtonBox.Cancel)
+        buttons.button(QtGui.QDialogButtonBox.Ok).setText("Analyse")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    @staticmethod
+    def _force_box(value: float):
+        box = QtGui.QDoubleSpinBox()
+        box.setRange(-1e6, 1e6)
+        box.setDecimals(1)
+        box.setValue(value)
+        return box
+
+    def arguments(self) -> dict:
+        return {
+            "part": getattr(self._obj, "Name", ""),
+            "material": self.material.currentText(),
+            "pitch": float(self.pitch.value()),
+            "fix": self.fix.text().strip(),
+            "load": self.load.text().strip(),
+            "force": [float(self.fx.value()), float(self.fy.value()), float(self.fz.value())],
+        }
+
+
 class SettingsDialog(QtGui.QDialog):
     """Model endpoint and agent access. Keys go to FreeCAD's parameter store, never the document."""
 
