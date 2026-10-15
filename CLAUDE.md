@@ -2,7 +2,12 @@
 
 Generate **exact parametric CAD assemblies** from natural language: an LLM plans parts+params+mates,
 parametric generators emit B-rep geometry, a deterministic mate kernel assembles them, and the result
-is rendered + QA'd. Thesis: `README.md`.
+is rendered + QA'd, and a physics tier says whether the result is any good. Thesis: `README.md`.
+
+**This file is the architecture reference.** How to work here (TDD, changelog, issues, gotchas) is
+[`AGENTS.md`](AGENTS.md); the active plan and its ordering is [`PLAN.md`](PLAN.md); what changed and
+why is [`CHANGELOG.md`](CHANGELOG.md). `ROADMAP.md` is the original screw→car→home thesis and
+`PLAN.md` supersedes it on ordering, because the goal is now building specific machines.
 
 Working dir: `CK_WORK_DIR` env var (default: `/tmp/constraint-kit`).
 
@@ -38,6 +43,11 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
   builder.py           # 3D LEAF assembly: ordered mate solve -> cadquery.Assembly -> STEP+GLB + mass
   assembly.py          # HIERARCHY: recursive subassemblies + ports + BOM/mass + build_design + interference
   parameters.py        # TOP-DOWN design: requirements -> derived params (safe AST eval, provenance) [Phase B]
+  fea/                 # PHYSICS TIER -- numpy+scipy ONLY, no CAD dep, runs on a bare host    [PLAN Phase 0]
+    hex8.py            #   trilinear hex element, stiffness by 2x2x2 Gauss quadrature (not a pasted table)
+    voxel.py           #   Grid/Model/Result: chunked reduced assembly, direct|Jacobi-CG solve, von Mises
+    sample.py          #   triangle soup -> occupancy by ray parity; dependency-free STL reader; OCC path
+    convergence.py     #   Richardson extrapolation; refuses a non-monotone or non-geometric ladder
   massprops.py         # mass properties: exact CG + inertia tensor (OCC GProp, density-weighted) [T4.1]
   bom.py               # BOM document export (Markdown/CSV) from a build-tree roll-up [T7.3]
   drawing.py           # 2D drawing export [T7.2]: cross-section DXF + orthographic projection SVGs + overall dims
@@ -394,13 +404,34 @@ size, DXF validity (ezdxf audit), and the atlas round-trip (or fail-soft when th
 tests/run.sh            # docker exec into cadkit; exit 0 = all pass (gates changes)
 ```
 
-113 tests, all passing. Add a test alongside any new part/mate (assert the invariant, not just "it runs").
+**Two tiers, deliberately.** `tests/test_fea.py` (19) and `tests/test_convergence.py` (16) need only
+numpy + scipy, so they run on a bare host and inside FreeCAD's Python. `tests/test_kernel.py` (113)
+needs the container stack (`build123d`, `bd_warehouse`, `cq_gears`, `z3`, `python_solvespace`,
+`trimesh`); on a bare host it reports **86/113 with 27 import failures, which is expected, not a
+regression**. `tools/ci.sh` runs the host suites always and the container suite when `cadkit` is up.
+
+The physics suite asserts algebra and closed-form elasticity: element symmetry, exactly six
+rigid-body modes, uniform-strain patch test, `PL/AE` and `P/A` exact to 1e-9, and bending
+*convergent* to 95.7/97.7/98.5 % of Timoshenko at 4/6/8 elements through thickness — the trend is
+the assertion, because a trilinear hex locks in bending and a loose tolerance on one mesh would
+pass for the wrong reasons.
+
+Add a test alongside any new part/mate (assert the invariant, not just "it runs"), and write it
+**before** the code — `AGENTS.md` has the TDD protocol.
 Lesson baked into the suite: verify with **geometry** (anchor/bbox math), not the VLM — a vision model is a
 categorical second opinion that misreads counts/angles (it called a bolted plate "no gear" from a `hero`
 angle, then "2 bolts, yes gear" from `three_quarter`); the deterministic tests are ground truth.
 
 ## Phases
 
+These are the *kernel* phases, historical. The forward plan — physics, a parametric source of
+truth per machine, the missing joints (`prismatic`/`screw`/`belt`/`gear_rack`), freeform geometry,
+STEP import, closed-loop optimization — is in [`PLAN.md`](PLAN.md), which is where to look for
+what to do next.
+
+- **PLAN Phase 0 — physics tier** ✅ `fea/`, 35 verified tests, `drivers/fea_part.py`. First real
+  result: the knee-exo gantry plate under its documented 764 N belt load is comfortable on stress
+  (SF 2.9) and **compliant** — >1 mm of give in series with the drive.
 - **Phase 0 — 3D assembly** ✅ plate/spur_gear/spacer, coincident+contact mates, STEP+GLB, Blender render, VLM QA, atlas.
 - **Phase 1 — 2D layout → DXF** ✅ rect_panel/disc/bracket, coincident+offset, DXF (per-part layers) + PNG preview, VLM QA, atlas.
 - **Phase 2 (cadquery-native) — engineering parts & mates.** ✅ `mesh` gear-mate (exact involute center
