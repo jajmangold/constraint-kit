@@ -33,11 +33,24 @@ Every `CkTask.requires = "sequential-thinking + atlas-update"`.
 | E8 | lifecycle-and-packaging | parametric edit/re-solve, versioning, CI, subpackage reorg |
 | E9 | rule-validation | standards/code/design-rule checks fed by the spec compiler |
 
-31 tasks, 13 research items (see atlas / `tools/seed_backlog.py`). **✅ done so far:** T3.2 spatial
-interference prefilter · T8.4 CI runner · T1.1 fillet/chamfer finish · T2.1 geometric port-derivation.
-**Suggested next (promote from backlog):** T4.1 CG+inertia roll-up · T7.3 BOM document export · T1.5
-parametric housing part · T6.1 library loader (well-defined, unblocked). Query `status='todo'` for the live
-queue; blocked items wait on their `BLOCKED_BY` research.
+> **Ordering now lives in [`PLAN.md`](PLAN.md), and the live queue is
+> [GitHub issues](../../issues), milestoned by phase.** This table is the epic map, not the work list.
+
+31 tasks, 13 research items (see atlas / `tools/seed_backlog.py`).
+
+**✅ done:** T3.2 spatial interference prefilter · T8.4 CI runner · T1.1 fillet/chamfer finish ·
+T2.1 geometric port-derivation · T4.1 CG+inertia roll-up · T7.3 BOM document export · T1.5 parametric
+housing part · T6.1 library loader · build cache.
+
+*Those last five used to be listed here as "suggested next" long after they were finished and covered by
+passing tests (`test_mass_properties_cg_and_inertia`, `test_bom_document`, `test_housing_part`,
+`test_library_loader`, `test_build_cache`). A stale backlog is the document you read to decide what to
+build, so it eventually makes someone rebuild something that already works.*
+
+**Not in any epic above, and the smallest high-value item in the plan:** STEP/IGES **import** — the kernel
+has export only, so it cannot see a single part that already exists ([issue #10](../../issues/10)).
+
+Query `status='todo'` for the atlas queue; blocked items wait on their `BLOCKED_BY` research.
 
 ## CI / hooks
 `tools/ci.sh` runs the suite (exit 0 = green). Enable the pre-push gate once: `git config core.hooksPath .githooks` (bypass with `git push --no-verify`).

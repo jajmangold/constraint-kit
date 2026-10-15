@@ -5,6 +5,26 @@ Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[
 Read this first every session; write it last. Log **decisions**, not just code — a decision that
 is not written down gets re-litigated, and the reason it was made is the expensive part.
 
+## 2026-10-15 — the docs now match the code
+
+- `[docs]` **README was stale and is corrected.** It claimed "113 regression tests" in two places
+  (now 148), had **zero mention** of the physics tier, and its project-structure block omitted
+  `fea/` entirely. Added a physics section in the README's own register — including the honest
+  non-result, because a tool that declines is the thing worth showing — plus a two-tier
+  `Running tests` section and a Documentation table pointing at PLAN / CLAUDE / AGENTS / CHANGELOG
+  / ROADMAP / BACKLOG.
+- `[fix]` `ROADMAP.md` claimed **57 green tests**, which was stale before any of this work started.
+  Now 148, with the physics tier listed among what exists, and a header note saying `PLAN.md`
+  supersedes it on ordering so a reader is not misled by a plan that is no longer the plan.
+- `[fix]` **`BACKLOG.md`'s done-list corrected (closes #23).** It listed T4.1 CG+inertia, T7.3 BOM
+  export, T1.5 parametric housing and T6.1 library loader as "suggested next" long after they were
+  finished — `test_mass_properties_cg_and_inertia`, `test_bom_document`, `test_housing_part`,
+  `test_library_loader` and `test_build_cache` all exist and were re-verified passing before this
+  edit. Also records what is in **no** epic: STEP/IGES import (#10).
+- `[decision]` Doc ownership is now explicit, because four planning documents disagreeing is worse
+  than one being incomplete: **PLAN.md owns ordering, issues own the live queue, BACKLOG.md is the
+  epic map, ROADMAP.md is the original thesis.** Each says so in its own header.
+
 ## 2026-10-14 — physics tier (PLAN.md Phase 0)
 
 - `[feat]` **`constraint_kit/fea/`: linear elastostatics on voxel grids, numpy + scipy only.**

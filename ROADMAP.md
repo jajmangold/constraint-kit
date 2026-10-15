@@ -1,5 +1,10 @@
 # constraint-kit roadmap — from a screw to a car to a home
 
+> **Superseded on ordering by [`PLAN.md`](PLAN.md).** The thesis below still holds and the phase work it
+> describes is still wanted; it is simply not what the machines on the bench need next. `PLAN.md` is the
+> active plan, and live work is tracked in [issues](../../issues) milestoned by phase. Read this for the
+> argument about scaling by composition; read `PLAN.md` for what to do on Monday.
+
 The thesis: **natural language → exact, provenance-linked, deterministically-assembled CAD**, scaling by
 *composition*, not by a bigger model. This doc is the plan; `CLAUDE.md` is how the built parts work.
 
@@ -16,7 +21,8 @@ What already exists (the kernel):
   synthesis/configuration (SMT/Z3)** — each used only where it's actually best; SMT never touches geometry
 - first-class oriented **joints** (the per-part interface primitive)
 - the **spec compiler** (engineering facts with provenance: threads, fits→real ISO 286 tolerances, bearings, materials)
-- persistence (atlas for work, SQLite for spec data), render+VLM QA, 57 green tests
+- persistence (atlas for work, SQLite for spec data), render+VLM QA, 148 green tests
+- a **physics tier** (`constraint_kit/fea/`): stiffness and stress on real geometry, numpy/scipy only
 
 What is structurally missing for scale (the foundations this roadmap lays):
 

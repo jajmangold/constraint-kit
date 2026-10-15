@@ -39,6 +39,40 @@ Ask for something outside its vocabulary and it declines, and says why:
 A plausible-looking wrong part is worse than no part. Honest declines are a first-class, measured output, not
 an error path.
 
+### And it checks whether the part will hold
+
+Exact geometry tells you the parts fit. It does not tell you the bracket is stiff enough. So there is a
+physics tier — linear elastostatics on a voxel grid, **numpy and scipy only**, no solver to install and no
+meshing step that can fail mid-loop:
+
+```bash
+python drivers/fea_part.py PART.stl --material petg --pitch 1.3 --converge \
+    --fix "x>=-36 & x<=-32 & y>=143 & y<=183" \
+    --fix "x>=24@xz" \
+    --load "x<=-46 & y>=183 : 0,764,0"
+```
+
+Boundary conditions are arguments, never inferred — choosing where a part is held and where it is pushed
+*is* the engineering, and a tool that guesses produces something that looks like analysis and is not.
+
+It is verified against ground truth that exists outside this repo: a free element has exactly six
+rigid-body modes, a uniform strain field is reproduced exactly, axial extension matches `PL/AE` and stress
+matches `P/A` to 1e-9, and a cantilever reaches 95.7 / 97.7 / 98.5 % of Timoshenko at 4 / 6 / 8 elements
+through the thickness. The voxeliser agrees with exact mesh volume to within ±1.2 % across 20 real printed
+parts.
+
+**And it declines here too.** A single voxel-FEA number is not a result, so `--converge` solves a geometric
+ladder and Richardson-extrapolates — and when the sequence is not actually converging it says so instead of
+fitting a confident number to noise:
+
+```text
+deflection  mm  not converging: successive changes are growing, not shrinking (0.309 then 0.376);
+                refinement is still finding structure rather than resolving it
+```
+
+That is a real run. It means a load-carrying wall is only a few elements thick, so a finer grid is the wrong
+answer and a body-fitted mesh is the right one. Knowing that is worth more than a number.
+
 ## Gallery
 
 | | | |
@@ -87,7 +121,8 @@ It's optional: constraint-kit runs on a hosted LLM out of the box. Training scri
 - **Hierarchical assemblies**: recursive subassemblies with ports, BOM roll-ups, mass properties
 - **Top-down design**: requirements → derived parameters → geometry, with incremental re-solve
 - **Engineering drawings**: 2D drawing sets (DXF + SVG), exploded views, 2D layouts → DXF for laser/CNC
-- **113 regression tests**, every one checked against geometry, never against a vision model's opinion
+- **Structural physics**: stiffness and stress on real geometry, numpy/scipy only — no solver install
+- **148 regression tests**, every one checked against geometry or closed-form physics, never against a vision model's opinion
 
 ## Quick start
 
@@ -265,14 +300,22 @@ All endpoints on `127.0.0.1:8195` (host-only by default).
 ## Running tests
 
 ```bash
-# Inside the cadkit container:
-tests/run.sh
-
-# Or directly (needs cadquery + build123d):
-python3 tests/test_kernel.py
+tools/ci.sh                        # everything available here; exit 0 = green
+python3 tests/test_fea.py          # physics      (19, numpy + scipy only)
+python3 tests/test_convergence.py  # convergence  (16, numpy only)
+tests/run.sh                       # kernel       (113, needs the cadkit container)
 ```
 
-113 tests, all verified against geometric ground truth (seating zero-gap, gear center distances, mass vs density, STEP/GLB export, DXF validity, atlas round-trip).
+**148 tests in two tiers, deliberately.** The physics and convergence suites need nothing but numpy and
+scipy, so they run anywhere — including inside FreeCAD's bundled Python. The kernel suite needs the
+container stack (`build123d`, `bd_warehouse`, `cq_gears`, `z3`, `python_solvespace`, `trimesh`); on a bare
+host it reports 86/113 with the rest failing on imports, which is expected rather than a regression.
+`tools/ci.sh` knows the difference and reports the container suite as *skipped*, never as passed.
+
+Every test is checked against ground truth that exists independently of this code — seating zero-gap, gear
+center distances `m·(z₁+z₂)/2`, mass vs density, DXF validity, atlas round-trip, and for the physics tier
+element algebra and closed-form elasticity. Never against a stored snapshot of our own output, and never
+against a vision model's opinion.
 
 ## Project structure
 
@@ -290,15 +333,32 @@ constraint_kit/        # the Python package
   parameters.py        # top-down parametric design
   synthesis.py         # SMT design synthesis (Z3)
   spec_compiler.py     # engineering-fact resolution
+  validate.py          # interference / clash detection
+  fea/                 # physics tier — numpy + scipy only, no CAD dependency
+    hex8.py            #   trilinear hex element, stiffness by Gauss quadrature
+    voxel.py           #   grid, assembly, solve, von Mises
+    sample.py          #   triangle soup → occupancy by ray parity; STL reader
+    convergence.py     #   Richardson extrapolation, with an honest refusal path
   api.py               # FastAPI server
   ...
 cadkit/                # Dockerfile + docker-compose
-drivers/               # orchestration scripts
-tests/                 # regression suite
+drivers/               # orchestration scripts + fea_part.py
+tests/                 # regression suites (kernel, physics, convergence)
 training/              # Gemma 4 fine-tuning
-tools/                 # utilities
+tools/                 # utilities + ci.sh
 libraries/             # reusable assembly defs
 ```
+
+## Documentation
+
+| file | what it is |
+|---|---|
+| [`PLAN.md`](PLAN.md) | **the active plan** — phases, research grounding, and what we deliberately will not build |
+| [`CLAUDE.md`](CLAUDE.md) | architecture reference: layout, API, solver classes, gotchas |
+| [`AGENTS.md`](AGENTS.md) | how to work in this repo — TDD protocol, conventions, traps that have cost time |
+| [`CHANGELOG.md`](CHANGELOG.md) | what changed and **why**; decisions, not just code |
+| [`ROADMAP.md`](ROADMAP.md) | the original screw → car → home thesis. `PLAN.md` supersedes it on ordering |
+| [`BACKLOG.md`](BACKLOG.md) | epic list. Live work is tracked in [issues](../../issues), milestoned by phase |
 
 ## License
 
