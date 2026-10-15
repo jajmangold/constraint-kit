@@ -22,3 +22,6 @@ training/lora_*/
 training/ckpt*/
 training/export/
 training/*.jsonl
+
+# workbench scratch
+workbench/**/__pycache__/

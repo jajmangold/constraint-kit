@@ -1,0 +1,379 @@
+# -*- coding: utf-8 -*-
+"""Dock panels: Describe, Checks, and the settings dialog.
+
+Three deliberate choices, each from the design:
+
+* **Checks are a dock, not a modal.** They are always visible, and STALE is shown as its own
+  state — a green row never outlives the edit that invalidated it. A modal would mean verdicts
+  are only true at the instant you asked.
+* **The model proposes; the kernel disposes.** The Describe panel shows the program it is about
+  to run and waits for Build. Geometry never appears straight out of a language model.
+* **Guesses look like guesses.** Provenance rides on the property group, so FreeCAD's own
+  property editor is the provenance inspector and this module does not reimplement one.
+"""
+from __future__ import annotations
+
+import json
+import os
+
+import FreeCAD
+import FreeCADGui
+from PySide import QtCore, QtGui
+
+from .. import document as _doc
+from ..provenance import COLORS, LABELS
+from ..registry import registry
+
+_PANELS: dict[str, QtGui.QDockWidget] = {}
+_AREAS = {"left": QtCore.Qt.LeftDockWidgetArea, "right": QtCore.Qt.RightDockWidgetArea,
+          "bottom": QtCore.Qt.BottomDockWidgetArea, "top": QtCore.Qt.TopDockWidgetArea}
+
+SETTINGS_GROUP = "User parameter:BaseApp/Preferences/Mod/ConstraintKit"
+
+
+def _prefs():
+    return FreeCAD.ParamGet(SETTINGS_GROUP)
+
+
+# ------------------------------------------------------------------------------------- checks
+
+class ChecksPanel(QtGui.QWidget):
+    """A compact verdict list. One row per check, and staleness is a first-class row state."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QtGui.QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+
+        bar = QtGui.QHBoxLayout()
+        self.summary = QtGui.QLabel("No checks have run on this document yet.")
+        self.summary.setWordWrap(True)
+        bar.addWidget(self.summary, 1)
+        run = QtGui.QPushButton("Run all")
+        run.clicked.connect(self.run)
+        bar.addWidget(run)
+        layout.addLayout(bar)
+
+        self.tree = QtGui.QTreeWidget()
+        self.tree.setHeaderLabels(["Check", "Result", "Detail"])
+        self.tree.setRootIsDecorated(True)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.header().setStretchLastSection(True)
+        layout.addWidget(self.tree, 1)
+
+    def run(self) -> None:
+        try:
+            registry.call("run_checks")
+        except Exception as exc:  # noqa: BLE001
+            FreeCAD.Console.PrintError(f"[ConstraintKit] checks failed: {exc}\n")
+            self.summary.setText(str(exc))
+            return
+        self.refresh()
+
+    def refresh(self) -> None:
+        self.tree.clear()
+        try:
+            state = registry.call("get_checks")
+        except Exception as exc:  # noqa: BLE001
+            self.summary.setText(str(exc))
+            return
+        if not state.get("ran"):
+            self.summary.setText(state.get("note", "No checks have run yet."))
+            return
+
+        stale = state.get("stale", True)
+        self.summary.setText(
+            "The model has changed since these ran — re-run before trusting them."
+            if stale else
+            ("Everything passes." if state.get("ok") else "Something is failing; see below."))
+        self.summary.setStyleSheet("color: #D99A3F;" if stale else "")
+
+        for name, res in state.get("checks", {}).items():
+            ok = res.get("ok", False)
+            mark = "stale" if stale else ("pass" if ok else "FAIL")
+            item = QtGui.QTreeWidgetItem([name, mark, self._detail(name, res)])
+            if stale:
+                item.setForeground(1, QtGui.QBrush(QtGui.QColor("#8B929C")))
+            elif not ok:
+                item.setForeground(1, QtGui.QBrush(QtGui.QColor("#E0705F")))
+            else:
+                item.setForeground(1, QtGui.QBrush(QtGui.QColor("#4FB3A3")))
+            for clash in res.get("clashes", []):
+                QtGui.QTreeWidgetItem(
+                    item, ["", "clash",
+                           f"{clash['a']} ↔ {clash['b']}  {clash['volume_mm3']:.3f} mm³"])
+            for bad in res.get("bad", []):
+                QtGui.QTreeWidgetItem(
+                    item, ["", "bad", f"{bad['name']}: {bad['solids']} solids, "
+                                      f"valid={bad['valid']}, closed={bad['closed']}"])
+            self.tree.addTopLevelItem(item)
+        self.tree.expandAll()
+        self.tree.resizeColumnToContents(0)
+        self.tree.resizeColumnToContents(1)
+
+    @staticmethod
+    def _detail(name: str, res: dict) -> str:
+        if name == "interference":
+            return (f"{len(res.get('clashes', []))} clash(es); "
+                    f"{res.get('pairs_exact_checked', 0)} of {res.get('pairs_total', 0)} pairs "
+                    "needed the exact boolean")
+        if name == "mass":
+            return f"{res.get('mass_g', 0):.1f} g at {res.get('density_g_cm3', 0)} g/cm³"
+        if name == "seating":
+            return f"{res.get('n_seated', 0)} of {len(res.get('pairs', []))} adjacent pairs seated"
+        if name == "solids":
+            return f"{res.get('n_parts', 0)} part(s) checked"
+        return ""
+
+
+# ----------------------------------------------------------------------------------- describe
+
+class DescribePanel(QtGui.QWidget):
+    """Say what you want; see the program; then build it.
+
+    The planner is not wired in yet — connecting a model endpoint is the next step, and the
+    panel says so plainly rather than pretending. What already works is the half that matters
+    architecturally: a program is shown, and a human presses Build.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QtGui.QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+
+        self.transcript = QtGui.QTextBrowser()
+        self.transcript.setOpenExternalLinks(False)
+        layout.addWidget(self.transcript, 1)
+
+        self.entry = QtGui.QLineEdit()
+        self.entry.setPlaceholderText("Describe a part or a change…")
+        self.entry.returnPressed.connect(self.submit)
+        layout.addWidget(self.entry)
+
+        row = QtGui.QHBoxLayout()
+        self.model_label = QtGui.QLabel()
+        row.addWidget(self.model_label, 1)
+        send = QtGui.QPushButton("Send")
+        send.clicked.connect(self.submit)
+        row.addWidget(send)
+        layout.addLayout(row)
+        self.refresh_model_label()
+        self._say("Constraint Kit",
+                  "Describe a part and you will see the program before anything is built. "
+                  "Nothing is placed by a language model.")
+
+    def refresh_model_label(self) -> None:
+        base = _prefs().GetString("BaseUrl", "")
+        model = _prefs().GetString("PlannerModel", "")
+        self.model_label.setText(
+            f"{model} · {base}" if base and model else "No model configured — see Settings")
+
+    def _say(self, who: str, text: str) -> None:
+        self.transcript.append(f"<p><b>{who}</b><br>{text}</p>")
+
+    def submit(self) -> None:
+        text = self.entry.text().strip()
+        if not text:
+            return
+        self.entry.clear()
+        self._say("You", text)
+        base = _prefs().GetString("BaseUrl", "")
+        if not base:
+            self._say("Constraint Kit",
+                      "No model endpoint is configured, so I will not guess at what you meant. "
+                      "Open <b>Settings</b> and point it at any OpenAI-compatible endpoint — "
+                      "hosted, or a local server.")
+            return
+        self._say("Constraint Kit",
+                  "The planner is not connected to this panel yet. In the meantime "
+                  "<b>Insert</b> builds any generator directly, and every value it guesses is "
+                  "tagged as a guess in the property editor.")
+
+
+# ------------------------------------------------------------------------------- provenance
+
+class ProvenancePanel(QtGui.QWidget):
+    """What the selected part's values are, and who chose each one."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QtGui.QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        self.header = QtGui.QLabel("Select a part.")
+        self.header.setWordWrap(True)
+        layout.addWidget(self.header)
+        self.tree = QtGui.QTreeWidget()
+        self.tree.setHeaderLabels(["Parameter", "Value", "Where it came from"])
+        self.tree.header().setStretchLastSection(True)
+        self.tree.setAlternatingRowColors(True)
+        layout.addWidget(self.tree, 1)
+        accept = QtGui.QPushButton("Accept the selected guess")
+        accept.clicked.connect(self.accept_selected)
+        layout.addWidget(accept)
+
+    def refresh(self) -> None:
+        self.tree.clear()
+        sel = FreeCADGui.Selection.getSelection()
+        objs = [o for o in sel if _doc.is_ck_part(o)]
+        if not objs:
+            self.header.setText("Select a constraint-kit part.")
+            return
+        obj = objs[0]
+        params = _doc.paramset_of(obj)
+        self.header.setText(f"<b>{obj.Name}</b> — {params.generator} — {params.summary()}")
+        for provenance, rows in params.grouped():
+            group = QtGui.QTreeWidgetItem([LABELS[provenance], "", ""])
+            group.setForeground(0, QtGui.QBrush(QtGui.QColor(COLORS[provenance])))
+            for name, value in rows:
+                child = QtGui.QTreeWidgetItem(group, [name, f"{value.value}", value.explain()])
+                child.setData(0, QtCore.Qt.UserRole, name)
+            self.tree.addTopLevelItem(group)
+        self.tree.expandAll()
+        self.tree.resizeColumnToContents(0)
+
+    def accept_selected(self) -> None:
+        items = self.tree.selectedItems()
+        sel = [o for o in FreeCADGui.Selection.getSelection() if _doc.is_ck_part(o)]
+        if not items or not sel:
+            return
+        name = items[0].data(0, QtCore.Qt.UserRole)
+        if not name:
+            return
+        try:
+            registry.call("promote_param", part=sel[0].Name, name=name)
+        except Exception as exc:  # noqa: BLE001
+            FreeCAD.Console.PrintError(f"[ConstraintKit] {exc}\n")
+            return
+        self.refresh()
+
+
+# -------------------------------------------------------------------------------- settings
+
+class SettingsDialog(QtGui.QDialog):
+    """Model endpoint and agent access. Keys go to FreeCAD's parameter store, never the document."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Constraint Kit settings")
+        form = QtGui.QFormLayout(self)
+
+        p = _prefs()
+        self.base = QtGui.QLineEdit(p.GetString("BaseUrl", "https://api.deepseek.com"))
+        self.key = QtGui.QLineEdit(p.GetString("ApiKey", ""))
+        self.key.setEchoMode(QtGui.QLineEdit.Password)
+        self.planner = QtGui.QLineEdit(p.GetString("PlannerModel", "deepseek-v4-pro"))
+        self.vlm = QtGui.QLineEdit(p.GetString("VisionModel", "deepseek-flash"))
+        self.density = QtGui.QDoubleSpinBox()
+        self.density.setRange(0.1, 25.0)
+        self.density.setDecimals(3)
+        self.density.setValue(p.GetFloat("Density", 1.27))
+
+        form.addRow("Base URL (OpenAI-compatible)", self.base)
+        form.addRow("API key", self.key)
+        form.addRow("Planner model", self.planner)
+        form.addRow("Vision model (QA only)", self.vlm)
+        form.addRow("Density g/cm³", self.density)
+
+        self.agent_state = QtGui.QLabel()
+        start = QtGui.QPushButton("Start agent access")
+        start.clicked.connect(self.start_agent)
+        form.addRow(self.agent_state, start)
+        self.refresh_agent_state()
+
+        note = QtGui.QLabel(
+            "Vision QA is a second opinion only; it can never overrule a geometric check.")
+        note.setWordWrap(True)
+        form.addRow(note)
+
+        buttons = QtGui.QDialogButtonBox(
+            QtGui.QDialogButtonBox.Save | QtGui.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.save)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def refresh_agent_state(self) -> None:
+        from .. import server
+        current = server.current()
+        if current is not None and current.port:
+            self.agent_state.setText(
+                f"Agents: 127.0.0.1:{current.port}\n{current.registry_file}")
+        else:
+            self.agent_state.setText("Agents: not running")
+
+    def start_agent(self) -> None:
+        from .. import server
+        try:
+            srv = server.ensure_started()
+        except Exception as exc:  # noqa: BLE001
+            FreeCAD.Console.PrintError(f"[ConstraintKit] agent server: {exc}\n")
+            return
+        FreeCAD.Console.PrintMessage(
+            f"[ConstraintKit] agent access on 127.0.0.1:{srv.port}, "
+            f"published to {srv.registry_file}\n")
+        self.refresh_agent_state()
+
+    def save(self) -> None:
+        p = _prefs()
+        p.SetString("BaseUrl", self.base.text().strip())
+        p.SetString("ApiKey", self.key.text().strip())
+        p.SetString("PlannerModel", self.planner.text().strip())
+        p.SetString("VisionModel", self.vlm.text().strip())
+        p.SetFloat("Density", float(self.density.value()))
+        panel = _PANELS.get("CK_DescribePanel")
+        if panel is not None:
+            panel.widget().refresh_model_label()
+        self.accept()
+
+
+# ------------------------------------------------------------------------------ dock plumbing
+
+_WIDGETS = {"CK_ChecksPanel": ChecksPanel, "CK_DescribePanel": DescribePanel,
+            "CK_ProvenancePanel": ProvenancePanel}
+
+
+def show_panel(panel_id: str) -> QtGui.QDockWidget:
+    from . import spec
+    if panel_id not in _WIDGETS:
+        raise KeyError(f"no panel {panel_id!r}; have {sorted(_WIDGETS)}")
+    dock = _PANELS.get(panel_id)
+    if dock is None:
+        title, area = next((t, a) for pid, t, a in spec.PANELS if pid == panel_id)
+        dock = QtGui.QDockWidget(title, FreeCADGui.getMainWindow())
+        dock.setObjectName(panel_id)
+        dock.setWidget(_WIDGETS[panel_id](dock))
+        FreeCADGui.getMainWindow().addDockWidget(_AREAS[area], dock)
+        _PANELS[panel_id] = dock
+    dock.show()
+    dock.raise_()
+    return dock
+
+
+def refresh_checks() -> None:
+    dock = _PANELS.get("CK_ChecksPanel")
+    if dock is not None:
+        dock.widget().refresh()
+
+
+def refresh_provenance() -> None:
+    dock = _PANELS.get("CK_ProvenancePanel")
+    if dock is not None:
+        dock.widget().refresh()
+
+
+class _SelectionWatcher:
+    """Keeps the provenance panel in step with the selection, with no polling."""
+
+    def setSelection(self, *_args):
+        refresh_provenance()
+
+    addSelection = clearSelection = removeSelection = setSelection
+
+
+_WATCHER = None
+
+
+def install_observers() -> None:
+    global _WATCHER
+    if _WATCHER is None:
+        _WATCHER = _SelectionWatcher()
+        FreeCADGui.Selection.addObserver(_WATCHER)
