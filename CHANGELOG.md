@@ -5,6 +5,41 @@ Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[
 Read this first every session; write it last. Log **decisions**, not just code — a decision that
 is not written down gets re-litigated, and the reason it was made is the expensive part.
 
+## 2026-10-15 (later) — the workbench did not load, and then its console was noisy
+
+- `[broke]` **ConstraintKit never appeared in FreeCAD's workbench selector.** `InitGui.py`
+  computed `os.path.abspath(__file__)` at module level, outside its try/except; `__file__` is
+  undefined when FreeCAD execs these files, so it raised `NameError`, FreeCAD logged one line and
+  carried on, and the workbench silently did not register.
+- `[decision]` This trap was found earlier the same day, written into AGENTS.md, and fixed in
+  `Init.py` — then left in `InitGui.py` two files away. It survived because `FreeCADGui` cannot
+  be imported headlessly, so none of the then-124 tests could reach it. **Everything testable was
+  tested; the one untestable thing was broken.** The lesson is not "write more tests" — it is that
+  a layer no test can reach has to be exercised by hand before it is called done.
+- `[fix]` `InitGui.py` now finds its own directory by searching `sys.path` for its package, and
+  its entire module body is one `try`, so a failure is reported rather than removing the
+  workbench.
+- `[test]` Three guards, parsed with `ast` rather than grepped: the entry points may not reference
+  `__file__`, `InitGui.py`'s module body must be exactly one `Try`, and `gui/spec.py` must stay
+  free of Qt so it remains testable. (The first draft grepped and failed against correct code,
+  because both files document the trap in prose.)
+- `[fix]` **Nine `Cannot find icon` warnings on every startup.** The toolbar named pixmaps that
+  did not exist. Not errors — but a console full of warnings is how real errors get overlooked,
+  and blank buttons read as a broken install. `workbench/tools/make_icons.py` generates the nine
+  SVGs from one declaration so the set stays consistent, and `InitGui.py` registers the directory
+  **before** `addWorkbench`, since the workbench's own icon resolves at registration time.
+- `[decision]` Icon strokes are a mid-tone blue (#4F8DBF) that holds contrast on FreeCAD's light
+  *and* dark themes, with amber reserved for Describe — the one action that creates something.
+  Picking a stroke against one theme only is how addon icons vanish for half their users.
+- `[fix]` Registry entries for killed processes accumulated in `~/.ck/instances` (seven had piled
+  up from test runs). A server now prunes unreachable entries when it starts. Liveness is decided
+  by connect-probing, never by `os.kill(pid, 0)` — on Windows Python maps that to
+  TerminateProcess, so the liveness check would kill the instance it was asking about.
+- `[feat]` Verified in the real GUI, which is what should have happened before any of this was
+  called done: the workbench registers, activates, builds its toolbar with 8 icons and a menu,
+  opens three docks, and the Report view is clean apart from the FreeCADMCP addon's own lines.
+  Six of eight buttons correctly sit disabled with no document open.
+
 ## 2026-10-15 — a FreeCAD workbench, and a load bug that mattered
 
 ### The workbench (`workbench/`)

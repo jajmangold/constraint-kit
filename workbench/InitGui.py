@@ -29,6 +29,14 @@ try:
     if _repo and os.path.isdir(os.path.join(_repo, "constraint_kit")) and _repo not in sys.path:
         sys.path.insert(0, _repo)
 
+    # Register the icon path BEFORE addWorkbench: the workbench's own Icon is resolved at
+    # registration time, so adding the path afterwards leaves it blank and logs
+    # "Cannot find icon: ck-workbench".
+    if _here:
+        _icons = os.path.join(_here, "icons")
+        if os.path.isdir(_icons):
+            FreeCADGui.addIconPath(_icons)
+
     from ckwb.gui.workbench import ConstraintKitWorkbench
 
     FreeCADGui.addWorkbench(ConstraintKitWorkbench())

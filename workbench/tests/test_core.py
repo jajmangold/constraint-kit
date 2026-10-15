@@ -367,6 +367,37 @@ def test_initgui_wraps_everything_so_a_failure_is_reported():
 
 
 @test
+def test_every_named_pixmap_has_an_icon_file():
+    """Nine missing icons logged nine "Cannot find icon" lines to the Report view on startup.
+
+    They were not errors -- the workbench worked -- but a console full of warnings is how real
+    errors get overlooked, and blank buttons read as a broken install. A rename must not be able
+    to quietly undo this.
+    """
+    from ckwb.gui import spec
+
+    icons = os.path.join(_WB, "icons")
+    assert os.path.isdir(icons), f"no icons directory at {icons}"
+    named = [row[4] for row in spec.TOOLBAR if row[4]] + ["ck-workbench"]
+    missing = [n for n in named if not os.path.exists(os.path.join(icons, n + ".svg"))]
+    assert not missing, f"named in the spec but no SVG on disk: {missing}"
+    for name in named:
+        with open(os.path.join(icons, name + ".svg"), encoding="utf-8") as fh:
+            body = fh.read()
+        assert body.startswith("<svg") and "viewBox" in body, f"{name}.svg is not usable SVG"
+
+
+@test
+def test_initgui_registers_the_icon_path_before_adding_the_workbench():
+    """The workbench's own Icon resolves at registration time; a later addIconPath is too late."""
+    with open(os.path.join(_WB, "InitGui.py"), encoding="utf-8") as fh:
+        body = fh.read()
+    assert "addIconPath" in body, "InitGui.py must register the icon directory"
+    assert body.index("addIconPath") < body.index("addWorkbench("), (
+        "addIconPath must come before addWorkbench, or ck-workbench cannot be found")
+
+
+@test
 def test_the_toolbar_spec_has_no_qt_import():
     """The spec must stay importable without a GUI, or it cannot be tested at all."""
     with open(os.path.join(_WB, "ckwb", "gui", "spec.py"), encoding="utf-8") as fh:

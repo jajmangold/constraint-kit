@@ -188,8 +188,52 @@ class Server:
         self._publish()
         return self.port
 
+    def prune_dead(self) -> list:
+        """Delete registry entries whose port no longer answers. Returns what was removed.
+
+        A process killed rather than closed leaves its entry behind -- which a test harness does
+        routinely, and a crash does too. Readers already filter by reachability so nobody is sent
+        at a dead port, but the files would otherwise accumulate forever.
+
+        Liveness is decided by connect-probing the port, NEVER by `os.kill(pid, 0)`: on Windows
+        Python maps that to TerminateProcess, so the "is it alive" check would kill the very
+        instance it was asking about.
+        """
+        removed = []
+        d = registry_dir()
+        if not os.path.isdir(d):
+            return removed
+        for name in sorted(os.listdir(d)):
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(d, name)
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    entry = json.load(fh)
+            except (OSError, ValueError):
+                entry = None
+            if entry and entry.get("pid") == os.getpid():
+                continue                      # our own, possibly not yet listening
+            port = (entry or {}).get("port")
+            alive = False
+            if port:
+                probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                probe.settimeout(0.3)
+                try:
+                    alive = probe.connect_ex((entry.get("host", HOST), int(port))) == 0
+                finally:
+                    probe.close()
+            if not alive:
+                try:
+                    os.remove(path)
+                    removed.append(name)
+                except OSError:
+                    pass
+        return removed
+
     def _publish(self) -> None:
         os.makedirs(registry_dir(), exist_ok=True)
+        self.prune_dead()
         doc = FreeCAD.ActiveDocument
         payload = {
             "pid": os.getpid(),

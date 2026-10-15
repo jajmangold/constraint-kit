@@ -222,6 +222,26 @@ def test_server_picks_a_free_port_and_publishes_where_it_is():
 
 
 @test
+def test_starting_a_server_prunes_entries_whose_port_is_dead():
+    """A killed process leaves its entry behind; a test harness does that routinely."""
+    os.makedirs(S.registry_dir(), exist_ok=True)
+    stale = os.path.join(S.registry_dir(), "999999-19875.json")
+    with open(stale, "w", encoding="utf-8") as fh:
+        json.dump({"pid": 999999, "port": 19874, "host": "127.0.0.1",
+                   "workbench": "ConstraintKit", "document": None}, fh)
+    assert os.path.exists(stale)
+
+    new_doc()
+    srv = S.Server(base_port=19875)
+    srv.start()
+    try:
+        assert not os.path.exists(stale), "a dead entry must be pruned when a server starts"
+        assert os.path.exists(srv.registry_file), "our own entry must survive the prune"
+    finally:
+        srv.stop()
+
+
+@test
 def test_two_servers_do_not_land_on_the_same_port():
     new_doc()
     a, b = S.Server(base_port=19875), S.Server(base_port=19875)
