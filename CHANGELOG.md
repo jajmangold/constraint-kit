@@ -2,6 +2,63 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-16 (last) — printed parts are anisotropic and von Mises does not know that (closes #2)
+
+- `[feat]` **`fea/printed.py`** — the check an isotropic stress measure cannot express. An FDM
+  wall is a stack of welded beads; across the weld the polymer is a diffusion bond formed in
+  under a second against an already-cooling surface, at roughly half the in-plane strength. So
+  the number that decides whether a printed part survives is the **traction on the layer plane**
+  — split into the part trying to peel the layers apart and the part trying to slide them over
+  one another — and neither is recoverable from an invariant.
+- `[feat]` **Both tiers now keep the full stress tensor.** `voxel.Result.stress` (element
+  centres) and `tet.TetResult.stress` (nodes), as `(sxx, syy, szz, sxy, syz, szx)`. Both were
+  computing it on the way to von Mises and throwing it away, which made the anisotropic question
+  unanswerable for no saving at all. von Mises is now *derived* from the tensor, so the two
+  cannot drift apart, and a test asserts it is recomputable from it.
+- `[feat]` **`drivers/fea_part.py --layers x|y|z|0,0,1|all`.** `all` ranks the three printable
+  orientations and names the one to use.
+
+### The finding: print orientation is a structural decision on the gantry plate
+
+Same part, same 764 N, three ways up. Both tiers, independently:
+
+| layers normal to | peel SF (voxel / ref) | shear SF | governing |
+|---|---|---|---|
+| **Z** — printed flat | 2.15 / 1.87 | 2.93 / 1.63 | **2.15 / 1.63** |
+| X — on its side | 1.86 / 1.41 | 2.53 / 1.49 | 1.86 / 1.41 |
+| **Y** — on its end | **0.76 / 0.74** | 2.38 / 1.38 | **0.76 / 0.74** |
+
+- `[decision]` **Printed flat, the welds are not the problem** — the in-plane von Mises verdict
+  (SF 1.06) governs. **Printed on its end, the belt tension pulls straight across every weld and
+  the part delaminates at three quarters of its design load.** The two tiers agree on that worst
+  case to 3% (0.76 against 0.74), from completely different stress fields.
+- `[note]` **The de-rate factors are an assumption and are carried with the answer.** 0.50
+  tensile and 0.45 shear of in-plane: literature-typical for unannealed FDM, deliberately at the
+  conservative end of the published 0.45–0.60 spread, and *not* measured for this filament,
+  nozzle temperature, layer height or printer. `InterlayerCheck` stores the factors it used and
+  `report()` says they are assumed, because a safety factor computed from assumed properties
+  that travels without them gets quoted as though it were measured.
+- `[note]` **Compression across layers is not peeling**, so only tensile normal traction counts.
+  A weld in compression is as strong as the bulk; treating it as a peel load would condemn parts
+  that are entirely fine. There is a test, and the report says so when it applies.
+- `[fix]` An interlayer check is **refused on `al6061` and `steel`** rather than computed. They
+  are isotropic to any accuracy that matters here and the number would mean nothing.
+- `[fix]` **Console reports are now ASCII, with a test.** An em-dash in `--layers all` output
+  arrived through a cp1252 code page as a replacement character, so "in the best orientation `?`
+  print orientation is a structural decision" read like an encoding failure in the analysis
+  rather than in the prose. Prose belongs in docstrings, which nobody pipes through a code page.
+- `[fix]` Two defects in the day-old `tet.py`: an explicit `workdir` was not created (so the
+  auditable path, the one that leaves the deck and the `.frd` behind, failed outright), and
+  `traction_on_plane` was duplicated there rather than imported — it is generic stress algebra
+  with nothing CalculiX about it, and the voxel tier needs it too.
+- `[note]` One of my own test bugs worth recording: I asserted `SXX > 5 x SYY` on a cantilever
+  and measured 2.4x. The code was right and the expectation was wrong — a clamped end is a real
+  3-D restraint, and holding a face against its own Poisson contraction generates a transverse
+  stress (28 MPa against 68) that beam theory has no way to represent.
+
+**222 tests across 12 suites** in the default run, 241 with the GUI and live tiers.
+
+
 ## 2026-10-16 (later again) — a second solver that shares no code with ours (closes #3)
 
 - `[feat]` **`fea/tet.py`** — an independent reference solver: Gmsh quadratic tetrahedra through

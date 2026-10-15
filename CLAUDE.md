@@ -48,6 +48,7 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
     voxel.py           #   Grid/Model/Result: chunked reduced assembly, direct|Jacobi-CG solve, von Mises
     sample.py          #   triangle soup -> occupancy by ray parity; dependency-free STL reader; OCC path
     convergence.py     #   Richardson extrapolation; refuses a non-monotone or non-geometric ladder
+    printed.py         #   FDM anisotropy: traction on the LAYER PLANE (peel/shear), orientation ranking
     tet.py             #   INDEPENDENT reference: gmsh quadratic tets -> CalculiX (both ship in FreeCAD)
     crosscheck.py      #   voxel vs tet: measures the gap and ATTRIBUTES it (too stiff / too soft / agree)
   massprops.py         # mass properties: exact CG + inertia tensor (OCC GProp, density-weighted) [T4.1]

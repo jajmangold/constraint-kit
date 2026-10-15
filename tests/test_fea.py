@@ -432,6 +432,53 @@ def test_end_to_end_voxelised_cantilever_is_sane():
 
 
 @test
+def test_the_voxel_tier_keeps_the_stress_tensor_and_can_resolve_it_onto_a_plane():
+    """von Mises presumes isotropy. A printed part is the counter-example that matters here.
+
+    An FDM wall is a stack of welded beads and the weld is the weak direction, so whether a
+    printed part survives is decided by the traction on the LAYER PLANE — the part that peels
+    the layers apart and the part that slides them over one another — and no invariant can
+    recover either. The tensor is computed on the way to von Mises anyway.
+    """
+    from constraint_kit.fea.tet import traction_on_plane
+
+    # The same bar fixture the exactness tests use, and for the same reasons: roller restraints
+    # so the uniform field is admissible, and `load_face` so the nodal load vector is the
+    # consistent one. Equal nodal forces on a face are NOT consistent with a uniform traction --
+    # they leave a self-equilibrating end effect that reaches 2.6e-5 into this bar -- and a test
+    # making exact claims about an element should not be absorbing that in its tolerance.
+    load = 1000.0
+    _, _, r = _axial_bar(load)
+    area = 16.0
+
+    assert r.stress.shape == (len(r.active_elements), 6), r.stress.shape
+    sx, sy, sz, txy, tyz, tzx = r.stress.T
+    assert np.allclose(sx, load / area, rtol=1e-9), (sx.min(), sx.max())
+    for other in (sy, sz, txy, tyz, tzx):
+        assert abs(other).max() < 1e-9 * (load / area), abs(other).max()
+
+    # von Mises must be recoverable FROM the tensor, or one of the two is wrong
+    recomputed = np.sqrt(0.5 * ((sx - sy) ** 2 + (sy - sz) ** 2 + (sz - sx) ** 2)
+                         + 3.0 * (txy ** 2 + tyz ** 2 + tzx ** 2))
+    assert np.allclose(recomputed, r.von_mises, atol=1e-9)
+
+    # Printed flat (layers normal to Z): a pure X tension does not peel the layers at all.
+    peel_z, shear_z = traction_on_plane(r.stress, (0, 0, 1))
+    assert abs(peel_z).max() < 1e-9 * (load / area), abs(peel_z).max()
+    assert abs(shear_z).max() < 1e-9 * (load / area), abs(shear_z).max()
+
+    # Printed on its end (layers normal to X): the same load pulls straight across every weld.
+    peel_x, shear_x = traction_on_plane(r.stress, (1, 0, 0))
+    assert np.allclose(peel_x, load / area, rtol=1e-9), (peel_x.min(), peel_x.max())
+    assert abs(shear_x).max() < 1e-9 * (load / area), "pure tension on a layer normal is not shear"
+
+    # At 45 degrees the traction splits, and the split is exact: sigma/2 each.
+    peel_45, shear_45 = traction_on_plane(r.stress, (1, 0, 1))
+    assert np.allclose(peel_45, 0.5 * load / area, rtol=1e-9), (peel_45.min(), peel_45.max())
+    assert np.allclose(shear_45, 0.5 * load / area, rtol=1e-9), (shear_45.min(), shear_45.max())
+
+
+@test
 def test_a_result_reports_the_force_it_actually_applied():
     """The accounting that would have caught the worst bug in this package.
 

@@ -140,6 +140,9 @@ class Result:
     # a residual of 9e-10. Reporting it is how a cross-check can tell a solver disagreement
     # apart from two solvers being handed different problems.
     applied_force: tuple = (0.0, 0.0, 0.0)
+    # The full element-centre tensor, (n_active, 6) as (sxx, syy, szz, sxy, syz, szx). von Mises
+    # is derived from it rather than the other way round, so the two cannot drift apart.
+    stress: np.ndarray = None    # type: ignore[assignment]
 
     @property
     def max_displacement(self) -> float:
@@ -415,20 +418,29 @@ class Model:
         u_full[keep_flat] = u_red
         displacement = u_full.reshape(-1, 3)
         compliance = float(f @ u_red)
+        stress = self._stress(active, u_full)
 
         return Result(
             displacement=displacement,
             compliance=compliance,
             active_elements=active,
-            von_mises=self._von_mises(active, u_full),
+            von_mises=self._von_mises_of(stress),
             n_dof=n_red,
             residual=residual,
             method=chosen,
             applied_force=tuple(float(v) for v in self._force.sum(axis=0)),
+            stress=stress,
         )
 
-    def _von_mises(self, active: np.ndarray, u_full: np.ndarray) -> np.ndarray:
-        """Element-centre equivalent stress for the active elements."""
+    def _stress(self, active: np.ndarray, u_full: np.ndarray) -> np.ndarray:
+        """Element-centre stress TENSOR for the active elements, as (m, 6).
+
+        Kept rather than collapsed straight to von Mises, because von Mises presumes a material
+        with no preferred direction and a printed part is exactly the counter-example that
+        matters here: an FDM wall is a stack of welded beads and the weld is the weak direction.
+        Whether such a part survives is decided by the traction on its layer plane, which no
+        invariant can recover. See `tet.traction_on_plane`.
+        """
         nodes = self.grid.element_nodes(active)
         edof = (nodes[:, :, None] * 3 + np.arange(3)[None, None, :]).reshape(len(nodes), 24)
         ue = u_full[edof]                                     # (m, 24)
@@ -438,6 +450,10 @@ class Model:
         # stress it actually sees is scaled the same way. Inert for binary occupancy.
         rho = self.grid.density.ravel()[active]
         sig *= (np.maximum(rho, self.density_floor) ** self.penal)[:, None]
+        return sig
+
+    @staticmethod
+    def _von_mises_of(sig: np.ndarray) -> np.ndarray:
         sx, sy, sz, txy, tyz, tzx = sig.T
         return np.sqrt(0.5 * ((sx - sy) ** 2 + (sy - sz) ** 2 + (sz - sx) ** 2)
                        + 3.0 * (txy ** 2 + tyz ** 2 + tzx ** 2))

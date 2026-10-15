@@ -43,6 +43,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
+# Re-exported so a caller holding a TetResult has the tool for its own stress tensor to hand.
+# The implementation lives in `printed` because it is generic stress algebra with nothing
+# CalculiX about it, and because it is what the voxel tier needs too.
+from .printed import traction_on_plane  # noqa: F401
+
 # Where FreeCAD puts them on each platform. Checked in order, and only as a fallback after the
 # environment variables, so a user with their own build is never second-guessed.
 _FREECAD_HINTS = (
@@ -92,7 +97,7 @@ def tools() -> tuple[str, str]:
     missing = [n for n, p in (("gmsh", gmsh_path), ("CalculiX (ccx)", ccx_path)) if not p]
     raise ToolchainMissing(
         f"the reference solver needs {' and '.join(missing)}, which were not found. Both ship "
-        f"inside FreeCAD at <FreeCAD>/bin — on Windows usually "
+        f"inside FreeCAD at <FreeCAD>/bin -- on Windows usually "
         f"{_FREECAD_HINTS[0]}. Set CK_GMSH and CK_CCX to the executables, or put them on PATH. "
         f"Until then the voxel tier has no independent check and its numbers rest on closed-form "
         f"cases alone.")
@@ -213,6 +218,10 @@ def _mesh(geo_body: str, pitch: float, workdir: str | None) -> TetMesh:
         raise ValueError(f"pitch must be positive, got {pitch}")
     own = workdir is None
     directory = workdir or tempfile.mkdtemp(prefix="ck-tet-")
+    if not own:
+        # A caller who names a directory means "put the files here and leave them", which is the
+        # auditable path: a stress result nobody can open the deck for is not evidence.
+        os.makedirs(directory, exist_ok=True)
     try:
         geo = os.path.join(directory, "model.geo")
         inp = os.path.join(directory, "model.inp")
@@ -270,6 +279,11 @@ class TetResult:
     applied_force: tuple         # what was actually written into the deck, summed
     n_nodes: int
     n_elements: int
+    # The full tensor, as (sxx, syy, szz, sxy, syz, szx) per node. Kept because von Mises
+    # assumes a material with no preferred direction and a printed part has one: whether an FDM
+    # part is safe is decided by the traction on its LAYER PLANE, which no invariant can recover.
+    # It is parsed out of the .frd regardless, so discarding it saved nothing.
+    stress: np.ndarray = None    # type: ignore[assignment]  # (n, 6)
 
     @property
     def max_displacement(self) -> float:
@@ -357,7 +371,150 @@ def _read_frd(path: str, n_nodes: int) -> tuple:
     sxx, syy, szz, sxy, syz, szx = stress.T
     von_mises = np.sqrt(0.5 * ((sxx - syy) ** 2 + (syy - szz) ** 2 + (szz - sxx) ** 2)
                         + 3.0 * (sxy ** 2 + syz ** 2 + szx ** 2))
-    return disp, von_mises
+    return disp, von_mises, stress
+
+
+@dataclass(frozen=True)
+class TetResult:
+    """One CalculiX run. Nodal displacements and nodal (extrapolated) von Mises stress."""
+
+    displacement: np.ndarray     # (n, 3)
+    von_mises: np.ndarray        # (n,)
+    applied_force: tuple         # what was actually written into the deck, summed
+    n_nodes: int
+    n_elements: int
+    # The full tensor, as (sxx, syy, szz, sxy, syz, szx) per node. Kept because von Mises
+    # assumes a material with no preferred direction and a printed part has one: whether an FDM
+    # part is safe is decided by the traction on its LAYER PLANE, which no invariant can recover.
+    # It is parsed out of the .frd regardless, so discarding it saved nothing.
+    stress: np.ndarray = None    # type: ignore[assignment]  # (n, 6)
+
+    @property
+    def max_displacement(self) -> float:
+        if self.displacement.size == 0:
+            return 0.0
+        return float(np.linalg.norm(self.displacement, axis=1).max())
+
+    @property
+    def peak_von_mises(self) -> float:
+        return float(self.von_mises.max()) if self.von_mises.size else 0.0
+
+    def von_mises_percentile(self, q: float = 99.0) -> float:
+        """A percentile, quoted for the same reason as on the voxel side.
+
+        CalculiX extrapolates integration-point stress to the nodes, which overshoots at a
+        re-entrant corner exactly where our staircase does. Comparing peaks would compare two
+        different artefacts; comparing percentiles compares the structure.
+        """
+        if self.von_mises.size == 0:
+            return 0.0
+        return float(np.percentile(self.von_mises, q))
+
+
+def _nodes_where(mesh: TetMesh, where) -> np.ndarray:
+    """Resolve a selector exactly as `voxel.Model._select_nodes` does, so a comparison is fair."""
+    if callable(where):
+        mask = np.asarray(where(mesh.nodes))
+        if mask.shape != (len(mesh.nodes),) or mask.dtype != bool:
+            raise ValueError(
+                "node selector must return a boolean mask of shape (n_nodes,), got "
+                f"shape {mask.shape} dtype {mask.dtype}")
+        idx = np.flatnonzero(mask)
+    else:
+        arr = np.asarray(where)
+        idx = np.flatnonzero(arr) if arr.dtype == bool else arr.astype(np.int64)
+    if idx.size == 0:
+        raise ValueError("node selector matched no nodes -- check the coordinate bounds")
+    return idx
+
+
+def _write_set(fh, name: str, ids) -> None:
+    fh.write(f"*NSET, NSET={name}\n")
+    for start in range(0, len(ids), 8):
+        fh.write(", ".join(str(int(i) + 1) for i in ids[start:start + 8]) + ",\n")
+
+
+def _read_frd(path: str, n_nodes: int) -> tuple:
+    """Parse displacement and stress out of a CalculiX .frd.
+
+    Fixed-width, and the widths are the thing: 3 characters of record tag, 10 of node id, then
+    12 per component. Splitting on whitespace works until a six-figure node id meets a negative
+    exponent and two fields run together.
+    """
+    disp = np.zeros((n_nodes, 3))
+    stress = np.zeros((n_nodes, 6))
+    seen_disp = seen_stress = 0
+    block = None
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            tag = line[:3].strip()
+            if tag == "-4":
+                block = line[3:].split()[0] if line[3:].split() else None
+                continue
+            if tag in ("-5", "1P", "2C", "3C"):
+                continue
+            if tag == "-3":
+                block = None
+                continue
+            if tag != "-1" or block not in ("DISP", "STRESS"):
+                continue
+            node = int(line[3:13]) - 1
+            body = line[13:].rstrip("\n").rstrip()
+            values = [float(body[12 * k:12 * (k + 1)]) for k in range(len(body) // 12)]
+            if not 0 <= node < n_nodes:
+                continue
+            if block == "DISP":
+                disp[node] = values[:3]
+                seen_disp += 1
+            else:
+                stress[node] = values[:6]
+                seen_stress += 1
+
+    if seen_disp == 0:
+        raise SolverFailed(f"no displacement block in {os.path.basename(path)}")
+    sxx, syy, szz, sxy, syz, szx = stress.T
+    von_mises = np.sqrt(0.5 * ((sxx - syy) ** 2 + (syy - szz) ** 2 + (szz - sxx) ** 2)
+                        + 3.0 * (sxy ** 2 + syz ** 2 + szx ** 2))
+    return disp, von_mises, stress
+
+
+def traction_on_plane(stress: np.ndarray, normal) -> tuple:
+    """Resolve a stress tensor onto a plane: `(direct, shear_magnitude)` per row.
+
+    This is the question an FDM part actually poses. A printed wall is a stack of welded beads,
+    and the weld is the weak direction — typically half the in-plane strength in tension across
+    the layers and less again in interlayer shear. So the number that decides whether a printed
+    part survives is not von Mises, which presumes isotropy; it is the traction on the layer
+    plane, split into the part that tries to peel the layers apart (`direct`, signed, positive
+    in tension) and the part that tries to slide them over one another (`shear`, a magnitude).
+
+    `stress` is (n, 6) as `(sxx, syy, szz, sxy, syz, szx)`. `normal` is the layer-plane normal,
+    which for a part printed flat on the bed is the build direction.
+    """
+    s = np.asarray(stress, dtype=float)
+    if s.ndim != 2 or s.shape[1] != 6:
+        raise ValueError(f"stress must be (n, 6), got {s.shape}")
+    n = np.asarray(normal, dtype=float)
+    if n.shape != (3,):
+        raise ValueError(f"normal must be a 3-vector, got {n.shape}")
+    length = float(np.linalg.norm(n))
+    if length == 0.0:
+        raise ValueError("normal must not be the zero vector")
+    n = n / length
+
+    sxx, syy, szz, sxy, syz, szx = s.T
+    # t = sigma . n, written out rather than built as n x 3 x 3 tensors: this runs over a few
+    # hundred thousand nodes and the explicit form avoids materialising all of them.
+    tx = sxx * n[0] + sxy * n[1] + szx * n[2]
+    ty = sxy * n[0] + syy * n[1] + syz * n[2]
+    tz = szx * n[0] + syz * n[1] + szz * n[2]
+
+    direct = tx * n[0] + ty * n[1] + tz * n[2]
+    total = tx ** 2 + ty ** 2 + tz ** 2
+    # Clamped at zero: |t|^2 - direct^2 is non-negative in exact arithmetic and can go a few
+    # ulps below it in floating point, and a negative shear magnitude is nonsense downstream.
+    shear = np.sqrt(np.maximum(total - direct ** 2, 0.0))
+    return direct, shear
 
 
 def solve(mesh: TetMesh, *, E: float, nu: float, fix, load,
@@ -387,6 +544,8 @@ def solve(mesh: TetMesh, *, E: float, nu: float, fix, load,
 
     own = workdir is None
     directory = workdir or tempfile.mkdtemp(prefix="ck-ccx-")
+    if not own:
+        os.makedirs(directory, exist_ok=True)
     try:
         deck = os.path.join(directory, "job.inp")
         with open(deck, "w", encoding="utf-8") as fh:
@@ -425,10 +584,11 @@ def solve(mesh: TetMesh, *, E: float, nu: float, fix, load,
             raise SolverFailed(
                 f"CalculiX exited 0 but wrote no .frd. Output: {text.strip()[-400:]}")
 
-        disp, von_mises = _read_frd(frd, len(mesh.nodes))
+        disp, von_mises, stress = _read_frd(frd, len(mesh.nodes))
         return TetResult(displacement=disp, von_mises=von_mises,
                          applied_force=tuple(share * len(loaded)),
-                         n_nodes=len(mesh.nodes), n_elements=len(mesh.tets))
+                         n_nodes=len(mesh.nodes), n_elements=len(mesh.tets),
+                         stress=stress)
     finally:
         if own:
             shutil.rmtree(directory, ignore_errors=True)

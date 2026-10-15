@@ -122,6 +122,67 @@ def test_gmsh_meshes_a_box_to_the_requested_size_and_order():
 
 
 @test
+def test_an_explicit_workdir_is_created_and_its_files_kept():
+    """A caller who names a working directory wants the deck and the .frd afterwards.
+
+    The temporary-directory path creates its own; the explicit path did not, and failed with a
+    FileNotFoundError on the .geo. Keeping the files is the point of passing the argument at all:
+    a stress result nobody can open the deck for is not auditable.
+    """
+    import tempfile
+
+    parent = tempfile.mkdtemp(prefix="ck-wd-")
+    work = os.path.join(parent, "does", "not", "exist", "yet")
+    m = tet.mesh_box((L, B, H), pitch=8.0, workdir=work)
+    assert os.path.isdir(work), work
+    assert os.path.isfile(os.path.join(work, "model.geo"))
+    assert os.path.isfile(os.path.join(work, "model.inp")), "the mesh must be left behind"
+
+    tet.solve(m, E=E_STEEL, nu=NU, fix=_wall, load=(_tip, (0.0, 0.0, -P)), workdir=work)
+    assert os.path.isfile(os.path.join(work, "job.inp")), "the deck must be left behind"
+    assert os.path.isfile(os.path.join(work, "job.frd")), "the result must be left behind"
+
+
+@test
+def test_the_stress_tensor_survives_not_just_the_invariant():
+    """von Mises assumes a material with no preferred direction. A printed part has one.
+
+    An FDM part is markedly weaker across its layers than along them, so the question that
+    decides whether such a part is safe is the normal and shear traction on the LAYER PLANE —
+    which cannot be recovered from an invariant. The full tensor is parsed out of the .frd
+    anyway; throwing it away made the anisotropic question unanswerable for no saving at all.
+    """
+    m, r = _reference(4.0)
+    assert r.stress.shape == (len(m.nodes), 6), r.stress.shape
+
+    # von Mises must be reproducible FROM the tensor, or one of the two is wrong
+    sxx, syy, szz, sxy, syz, szx = r.stress.T
+    recomputed = np.sqrt(0.5 * ((sxx - syy) ** 2 + (syy - szz) ** 2 + (szz - sxx) ** 2)
+                         + 3.0 * (sxy ** 2 + syz ** 2 + szx ** 2))
+    assert np.allclose(recomputed, r.von_mises, atol=1e-6), (
+        "von Mises and the tensor it came from disagree")
+
+    # A cantilever in bending about Y: SXX dominates, and it is signed. Only about 2x, not the
+    # 10x beam theory implies — because a clamped end is a real 3-D restraint, and holding a
+    # face against its own Poisson contraction generates a transverse stress that beam theory
+    # has no way to represent. 28 MPa of SYY against 68 of SXX, all of it at the wall.
+    assert abs(sxx).max() > 2.0 * abs(syy).max(), (abs(sxx).max(), abs(syy).max())
+    assert sxx.min() < -1.0 and sxx.max() > 1.0, "bending puts one face in tension, one in compression"
+
+    # the traction on a plane is extractable, which is the whole reason to keep the tensor
+    for normal in ((0, 0, 1), (1, 0, 0)):
+        tn, ts = tet.traction_on_plane(r.stress, normal)
+        assert tn.shape == (len(m.nodes),) and ts.shape == (len(m.nodes),)
+        assert np.all(ts >= -1e-12), "a shear magnitude cannot be negative"
+    # on the Z plane of a beam bent about Y, the direct traction is small and SXX carries the load
+    tn_z, _ = tet.traction_on_plane(r.stress, (0, 0, 1))
+    assert abs(tn_z).max() < 0.5 * abs(sxx).max(), (abs(tn_z).max(), abs(sxx).max())
+    # and on the X plane it is exactly SXX, because the normal is a coordinate direction
+    tn_x, _ = tet.traction_on_plane(r.stress, (1, 0, 0))
+    assert np.allclose(tn_x, sxx, atol=1e-9)
+
+
+@test
 def test_a_finer_pitch_gives_more_elements():
     coarse = tet.mesh_box((L, B, H), pitch=8.0)
     fine = tet.mesh_box((L, B, H), pitch=4.0)

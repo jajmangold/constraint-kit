@@ -55,6 +55,11 @@ MATERIALS = {
     "steel":  (200000.0, 0.30, 7.85, 150.0, "mild steel, yield 250 MPa, allowable at SF 1.67"),
 }
 
+# Which materials are PRINTED, and so have a weak direction that a von Mises check cannot see.
+# Wrought aluminium and mild steel do not: they are isotropic to any accuracy that matters here,
+# and offering an interlayer check on them would invite a meaningless number.
+PRINTED = {"petg", "pla", "abs"}
+
 _OPS = {">=": np.greater_equal, "<=": np.less_equal, ">": np.greater, "<": np.less}
 
 
@@ -179,6 +184,10 @@ def main(argv=None):
     ap.add_argument("--tol", type=float, default=0.05, metavar="F",
                     help="remaining mesh error below which a result counts as converged")
     ap.add_argument("--method", default="auto", choices=("auto", "direct", "cg"))
+    ap.add_argument("--layers", metavar="NORMAL", default=None,
+                    help="the layer-plane normal for a PRINTED part: x, y, z, a vector like "
+                         "'0,0,1', or 'all' to rank the three printable orientations. Reports "
+                         "the interlayer check, which a von Mises number cannot express.")
     ap.add_argument("--reference", nargs="?", type=float, const=0.0, metavar="PITCH",
                     help="also solve the SAME problem with body-fitted quadratic tetrahedra "
                          "through Gmsh + CalculiX and compare. Needs a STEP file (an STL has no "
@@ -241,12 +250,85 @@ def main(argv=None):
         print("\nA voxel boundary concentrates stress, so the peak column is an upper bound "
               "and p99 is the structural signal.")
     fin = rows[-1]
+    if args.layers:
+        _interlayer(args, mat, fin.get("result"), "voxel")
     if args.reference is not None:
         _reference(args, mat, fixes, loads, rows)
     if fin["safety_factor"] < 1.0:
         print(f"\nFAIL: p99 stress {fin['stress_p99']:.1f} MPa exceeds the {mat[3]:.0f} MPa "
               f"allowable (SF {fin['safety_factor']:.2f}).")
     return 0
+
+
+_AXES = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}
+
+
+def parse_layers(spec: str):
+    """`z` or `0,0,1` -> a layer-plane normal; `all` -> None, meaning rank all three."""
+    text = spec.strip().lower()
+    if text == "all":
+        return None
+    if text in _AXES:
+        return _AXES[text]
+    parts = [p for p in text.replace(" ", "").split(",") if p]
+    if len(parts) != 3:
+        raise ValueError(
+            f"--layers takes x, y, z, three comma-separated numbers, or 'all'; got {spec!r}")
+    return tuple(float(p) for p in parts)
+
+
+def _interlayer(args, mat, result, which: str) -> None:
+    """The check a von Mises number cannot express: can the WELDS take it?
+
+    A printed wall is a stack of welded beads, and across the weld the polymer is a diffusion
+    bond formed in under a second against a cooling surface — roughly half the in-plane strength.
+    So for a printed part the orientation of the layers relative to the load path is a structural
+    decision, and it is invisible to any isotropic check.
+    """
+    from constraint_kit.fea import printed
+
+    if result is None or getattr(result, "stress", None) is None:
+        return
+    allow = mat[3]
+    if args.material not in PRINTED:
+        print("\n%s interlayer check SKIPPED: %s is not a printed material, so it has no layer "
+              "plane to check. Running one anyway would produce a number that means nothing."
+              % (which, args.material))
+        return
+
+    try:
+        normal = parse_layers(args.layers)
+    except ValueError as exc:
+        print("\n%s" % exc)
+        return
+
+    print()
+    if normal is None:
+        ranked = printed.best_orientation(result.stress, in_plane_allowable=allow)
+        print("%s interlayer check, all three printable orientations (best first):" % which)
+        print("  %-18s %9s %9s %9s %9s  %s"
+              % ("layers normal to", "peel MPa", "SF", "shear MPa", "SF", "governing"))
+        for name, c in ranked:
+            print("  %-18s %9.2f %9s %9.2f %9s  %s"
+                  % (name, c.peel, _sf(c.sf_peel), c.shear, _sf(c.sf_shear),
+                     ("%.2f (%s)" % (c.governing, c.governing_mode))
+                     if c.governing != math.inf else "no demand"))
+        best, worst = ranked[0], ranked[-1]
+        print("  Print it with the layers normal to %s. Normal to %s the welds govern at "
+              "SF %s, against %s in the best orientation -- print orientation is a structural "
+              "decision on this part, not a convenience."
+              % (best[0], worst[0], _sf(worst[1].governing), _sf(best[1].governing)))
+        print("  ASSUMED across-layer factors: tensile %.2f, shear %.2f of in-plane. "
+              "Literature-typical for unannealed FDM, NOT measured for this filament or printer."
+              % (printed.LAYER_FACTORS["tensile"], printed.LAYER_FACTORS["shear"]))
+        return
+
+    c = printed.check(result.stress, normal, in_plane_allowable=allow)
+    print("%s " % which + c.report().replace("\n", "\n  "))
+
+
+def _sf(value: float) -> str:
+    return "n/a" if value == math.inf else "%.2f" % value
 
 
 def _all_of(fixes, p):
@@ -278,7 +360,7 @@ def _reference(args, mat, fixes, loads, rows) -> None:
     if args.part.lower().endswith(".stl"):
         print("\nNO REFERENCE: --reference needs a STEP, BREP or IGES file. An STL is a "
               "triangle soup with no solid to mesh. Convert it first; FreeCAD will, via "
-              "Part.makeSolid(Part.Shape().makeShapeFromMesh(mesh.Topology, 0.05)) — and check "
+              "Part.makeSolid(Part.Shape().makeShapeFromMesh(mesh.Topology, 0.05)) -- and check "
               "the result matches the mesh volume to a fraction of a percent, because a "
               "conversion that quietly heals a hole has changed the part.")
         return
@@ -315,6 +397,9 @@ def _reference(args, mat, fixes, loads, rows) -> None:
     if any(axes != "xyz" for _, axes in fixes):
         print("  NOTE: a per-axis restraint was given. The reference clamped all three axes, so "
               "it reads stiffer than the voxel run by construction.")
+
+    if args.layers:
+        _interlayer(args, mat, ref, "reference")
 
     voxel_result = rows[-1].get("result")
     if voxel_result is not None:

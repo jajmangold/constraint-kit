@@ -21,12 +21,18 @@ are ever needed; see PLAN.md section 4 for why neither is the inner loop.
 """
 from .convergence import Convergence, ConvergenceError, richardson
 from .hex8 import elasticity_matrix, hex8_b_centre, hex8_stiffness
+from .printed import InterlayerCheck, best_orientation, traction_on_plane
 from .sample import load_stl, occupancy_from_shape, occupancy_from_triangles
 from .voxel import Grid, Model, Result, SolveFailure
+
+# `tet` and `crosscheck` are NOT imported here on purpose. They shell out to gmsh and CalculiX,
+# and importing them eagerly would make `from constraint_kit.fea import Grid` depend on a
+# toolchain the fast loop does not need. Import them by name when you want the reference.
 
 __all__ = [
     "Convergence",
     "ConvergenceError",
+    "InterlayerCheck",
     "Grid",
     "Model",
     "Result",
@@ -38,4 +44,6 @@ __all__ = [
     "occupancy_from_triangles",
     "occupancy_from_shape",
     "richardson",
+    "best_orientation",
+    "traction_on_plane",
 ]

@@ -71,21 +71,30 @@ A loose tolerance on a single mesh passes for the wrong reasons.
 ## COMMANDS
 
 ```bash
-tools/ci.sh                      # all three tiers; gates pushes. exit 0 = green
+tools/ci.sh                      # every available tier; gates pushes. exit 0 = green
+CK_GUI=1 CK_LIVE=1 tools/ci.sh   # ...plus a FreeCAD window and the configured model
 
 # host tier - numpy + scipy only, runs anywhere
-python tests/test_fea.py                   # physics        (21)
+python tests/test_fea.py                   # physics        (23)
 python tests/test_convergence.py           # convergence    (16)
-python workbench/tests/test_core.py        # wb core        (22)
+python tests/test_printed.py               # FDM anisotropy (15)
+python tests/test_crosscheck.py            # vs gmsh+ccx    (15, skips if they are absent)
+python workbench/tests/test_core.py        # wb core        (32)
 
 # freecad tier - needs freecadcmd
-freecadcmd workbench/tests/test_geometry.py # parts, mates   (21)
+freecadcmd workbench/tests/test_geometry.py # parts, mates   (30)
 freecadcmd workbench/tests/test_document.py # doc, checks    (16)
-freecadcmd workbench/tests/test_commands.py # commands, API  (24)
+freecadcmd workbench/tests/test_commands.py # commands, API  (25)
+freecadcmd workbench/tests/test_planner.py  # plan + repair  (15)
+freecadcmd workbench/tests/test_import.py   # STEP import    (14)
+freecadcmd workbench/tests/test_motion.py   # travel, sweep  (17)
 python workbench/tests/test_agent_end_to_end.py  # MCP, cross-process (4)
 
 # gui tier - opens a real FreeCAD window for ~30 s
 python workbench/tests/run_gui_tests.py    # qt layer       (15)
+
+# live tier - calls the configured endpoint, costs money
+CK_LIVE=1 freecadcmd workbench/tests/test_planner_live.py   # NL -> built  (4)
 
 # container tier
 bash tests/run.sh                          # kernel        (113, needs cadkit)
@@ -145,6 +154,16 @@ with a 2s model".
   **A safety factor read off a voxel bending stress is too high by that factor.** Four elements
   through a thickness still over-states SF by a quarter. See
   `tests/test_crosscheck.py::test_the_voxel_stress_bias_is_the_predicted_1_minus_pitch_over_thickness`.
+- **von Mises is the wrong allowable check for a printed part.** It presumes a material with no
+  preferred direction; an FDM wall is a stack of welds at roughly half the in-plane strength
+  across them. Use `fea.printed.check` on the layer plane. Measured on the gantry plate: the
+  welds govern at **SF 0.74 printed on its end** against 1.63 printed flat, from the same load
+  and the same geometry. Print orientation is a structural decision, and it is one a von Mises
+  number cannot express.
+- **Printed-part output must be ASCII.** These drivers print to a Windows cp1252 console, where
+  an em-dash arrives as a replacement character and makes a correct sentence read like an
+  encoding failure in the analysis. Prose goes in docstrings; `tests/test_printed.py` has the
+  guard.
 - **A non-converging voxel ladder on a thin-walled part is not a refinement problem.** Whether a
   wall lands on element centres matters more than the pitch does. A 3.45 mm wall is 2.7 elements
   at 1.30 mm pitch, and bending compliance goes as `t⁻³`, so gaining or losing one lattice layer
