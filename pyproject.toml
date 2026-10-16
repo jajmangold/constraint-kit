@@ -68,13 +68,17 @@ service = [
     "pypdf",
 ]
 solver = ["z3-solver", "python-solvespace"]
+# Algebraic multigrid for the voxel CG (#5). Optional on purpose: the physics tier has to import
+# inside FreeCAD, where pip is not available. And off by default even when present -- it wins on
+# iterations and loses on wall clock below ~150k DOF; see fea/voxel.py::AMG_DOF_FLOOR.
+amg = ["pyamg"]
 gear = ["cq-gears @ git+https://github.com/meadiode/cq_gears.git"]
 pdf = ["pdf-oxide"]
 dev = ["pytest"]
 # GPU, and deliberately not in `all`: installing bitsandbytes on a machine with no CUDA is a
 # long way to an error message.
 training = ["unsloth", "trl", "peft", "bitsandbytes"]
-all = ["constraint-kit[kernel,service,solver,gear,pdf,dev]"]
+all = ["constraint-kit[kernel,service,solver,amg,gear,pdf,dev]"]
 
 [project.urls]
 Homepage = "https://github.com/jajmangold/constraint-kit"

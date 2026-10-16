@@ -54,6 +54,7 @@ run "load cases      tests/test_cases.py"         python tests/test_cases.py
 run "optimiser      tests/test_optimise.py"      python tests/test_optimise.py
 run "buckling       tests/test_buckling.py"      python tests/test_buckling.py
 run "topology       tests/test_topology.py"      python tests/test_topology.py
+run "preconditioner tests/test_preconditioner.py" python tests/test_preconditioner.py
 run "manufacturing  tests/test_manufacture.py"   python tests/test_manufacture.py
 run "packaging      tests/test_packaging.py"      python tests/test_packaging.py
 run "printed parts   tests/test_printed.py"       python tests/test_printed.py

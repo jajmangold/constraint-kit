@@ -2,6 +2,72 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-19 (later) — the optional AMG preconditioner, and a measurement that went against it (closes #5)
+
+`voxel.py` has carried a note since it was written: Jacobi is valid, cheap and weak, and "a
+genuinely better symmetric option is algebraic multigrid (pyamg), which is not a dependency here".
+This is that option, built and then **measured** -- which is the interesting part, because the
+measurement came out against the new code and is recorded rather than quietly dropped.
+
+- `[feat]` **`precond="auto" | "jacobi" | "amg"`** on `solve` and `solve_cases`, with
+  `amg_available()` probing for pyamg and `choose_preconditioner` resolving the request.
+  `Result` now reports **which** preconditioner ran and **how many iterations** it took, because
+  "it converged" and "it converged the way you asked" are different claims, and a preconditioner
+  nobody can measure is a preconditioner nobody should trust.
+- `[decision]` **An explicit `precond="amg"` RAISES when pyamg is absent**, with the install
+  line. `auto` degrades silently and should -- it means "use your judgement" -- but somebody
+  passing `"amg"` is doing it because Jacobi was too slow, and quietly giving them Jacobi while
+  reporting convergence would tell them the slow path was the fast path.
+- `[fix]` **`ilu` is refused by name, with the reason**, so the next person does not try it
+  again: CG needs a symmetric positive-definite preconditioner and an incomplete LU is not one;
+  it breaks Krylov orthogonality and fails by *stagnating* rather than erroring. Measured here
+  long ago at 42 s to a residual of 8e-3 against Jacobi's 1.6 s to 1e-9.
+
+### The near-nullspace was the whole difference, and leaving it out nearly got AMG deleted
+
+- `[fix]` Smoothed aggregation coarsens by assuming it knows the operator's near-nullspace. For a
+  scalar problem that is the constant vector, which is pyamg's default -- and this is a **vector
+  elasticity** operator whose near-nullspace is the rigid-body motions. Told nothing, SA coarsens
+  as though every degree of freedom were an independent scalar:
+
+  | 14,112 DOF | iterations |
+  |---|---|
+  | AMG without the translations | **300** |
+  | AMG with them | **99** |
+
+  The first number is barely ahead of Jacobi, and the honest-looking conclusion from it would
+  have been to delete the feature. There is now a test that measures both configurations, so the
+  reason the code looks the way it does is recorded rather than inferable.
+
+### What AMG actually buys, and what it does not
+
+Measured on a slender beam at 1e-9 relative tolerance:
+
+| DOF | Jacobi | AMG (+nullspace) |
+|---|---|---|
+| 4,800 | 328 it / 0.07 s | **92** it / 0.24 s |
+| 14,112 | 522 it / 0.50 s | **99** it / 1.16 s |
+| 29,160 | 604 it / 1.23 s | **108** it / 2.79 s |
+
+- `[feat]` **The iteration count is essentially flat in problem size** -- 92 to 108 across a
+  sixfold increase, against Jacobi's 328 to 604. That is the defining property of a working
+  multigrid method, and it is what the tests assert: the *growth*, not a single number, because
+  the growth is the property and a single number is this machine on this day.
+- `[decision]` **And AMG is slower in wall clock at every size reachable here**, because a
+  V-cycle costs far more per iteration than a divide. Flat iterations still lose when each one is
+  twenty times the price. So `AMG_DOF_FLOOR` is **150,000** -- set where the trend says the two
+  curves meet rather than where it would flatter the new path -- `auto` leaves AMG off below it,
+  and there is a test asserting the floor is high enough that `auto` never chooses the slower
+  option at the sizes this project actually solves.
+- `[test]` **The two preconditioners agree to 3.6e-12**, which is what proves a preconditioner is
+  a preconditioner and not a modification of the physics.
+- `[note]` pyamg stays a **lazy** import inside the two functions that need it, so `voxel.py`
+  still imports on numpy and scipy alone -- `tests/test_packaging.py` enforces that, and the
+  physics tier has to work inside FreeCAD where pyamg is not present. Declared as the `amg`
+  extra.
+
+**24 suites, 419 tests.**
+
 ## 2026-10-19 — SIMP topology optimisation, an oracle and never a generator (closes #19)
 
 The issue title is the design. What comes out is a **density field**, and a density field is not a

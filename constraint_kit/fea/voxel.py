@@ -17,6 +17,7 @@ Units are whatever you feed it, consistently. mm / N / MPa throughout the machin
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -38,6 +39,87 @@ DIRECT_DOF_LIMIT = 80_000
 # hang when anything upstream is wrong.
 CG_MAX_ITER = 30_000
 ASSEMBLY_CHUNK = 16_384  # elements per triplet batch; 16k -> ~150 MB transient
+
+
+# Below this many reduced DOF, AMG loses on WALL CLOCK even though it wins on iterations.
+#
+# Measured on a slender beam, 1e-9 relative tolerance, this machine:
+#
+#     DOF     jacobi          amg (no nullspace)   amg (+nullspace)
+#     4,800   328 it / 0.07s  220 it / 0.47s        92 it / 0.24s
+#     14,112  522 it / 0.50s  291 it / 2.10s        99 it / 1.16s
+#     29,160  604 it / 1.23s  359 it / 6.87s       108 it / 2.79s
+#
+# Two things in that table. The near-nullspace matters enormously -- without it AMG is barely
+# better than Jacobi, and with it the iteration count is essentially FLAT in problem size
+# (92 -> 108 across a sixfold increase), which is the defining property of a working multigrid
+# method. And a V-cycle costs far more per iteration than a Jacobi divide, so flat iterations are
+# still slower here: AMG is 2.3x slower at 29k DOF.
+#
+# Jacobi's iteration count grows roughly as the square root of the DOF count while AMG's does
+# not, so there is a crossover -- it is just well above the sizes in this table. The floor is set
+# where the trend says the two meet rather than where it would flatter the new code, and
+# `precond="amg"` is always available for anybody who wants to measure their own problem.
+AMG_DOF_FLOOR = 150_000
+
+_AMG_OK: bool | None = None
+
+
+def amg_available() -> bool:
+    """Is algebraic multigrid usable here? Probed once, then cached.
+
+    `pyamg` is an OPTIONAL dependency and must stay one: the physics tier runs inside FreeCAD,
+    where pip is not available and pyamg is not present, so the default path can never require
+    it. `tests/test_packaging.py` would fail if this module imported it at the top.
+
+    `CK_NO_AMG=1` forces it off, which is how the fallback behaviour is tested on a machine that
+    does have it -- a test that could only run on the wrong machine would never run.
+    """
+    global _AMG_OK
+    if os.environ.get("CK_NO_AMG"):
+        return False
+    if _AMG_OK is None:
+        try:
+            import pyamg  # noqa: F401
+            _AMG_OK = True
+        except Exception:  # noqa: BLE001 - any failure means "do not use it"
+            _AMG_OK = False
+    return _AMG_OK
+
+
+def choose_preconditioner(precond: str, n_dof: int) -> str:
+    """Resolve a preconditioner request for this system on this machine.
+
+    `auto` uses AMG when it is available AND worth the setup; `"amg"` DEMANDS it and raises if it
+    cannot be had; `"jacobi"` forbids it.
+
+    The difference between `auto` and `"amg"` is the whole point. Degrading under `auto` is
+    correct -- it means "use your judgement". Degrading under an explicit request is not:
+    somebody passing `precond="amg"` is doing it because Jacobi was too slow, and quietly giving
+    them Jacobi and reporting convergence tells them the slow path was the fast path.
+    """
+    if precond == "ilu":
+        raise ValueError(
+            "ilu is not available and never will be: conjugate gradients requires a SYMMETRIC "
+            "positive-definite preconditioner and an incomplete LU gives M = (LU)^-1, which is "
+            "not symmetric. It breaks the Krylov orthogonality CG depends on and fails by "
+            "STAGNATING rather than erroring -- measured here at 42 s to a residual of 8e-3, "
+            "against Jacobi at 1.6 s to 1e-9. Use 'jacobi' or 'amg'.")
+    if precond not in ("auto", "jacobi", "amg"):
+        raise ValueError(
+            f"precond must be 'auto', 'jacobi' or 'amg', got {precond!r}")
+    if precond == "jacobi":
+        return "jacobi"
+    if precond == "amg":
+        if not amg_available():
+            raise RuntimeError(
+                "precond='amg' was asked for and pyamg is not installed, so it cannot be "
+                "honoured. Falling back to jacobi silently would answer a question you did not "
+                "ask -- you requested AMG because Jacobi was too slow. Install it with "
+                "`pip install pyamg`, or pass precond='jacobi' to accept the slower path "
+                "deliberately.")
+        return "amg"
+    return "amg" if (amg_available() and n_dof >= AMG_DOF_FLOOR) else "jacobi"
 
 
 _DIRECT_OK: bool | None = None
@@ -174,6 +256,12 @@ class Result:
     # The full element-centre tensor, (n_active, 6) as (sxx, syy, szz, sxy, syz, szx). von Mises
     # is derived from it rather than the other way round, so the two cannot drift apart.
     stress: np.ndarray = None    # type: ignore[assignment]
+    # Which preconditioner ran, and how many iterations it took. Reported because "it converged"
+    # and "it converged the way you asked" are different claims, and because a preconditioner
+    # nobody can measure is a preconditioner nobody should trust. `None` and 0 for a direct
+    # solve, which neither preconditions nor iterates.
+    preconditioner: str | None = None
+    iterations: int = 0
 
     @property
     def max_displacement(self) -> float:
@@ -505,7 +593,8 @@ class Model:
     # ---- solve ----------------------------------------------------------------------------
 
     def solve(self, *, method: str = "auto", tol: float = 1e-9,
-              residual_tol: float = 1e-6, maxiter: int | None = None) -> Result:
+              residual_tol: float = 1e-6, maxiter: int | None = None,
+              precond: str = "auto") -> Result:
         """Solve K u = f and report, never assume, the residual."""
         active = self._active()
         self._guard(active)
@@ -526,23 +615,37 @@ class Model:
 
         chosen = _choose(method, n_red)
 
+        used, iterations = None, 0
         if chosen == "direct":
             u_red = spla.spsolve(K.tocsc(), f)
         elif chosen == "cg":
-            M = _preconditioner(K)
-            u_red, info = spla.cg(K, f, rtol=tol, maxiter=maxiter or CG_MAX_ITER, M=M)
+            which = choose_preconditioner(precond, n_red)
+            M = (_amg_preconditioner(K, _dof_components(keep_flat)) if which == "amg"
+                 else _preconditioner(K))
+            counted = {"n": 0}
+
+            def tick(_x):
+                counted["n"] += 1
+
+            u_red, info = spla.cg(K, f, rtol=tol, maxiter=maxiter or CG_MAX_ITER, M=M,
+                                  callback=tick)
+            used, iterations = which, counted["n"]
             if info != 0:
+                extra = ("" if which == "amg" else
+                         "; install pyamg and pass precond='amg' for a multigrid preconditioner")
                 raise SolveFailure(
-                    f"conjugate gradient stopped after {maxiter or CG_MAX_ITER} iterations "
-                    f"without reaching rtol={tol:.0e} on {n_red} DOF (info={info}); coarsen the "
-                    "grid, loosen tol, or install pyamg for a multigrid preconditioner")
+                    f"conjugate gradient with the {which} preconditioner stopped after "
+                    f"{maxiter or CG_MAX_ITER} iterations without reaching rtol={tol:.0e} on "
+                    f"{n_red} DOF (info={info}); coarsen the grid, loosen tol{extra}")
         else:
             raise ValueError(f"method must be 'auto', 'direct' or 'cg', got {method!r}")
 
-        return self._finish(active, keep_flat, K, f, u_red, chosen, residual_tol, self._force)
+        return self._finish(active, keep_flat, K, f, u_red, chosen, residual_tol, self._force,
+                            preconditioner=used, iterations=iterations)
 
     def solve_cases(self, *, method: str = "auto", tol: float = 1e-9,
-                    residual_tol: float = 1e-6, maxiter: int | None = None) -> "Envelope":
+                    residual_tol: float = 1e-6, maxiter: int | None = None,
+                    precond: str = "auto") -> "Envelope":
         """Solve every named load case on ONE assembled matrix, and envelope the results.
 
         A real machine part does not have *a* load. The gantry plate carries belt tension when
@@ -588,7 +691,9 @@ class Model:
             lu = spla.splu(K.tocsc())
             back = lu.solve
         elif chosen == "cg":
-            M = _preconditioner(K)
+            which = choose_preconditioner(precond, n_red)
+            M = (_amg_preconditioner(K, _dof_components(keep_flat)) if which == "amg"
+                 else _preconditioner(K))
 
             def back(rhs):
                 u, info = spla.cg(K, rhs, rtol=tol, maxiter=maxiter or CG_MAX_ITER, M=M)
@@ -628,7 +733,8 @@ class Model:
                 "every restrained node sits in empty space, so nothing is actually held: the "
                 "restraint selector matched only padding outside the part")
 
-    def _finish(self, active, keep_flat, K, f, u_red, chosen, residual_tol, force) -> Result:
+    def _finish(self, active, keep_flat, K, f, u_red, chosen, residual_tol, force,
+                preconditioner=None, iterations: int = 0) -> Result:
         """Turn a solved reduced vector into a Result, residual checked rather than assumed."""
         if not np.all(np.isfinite(u_red)):
             raise SolveFailure(
@@ -654,6 +760,8 @@ class Model:
             method=chosen,
             applied_force=tuple(float(v) for v in force.sum(axis=0)),
             stress=stress,
+            preconditioner=preconditioner,
+            iterations=int(iterations),
         )
 
     def _stress(self, active: np.ndarray, u_full: np.ndarray) -> np.ndarray:
@@ -699,6 +807,48 @@ def _choose(method: str, n_red: int) -> str:
     return "direct" if direct_solver_available() else "cg"
 
 
+def _amg_preconditioner(K: sp.spmatrix, components: np.ndarray | None = None):
+    """Smoothed-aggregation AMG as a CG preconditioner. Symmetric, which is what CG requires.
+
+    **The near-nullspace is not optional, and leaving it out was the bug.** Smoothed aggregation
+    coarsens by assuming it already knows which vectors the operator barely sees -- its
+    near-nullspace -- and for a scalar problem that is the constant vector, which is pyamg's
+    default. This is a VECTOR elasticity operator with three unknowns per node, and its
+    near-nullspace is the rigid-body motions, starting with the three translations. Told nothing,
+    SA coarsens as though every degree of freedom were an independent scalar and does barely
+    better than Jacobi.
+
+    Measured, on the same beam at three sizes: 220 / 291 / 359 iterations without the
+    translations and 92 / 99 / 108 with them. The second row is nearly FLAT in problem size,
+    which is what a multigrid method is supposed to look like; the first is not multigrid
+    behaviour at all.
+
+    `components` is the x/y/z index of each reduced degree of freedom, from which the three
+    translations are one-hot columns. Smoothed aggregation rather than classical Ruge-Stuben for
+    the same reason.
+    """
+    import pyamg
+
+    B = None
+    if components is not None:
+        comp = np.asarray(components, dtype=np.int64)
+        B = np.zeros((K.shape[0], 3))
+        B[np.arange(K.shape[0]), comp] = 1.0
+    ml = pyamg.smoothed_aggregation_solver(K.tocsr(), B=B, max_coarse=500,
+                                           symmetry="symmetric")
+    return ml.aspreconditioner(cycle="V")
+
+
+def _dof_components(keep_flat: np.ndarray) -> np.ndarray:
+    """Which axis each surviving degree of freedom belongs to: 0, 1 or 2.
+
+    The reduced system drops restrained and unused DOF, so the component of a reduced index is
+    not simply `i % 3` -- it has to be carried across from the full numbering. This is the whole
+    of what AMG needs to know about the block structure.
+    """
+    return (np.arange(keep_flat.size)[keep_flat] % 3).astype(np.int64)
+
+
 def _preconditioner(K: sp.spmatrix):
     """Jacobi (diagonal) preconditioner.
 
@@ -710,9 +860,16 @@ def _preconditioner(K: sp.spmatrix):
     42 s and finished at a relative residual of 8e-3, while Jacobi-CG converged to 1e-9 in 1.6 s.
 
     Jacobi is a weak preconditioner and the iteration count does grow with slenderness, but it
-    is valid, it costs one divide per DOF, and it never allocates. A genuinely better symmetric
-    option is algebraic multigrid (pyamg), which is not a dependency here; incomplete Cholesky
-    would also serve but scipy does not ship one.
+    is valid, it costs one divide per DOF, and it never allocates -- which is why it is still the
+    default and the only one that always works.
+
+    The genuinely better symmetric option is algebraic multigrid, available as `precond="amg"`
+    when `pyamg` is installed (see `choose_preconditioner` and `AMG_DOF_FLOOR`). It gives
+    essentially mesh-independent iteration counts -- 92 to 108 across a sixfold size increase
+    where Jacobi goes 328 to 604 -- and is nonetheless SLOWER in wall clock at every size
+    measured here, because a V-cycle costs far more per iteration than a divide. It stays
+    OPTIONAL and off by default for both reasons: this module has to import inside FreeCAD, where
+    pyamg is not present, and at the sizes this project actually solves Jacobi still wins.
     """
     d = K.diagonal().copy()
     d[d == 0.0] = 1.0

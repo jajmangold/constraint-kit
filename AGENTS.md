@@ -81,6 +81,7 @@ python tests/test_cases.py                 # load cases     (16)
 python tests/test_optimise.py              # the optimizer  (22)
 python tests/test_buckling.py              # stability      (12)
 python tests/test_topology.py              # SIMP oracle    (13)
+python tests/test_preconditioner.py        # jacobi vs amg  (13)
 python tests/test_manufacture.py           # printability   (17)
 python tests/test_packaging.py             # dep claims     (9)
 python tests/test_printed.py               # FDM anisotropy (15)
@@ -145,6 +146,15 @@ with a 2s model".
 
 ## GOTCHAS THAT HAVE COST TIME
 
+- **Smoothed-aggregation AMG needs the elasticity near-nullspace or it is not multigrid.**
+  Told nothing, pyamg assumes the constant vector and coarsens as though every DOF were an
+  independent scalar: 300 iterations against 99 with the three translations passed as `B`. The
+  first number is barely ahead of Jacobi, and the obvious conclusion from it is to delete the
+  feature.
+- **AMG wins on iterations and LOSES on wall clock below ~150k DOF.** Flat iteration counts
+  (92 -> 108 over a sixfold size increase) still lose when a V-cycle costs twenty times a
+  divide. `auto` leaves it off below `AMG_DOF_FLOOR`; do not lower that to make the path look
+  good.
 - **Never give CG a non-symmetric preconditioner.** ILU seems like the upgrade from Jacobi and is
   invalid: it breaks Krylov orthogonality and fails by *stagnating*, not erroring. Measured:
   42 s to residual 8e-3, versus Jacobi at 1.6 s to 1e-9. See `fea/voxel.py::_preconditioner`.
