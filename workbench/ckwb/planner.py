@@ -11,7 +11,10 @@ Four properties are the whole point, and each is tested with the model call inje
 * **Validated before it builds.** An unknown generator, parameter or frame is refused, with a
   message naming what actually exists. Frames are checked by *building the proposed part* rather
   than against a hardcoded list, so the check cannot drift from the geometry.
-* **One repair attempt.** A refusal is handed back to the model once, which is the
+* **A deterministic repair first, then one model attempt.** A misspelled parameter or frame
+  name has exactly one plausible correction, so `diagnose.repair` makes it here and the model is
+  never asked -- cheaper, and more reliable than inviting a model to be creative about a typo.
+  Only when nothing is repairable without guessing is the refusal handed back, once, which is the
   execute-and-repair pattern the 2026 text-to-CAD work converged on. Once, not a loop: a model
   that cannot fix its own program given the exact error will not fix it on the fifth try either,
   and an unbounded loop spends money proving that.
@@ -354,6 +357,36 @@ class PlanSession:
                                 mates=raw.get("mates") or [],
                                 notes=str(raw.get("notes") or ""), raw=reply,
                                 attempts=self.attempt)
+
+        # A DETERMINISTIC REPAIR FIRST, and only then the model (issue #20).
+        #
+        # A misspelled parameter has exactly one plausible correction, and spending a round trip
+        # to have a language model make that correction is both slower and less reliable than
+        # making it here -- asking a model to fix a typo invites it to be creative instead.
+        # `diagnose.repair` only returns a program it has RE-VERIFIED, so this cannot smuggle a
+        # broken plan past the validator, and it refuses outright where a fix would be a
+        # fabrication (an unknown generator is not a misspelling of a real one).
+        #
+        # The attempt counter is deliberately not incremented: nothing was asked of the model, so
+        # charging the repair budget for it would shorten the budget for the thing it is for.
+        from . import diagnose as _diagnose
+
+        mended = _diagnose.repair({"parts": raw.get("parts") or [],
+                                   "mates": raw.get("mates") or [],
+                                   "notes": str(raw.get("notes") or "")})
+        if mended.fixed is not None and not _validate(mended.fixed):
+            # `attempt` stays where it is. One model call WAS made -- the reply came from it --
+            # and what the repair avoided is the SECOND call. Decrementing would misreport the
+            # first one as never having happened.
+            fixed_note = "; ".join(r.summary for r in mended.repairs if r.verified)
+            notes = str(raw.get("notes") or "")
+            notes = (notes + "  " if notes else "") + (
+                "Repaired without asking the model again: %s. These were unambiguous -- each "
+                "name was within an edit or two of a real one -- and the repaired program was "
+                "re-validated before being offered." % fixed_note)
+            return "plan", Plan(request=self.request, parts=mended.fixed["parts"],
+                                mates=mended.fixed.get("mates") or [],
+                                notes=notes, raw=reply, attempts=self.attempt)
 
         self.problems.extend(errors)
         if last:

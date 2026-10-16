@@ -2,6 +2,68 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-18 (finally) — cause attribution and ranked, re-verified repairs (closes #20)
+
+The validator already returned structure. What it did not return was a **cause** and a **fix**. A
+program with `thicknes` for `thickness` came back as a sentence, went to the model, and cost a
+round trip -- for a misspelling with exactly one plausible correction. A clash came back as an
+overlap volume and said nothing about which pair caused it.
+
+- `[feat]` **`ckwb/diagnose.py`** -- a seven-cause taxonomy, deterministic repair candidates,
+  ranking by certainty, and re-verification of every one. 17 tests.
+- `[feat]` **The planner now tries a deterministic repair BEFORE asking the model**, and the test
+  observes it: a reply with one misspelled parameter comes back as a usable plan with
+  `session.attempt == 1`, meaning no second model call was made. The plan's notes say what was
+  repaired and that it was re-validated, so the user is not being quietly corrected.
+- `[decision]` **Nothing is offered that has not been re-verified.** The acceptance criterion on
+  the issue, and the only defensible rule: a suggested fix that does not build is worse than no
+  suggestion, because somebody will take it. Repairs are applied cumulatively to a copy and the
+  whole program is re-diagnosed -- two fixes that are each fine and together are not would
+  otherwise both be offered. There is a test that sabotages the verifier and asserts nothing
+  comes back.
+- `[decision]` **An unknown generator is NEVER repaired by substitution**, and that is the test to
+  read first. `turbine_blade` is not a misspelling of `plate`, and a tool that quietly made it one
+  would build the wrong object and report success. The output is a refusal naming what the
+  catalogue has, so the choice stays the caller's.
+- `[feat]` **The similarity threshold is the line this module exists to walk.** 0.72 admits
+  `thicknes` -> `thickness` and `botom` -> `bottom`, and rejects `ceiling` -> `bottom`. A word
+  within an edit or two of a real name is a typo; a word that is simply not in the vocabulary is
+  a different request, and picking the alphabetically-first frame would be inventing an answer.
+- `[feat]` **A repair keeps the provenance of what it renames.** A value the user stated is still
+  `stated` after the parameter it was attached to is spelled correctly -- a repair that re-tagged
+  it as a guess would have edited the record of who decided what.
+- `[feat]` **Overriding a stated value ranks BELOW a plain rename** (0.6 against 0.95) and says
+  so in its reason: *"you stated id_, so this changes a number you gave -- the generator's own
+  rule says it cannot hold."* Changing somebody's number is not a free action and should not look
+  like one.
+- `[feat]` **The clash case from the issue.** `repair_document` attributes an interference to the
+  overlapping pair, computes the separation from the **bounding-box overlap on the axis they
+  overlap least** -- the smallest move that resolves it, rather than a guess -- applies it, and
+  **re-runs the interference check**. If the model is not clean afterwards the move is undone
+  rather than left in place, and the repair is reported as rejected. Measured on two 8 mm plates
+  overlapping by 4 mm: separation exactly 4 mm, model clean, verified.
+- `[note]` A `geometry_failed` repair is deliberately narrow. It parses the generator's own error
+  -- "bore id_=20 must be smaller than od=10" names both the value to move and the bound -- so
+  the fix is *determined*. A generator error that does not name its values gets no repair, which
+  is correct: guessing which dimension to change would be designing rather than fixing.
+
+### Three of my own test fixtures, each wrong in an instructive way
+
+- `[fix]` **A fixture that broke two things while claiming to break one.** Overriding `parts`
+  left the default mate pointing at a part that no longer existed, so every single-part fixture
+  also produced a spurious `unknown_part_reference` -- and three tests failed against entirely
+  correct code.
+- `[fix]` **A taxonomy test asserting that a reachable cause was unreachable.** `interference` is
+  the one cause that cannot come from a *program*, because it needs placed geometry, so the
+  document path had to be walked too.
+- `[fix]` **Two assertions looking for the wrong text.** The "you stated this" warning lives in a
+  repair's `because` rather than its `summary` -- the summary is the one-line *what*, and "you
+  asked for this and I overrode it" is a reason. And a refusal is recorded as an explicit
+  *rejection* rather than an empty list, which is better: an empty list leaves a reader wondering
+  whether the case was even considered.
+
+**22 suites, 393 tests**, including the live tier against the configured model.
+
 ## 2026-10-18 (last) — freeform geometry, and the packaging made to match the architecture
 
 Two things, one found by the live planner and one by reading our own claims.

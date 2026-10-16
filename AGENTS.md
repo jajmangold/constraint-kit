@@ -91,6 +91,7 @@ freecadcmd workbench/tests/test_geometry.py # parts, mates   (30)
 freecadcmd workbench/tests/test_document.py # doc, checks    (16)
 freecadcmd workbench/tests/test_commands.py # commands, API  (43)
 freecadcmd workbench/tests/test_planner.py  # plan + repair  (15)
+freecadcmd workbench/tests/test_diagnose.py # cause + fix    (17)
 freecadcmd workbench/tests/test_import.py   # STEP import    (14)
 freecadcmd workbench/tests/test_freeform.py # loft, sweep    (17)
 freecadcmd workbench/tests/test_motion.py   # travel, sweep  (17)
@@ -167,6 +168,11 @@ with a 2s model".
   a 120 mm part, with the composure of a 5 mm answer. `physics` now reports `linear_valid`. The
   criterion is deflection over SPAN, not over thickness — thickness was tried first and flagged a
   valid 4.5%-of-span answer, which is how a warning gets trained out of a reader.
+- **A repair is offered only after it RE-VERIFIES, and some causes have no repair.** An
+  unknown generator is never substituted: `turbine_blade` is not a misspelling of `plate`, and a
+  tool that made it one would build the wrong object and report success. The nearest-match
+  threshold (0.72) admits a typo and rejects a different word, which is the line `diagnose.py`
+  exists to walk.
 - **The core tier must import on numpy and scipy ALONE**, because it runs inside FreeCAD where
   pip is not available. `tests/test_packaging.py` reads the imports with `ast` and fails if
   anything heavier creeps in -- and it distinguishes an eager import from a lazy one, so an

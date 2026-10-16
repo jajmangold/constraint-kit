@@ -64,6 +64,7 @@ if [ -x "$FREECADCMD" ]; then
   run "document        workbench/tests/test_document.py" "$FREECADCMD" workbench/tests/test_document.py
   run "commands        workbench/tests/test_commands.py" "$FREECADCMD" workbench/tests/test_commands.py
   run "planner         workbench/tests/test_planner.py"  "$FREECADCMD" workbench/tests/test_planner.py
+  run "diagnosis       workbench/tests/test_diagnose.py" "$FREECADCMD" workbench/tests/test_diagnose.py
   run "step import     workbench/tests/test_import.py"   "$FREECADCMD" workbench/tests/test_import.py
   run "freeform        workbench/tests/test_freeform.py" "$FREECADCMD" workbench/tests/test_freeform.py
   run "motion          workbench/tests/test_motion.py"   "$FREECADCMD" workbench/tests/test_motion.py
