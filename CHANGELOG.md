@@ -2,6 +2,83 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-18 (last) — freeform geometry, and the packaging made to match the architecture
+
+Two things, one found by the live planner and one by reading our own claims.
+
+### Loft, sweep and revolve (closes #15)
+
+The gap was identified by the model rather than by me, which is the second time and the reason
+the live tier exists. Asked for a turbine blade it declined, precisely: *"the catalogue has no
+airfoil/twisted-blade generator ... Nothing here can express a lofted, twisted, tapered aerofoil
+section."* It was right -- everything in the catalogue was a prism, a cylinder or a boolean of the
+two, so a duct that changes section, a bend, a coil and a cone were all unsayable.
+
+- `[feat]` **`loft`** -- a solid through a stack of parallel sections, tapered and optionally
+  twisted; **`sweep`** -- a round profile along a circular bend or a helix, so a pipe elbow and a
+  compression spring are one generator; **`revolve`** -- an annulus, a cone, or a sector of
+  either.
+- `[test]` **17 tests, every one against a closed form**, which is why these three operations
+  were chosen: a revolved rectangle is `pi*(R2^2-R1^2)*h`, a revolved triangle is `pi*r^2*h/3`, a
+  swept circle is Pappus (`area * centroid path length`), a lofted taper is the prismatoid
+  formula `h/6*(A1+4Am+A2)`, and a helical sweep is its wire cross-section times the helix length
+  by Pythagoras on the unrolled cylinder. Equality tests, not plausibility checks.
+- `[feat]` **The live planner now builds all four of the things it used to decline**, first try,
+  and three match their closed forms on the nose:
+
+  | request | generator | volume | closed form |
+  |---|---|---|---|
+  | duct tapering 80 to 40 square over 120 | `loft` | 448,000 | 448,000 (prismatoid) |
+  | 90 degree bend, 25 tube on 60 radius | `sweep` | 46,264 | 46,268 (Pappus) |
+  | spring, 4 wire, 30 radius, 10 pitch, 6 turns | `sweep` | 14,212 | 14,232 (helix length) |
+  | tapered twisted turbine blade, 35 degrees | `loft` | 131,250 | 131,250 |
+
+  And the blade's notes are worth quoting, because they are the behaviour the whole design is
+  for: *"the catalogue has no airfoil profile, so the cross-section is the generator's
+  rectangular profile rather than a real blade aerofoil ... I also interpolated the twist through
+  8 intermediate sections (the default would be 2) ... that number is my choice, not yours."*
+- `[fix]` **A twist across only two sections is refused.** Two rotated squares with a ruled
+  surface between them is a shear, not a twist -- and it would look like a twisted blade from a
+  distance while being a different shape, which is worse than an error because somebody would
+  print it.
+- `[fix]` **A test of mine that would have passed on noise.** It asserted a twisted loft has less
+  volume than a straight one. True, and by **0.000012%** -- a smooth loft through eight
+  slightly-rotated squares stays almost exactly inside the straight envelope, so that assertion
+  passed whether the twist worked or not. Replaced with two that discriminate: the **mid-height
+  section must sit at half the twist** (45 degrees straight against 60 for a 30 degree twist,
+  exactly 45 + 30/2), which is what proves the twist is *interpolated through the stack* rather
+  than applied only at the ends; and the **surface area**, which moves 0.157%, three orders of
+  magnitude more signal than the volume.
+
+### The packaging contradicted the architecture (closes #24)
+
+The issue was filed about a stale pin. The finding was worse.
+
+- `[fix]` **`pyproject.toml` declared ONE dependency list for THREE environments.** So
+  `pip install constraint-kit` pulled cadquery, fastapi, neo4j and langgraph on somebody who
+  wanted only the physics tier -- **the tier whose entire value is that it needs none of them**,
+  because it has to run inside FreeCAD's interpreter where pip is not available. The base install
+  is now numpy and scipy alone, and everything heavier is an extra that says what it is for
+  (`kernel`, `service`, `solver`, `gear`, `pdf`, `training`).
+- `[test]` **`tests/test_packaging.py` (9 tests) makes the claims checkable**, by reading imports
+  with `ast` rather than importing anything -- which matters, because a test that imports a
+  module to find out what it imports can only run where everything is already installed. It
+  distinguishes an **eager** import from a **lazy** one, because `fea/sample.py` legitimately
+  needs OCP inside one optional function and an earlier version of the test condemned it, which
+  would have pushed the fix in exactly the wrong direction.
+- `[test]` And it compares the pinned kernel stack against `cadkit/Dockerfile` exactly, because
+  the container is the only place that stack has ever run: 113 tests pass in there and nowhere
+  else. A disagreement would mean the test count was measured against a different stack than the
+  one declared.
+- `[docs]` **CLAUDE.md now opens with the three stacks** -- interpreter, geometry kernel, numpy
+  version, what runs there and what verifies it -- plus a table of the three things FreeCAD's
+  bundled scipy has broken and what we do instead. Almost every environmental surprise in this
+  project came from forgetting that there are three.
+- `[fix]` `requires-python` was `>=3.10` and is now `>=3.11`, which is what FreeCAD 1.0 actually
+  bundles. A floor above that would have declared the workbench unsupported by its own metadata.
+
+**20 suites, 372 tests.**
+
 ## 2026-10-18 (later) — requirements drive parameters, and the design says whether it meets them (closes #29)
 
 The workbench had a Requirements button that opened a dialog saying *"Requirements are not

@@ -11,6 +11,39 @@ why is [`CHANGELOG.md`](CHANGELOG.md). `ROADMAP.md` is the original screw→car�
 
 Working dir: `CK_WORK_DIR` env var (default: `/tmp/constraint-kit`).
 
+## ⭐ THREE STACKS — which code runs where, and what is verified in each
+
+This is the first thing to know, because almost every environmental surprise in this project has
+come from forgetting it. Three Python interpreters run this code and **they cannot be merged**:
+two OCCT builds cannot share a process, which is the constraint the whole workbench exists
+because of.
+
+| | interpreter | geometry | numpy / scipy | what runs here | verified by |
+|---|---|---|---|---|---|
+| **container** | 3.11 (cadkit image) | cadquery 2.7.0 + build123d 0.10.0 on cadquery-ocp **7.8.1.1** | current | the kernel: `parts`, `mates`, `builder`, `assembly`, the service | 113 kernel tests — **in here and nowhere else** |
+| **host** | 3.13.1 | cadquery 2.8.0 on cadquery-ocp **7.9.3.1** (no build123d) | numpy 2.4.1, scipy 1.18.1 | the core tier: `fea`, `optimise`, `manufacture`, `parameters` | ~140 tests across 8 suites |
+| **FreeCAD** | 3.11.13 (bundled) | FreeCAD `Part` on OCCT **7.8.1** | numpy **1.26.4**, scipy 1.16.0 | the whole workbench, and the core tier in-process | ~160 tests across 8 suites plus the Qt tier |
+
+**The pins in `pyproject.toml[kernel]` describe the CONTAINER**, and they match `cadkit/Dockerfile`
+exactly, because the container is the only place that stack has ever been run — on a bare host the
+kernel suite reports 86/113 with 27 import failures, which is expected rather than a regression.
+`tests/test_packaging.py` compares the two and fails if they drift.
+
+**The base install is numpy and scipy alone.** The core tier has to run inside FreeCAD, where pip
+is not available and whatever the host has installed is invisible, so it needs nothing FreeCAD does
+not already ship. `tests/test_packaging.py` reads the imports with `ast` and fails if anything
+heavier creeps into a core module — and distinguishes an eager import from a lazy one, because
+`fea/sample.py` legitimately needs OCP inside one optional function.
+
+**FreeCAD's bundled scipy has broken three things so far, all the same numpy ABI mismatch.** Assume
+any compiled scipy path is unavailable in there:
+
+| what | symptom | what we do instead |
+|---|---|---|
+| sparse DIRECT solver (`spsolve`, `splu`) | `argument 3 must be numpy.ndarray, not numpy.ndarray` | `fea.voxel.direct_solver_available()` probes it; `auto` falls back to CG |
+| ARPACK (`eigs`, `eigsh`) | recursion in `numpy.core._dtype.__repr__` via `issubdtype` | pure-numpy subspace iteration in `fea/buckling.py` |
+| `scipy.ndimage` | imports `scipy.special` → `All ufuncs must have type numpy.ufunc` | pure-numpy morphology in `manufacture.py` |
+
 ## ⭐ Architecture — hosted LLM for semantics, one CPU service for geometry
 
 The doctrine: **AI for semantics, deterministic geometry for placement.** The LLM

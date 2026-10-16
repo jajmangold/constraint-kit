@@ -54,6 +54,7 @@ run "load cases      tests/test_cases.py"         python tests/test_cases.py
 run "optimiser      tests/test_optimise.py"      python tests/test_optimise.py
 run "buckling       tests/test_buckling.py"      python tests/test_buckling.py
 run "manufacturing  tests/test_manufacture.py"   python tests/test_manufacture.py
+run "packaging      tests/test_packaging.py"      python tests/test_packaging.py
 run "printed parts   tests/test_printed.py"       python tests/test_printed.py
 run "crosscheck      tests/test_crosscheck.py"    python tests/test_crosscheck.py
 
@@ -64,6 +65,7 @@ if [ -x "$FREECADCMD" ]; then
   run "commands        workbench/tests/test_commands.py" "$FREECADCMD" workbench/tests/test_commands.py
   run "planner         workbench/tests/test_planner.py"  "$FREECADCMD" workbench/tests/test_planner.py
   run "step import     workbench/tests/test_import.py"   "$FREECADCMD" workbench/tests/test_import.py
+  run "freeform        workbench/tests/test_freeform.py" "$FREECADCMD" workbench/tests/test_freeform.py
   run "motion          workbench/tests/test_motion.py"   "$FREECADCMD" workbench/tests/test_motion.py
   run "requirements    workbench/tests/test_requirements.py" "$FREECADCMD" workbench/tests/test_requirements.py
   run "agent end-to-end workbench/tests/test_agent_end_to_end.py" \

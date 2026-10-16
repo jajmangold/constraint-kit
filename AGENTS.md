@@ -81,6 +81,7 @@ python tests/test_cases.py                 # load cases     (16)
 python tests/test_optimise.py              # the optimizer  (22)
 python tests/test_buckling.py              # stability      (12)
 python tests/test_manufacture.py           # printability   (17)
+python tests/test_packaging.py             # dep claims     (9)
 python tests/test_printed.py               # FDM anisotropy (15)
 python tests/test_crosscheck.py            # vs gmsh+ccx    (16, skips if they are absent)
 python workbench/tests/test_core.py        # wb core        (32)
@@ -91,6 +92,7 @@ freecadcmd workbench/tests/test_document.py # doc, checks    (16)
 freecadcmd workbench/tests/test_commands.py # commands, API  (43)
 freecadcmd workbench/tests/test_planner.py  # plan + repair  (15)
 freecadcmd workbench/tests/test_import.py   # STEP import    (14)
+freecadcmd workbench/tests/test_freeform.py # loft, sweep    (17)
 freecadcmd workbench/tests/test_motion.py   # travel, sweep  (17)
 freecadcmd workbench/tests/test_requirements.py # req chain  (18)
 python workbench/tests/test_agent_end_to_end.py  # MCP, cross-process (4)
@@ -165,6 +167,14 @@ with a 2s model".
   a 120 mm part, with the composure of a 5 mm answer. `physics` now reports `linear_valid`. The
   criterion is deflection over SPAN, not over thickness — thickness was tried first and flagged a
   valid 4.5%-of-span answer, which is how a warning gets trained out of a reader.
+- **The core tier must import on numpy and scipy ALONE**, because it runs inside FreeCAD where
+  pip is not available. `tests/test_packaging.py` reads the imports with `ast` and fails if
+  anything heavier creeps in -- and it distinguishes an eager import from a lazy one, so an
+  optional path like `fea/sample.py`'s OCC sampler is allowed to need OCP inside its function.
+  Do not promote such an import to the top of a file.
+- **Volume is a weak instrument for a twist.** A smooth loft through rotated sections stays
+  within 0.000012% of the straight envelope, so a volume assertion passes on noise. Use the
+  mid-height section angle (it must be half the twist) or the surface area (0.157%).
 - **A stress check is BLIND to buckling**, and an optimizer asked for "lightest" goes looking
   for exactly that. Measured on a real strut: stress safety factor 19 while within a factor of
   two of folding. Ask `analyse` for `buckling=1` on anything slender and constrain

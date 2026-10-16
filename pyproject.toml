@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "Generate exact parametric CAD assemblies from natural language"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+# 3.11, not higher: FreeCAD 1.0 bundles Python 3.11.13 and the workbench runs inside it. A
+# floor above that would declare the workbench unsupported by its own package metadata.
+requires-python = ">=3.11"
 authors = [{ name = "jajmangold" }]
 keywords = ["cad", "parametric", "assembly", "b-rep", "llm", "deterministic"]
 classifiers = [
@@ -17,19 +19,45 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Computer Aided Design (CAD)",
 ]
 
+# THE BASE INSTALL IS THE CORE TIER AND NOTHING ELSE.
+#
+# This used to be one list of fifteen packages, and it was wrong in a way a version bump could
+# not fix: `pip install constraint-kit` pulled cadquery, fastapi, neo4j and langgraph on somebody
+# who wanted only the physics tier -- the tier whose entire value is that it needs none of them,
+# because it has to run inside FreeCAD's own interpreter where pip is not available.
+#
+# So the base is what `constraint_kit.fea`, `constraint_kit.optimise`, `constraint_kit.manufacture`
+# and `constraint_kit.parameters` actually need, and `tests/test_packaging.py` reads the imports
+# and fails if anything creeps back in. Everything heavier is an extra that says what it is for.
 dependencies = [
+    "numpy",
+    "scipy",
+]
+
+[project.optional-dependencies]
+# The cadquery kernel. PINNED, and the pins match cadkit/Dockerfile exactly, because the
+# container is the only place this stack has ever been run: 113 kernel tests pass in there and
+# nowhere else. On a bare host the same suite reports 86/113 with 27 import failures, which is
+# expected rather than a regression. A disagreement between these pins and the Dockerfile would
+# mean the test count was measured against a different stack than the one declared, so
+# `tests/test_packaging.py` compares them.
+kernel = [
     "cadquery==2.7.0",
     "build123d==0.10.0",
     "ocp_gordon==0.1.18",
-    "numpy",
+    "bd_warehouse==0.2.0",
     "trimesh",
     "ezdxf",
+]
+# The FastAPI service, the atlas persistence and the spec compiler. Separate from the kernel
+# because the kernel is usable as a library with no service running.
+service = [
     "fastapi",
     "uvicorn[standard]",
     "httpx",
@@ -38,17 +66,15 @@ dependencies = [
     "langgraph",
     "beautifulsoup4",
     "pypdf",
-    "z3-solver",
 ]
-
-[project.optional-dependencies]
-dev = ["pytest"]
+solver = ["z3-solver", "python-solvespace"]
 gear = ["cq-gears @ git+https://github.com/meadiode/cq_gears.git"]
-catalog = ["bd-warehouse==0.2.0"]
 pdf = ["pdf-oxide"]
-solver = ["python-solvespace"]
+dev = ["pytest"]
+# GPU, and deliberately not in `all`: installing bitsandbytes on a machine with no CUDA is a
+# long way to an error message.
 training = ["unsloth", "trl", "peft", "bitsandbytes"]
-all = ["constraint-kit[gear,catalog,pdf,solver,dev]"]  # training (GPU) is separate: pip install -e ".[training]"
+all = ["constraint-kit[kernel,service,solver,gear,pdf,dev]"]
 
 [project.urls]
 Homepage = "https://github.com/jajmangold/constraint-kit"

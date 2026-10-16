@@ -470,6 +470,183 @@ def screw(size: str = "M5", length: float = 16.0):
 
 # ----------------------------------------------------------------------------------- registry
 
+# ------------------------------------------------------------------- freeform: loft, sweep,
+# revolve. The shapes a prismatic catalogue cannot express, and the gap the live planner found:
+# asked for a turbine blade it declined, correctly, because "nothing here can express a lofted,
+# twisted, tapered aerofoil section". Everything else in this file is a prism, a cylinder, or a
+# boolean of the two.
+
+#: Closed wire profiles, in the XY plane, centred on the origin. A profile is a function of one
+#: size so a loft can interpolate it along the stack without the caller enumerating sections.
+_PROFILES = ("rect", "circle")
+
+
+def _profile_wire(kind: str, size: float, twist_deg: float = 0.0, z: float = 0.0):
+    """One closed wire of the named profile, `size` across, rotated `twist_deg`, at height `z`."""
+    if kind not in _PROFILES:
+        raise ValueError(
+            f"unknown profile {kind!r}; have {', '.join(_PROFILES)}")
+    if size <= 0.0:
+        raise ValueError(f"profile size must be positive, got {size}")
+    if kind == "circle":
+        wire = Part.Wire([Part.Circle(V(0, 0, z), _Z, size / 2.0).toShape()])
+        return wire                              # a circle has no corners to twist
+    half = size / 2.0
+    pts = [V(-half, -half, z), V(half, -half, z), V(half, half, z), V(-half, half, z)]
+    if twist_deg:
+        rot = FreeCAD.Rotation(_Z, twist_deg)
+        pts = [rot.multVec(V(p.x, p.y, 0.0)) + V(0, 0, z) for p in pts]
+    edges = [Part.LineSegment(pts[i], pts[(i + 1) % 4]).toShape() for i in range(4)]
+    return Part.Wire(edges)
+
+
+def loft(profile: str = "rect", bottom: float = 40.0, top: float = 20.0,
+         height: float = 60.0, sections: int = 2, twist: float = 0.0):
+    """A solid lofted through a stack of parallel sections. Tapered, and optionally twisted.
+
+    This is the generator the planner asked for and could not find. A duct that changes section,
+    a tapered boss, a twisted blade: all of them are a stack of profiles at known heights with
+    known sizes and known rotations, which is what this takes.
+
+    `sections` is how many profiles the stack is built from, interpolated linearly between
+    `bottom` and `top`. Two is a straight taper and is exactly representable, so adding
+    intermediate sections to a straight taper changes nothing -- which is a test. A `twist` needs
+    more than two, because a twist across a single span is a ruled surface between two rotated
+    squares rather than a twist, and that is refused rather than silently delivered: it would
+    look like a twisted blade from a distance and be a different shape entirely.
+    """
+    if profile not in _PROFILES:
+        raise ValueError(f"unknown profile {profile!r}; have {', '.join(_PROFILES)}")
+    if bottom <= 0.0:
+        raise ValueError(f"bottom must be positive, got {bottom}")
+    if top <= 0.0:
+        raise ValueError(f"top must be positive, got {top}")
+    _require_positive(height=height)
+    n = int(sections)
+    if n < 2:
+        raise ValueError(f"a loft needs at least 2 sections, got {sections}")
+    if twist and n < 3:
+        raise ValueError(
+            f"a twist of {twist} degrees needs at least 3 sections; across only two it is a "
+            f"ruled surface between two rotated profiles rather than a twist, which would look "
+            f"right and be a different shape")
+
+    wires = []
+    for i in range(n):
+        t = i / float(n - 1)
+        wires.append(_profile_wire(profile, bottom + (top - bottom) * t,
+                                   twist_deg=twist * t, z=height * t))
+    shape = Part.makeLoft(wires, True, False)      # solid, not ruled
+    if len(shape.Solids) != 1 or not shape.isValid():
+        raise ValueError(
+            "the loft did not produce one valid solid; the section stack is probably "
+            "self-intersecting (too much twist over too little height)")
+    return shape, {
+        "base": frame((0, 0, 0), (0, 0, -1)),
+        "top": frame((0, 0, height), (0, 0, 1)),
+        "axis": frame((0, 0, 0), (0, 0, 1)),
+    }
+
+
+def sweep(profile_d: float = 12.0, bend_radius: float = 40.0, angle: float = 90.0,
+          helix_pitch: float = 0.0, helix_turns: float = 0.0):
+    """A round profile swept along a circular bend or a helix: a pipe elbow, or a spring.
+
+    Two paths from one generator because they are the same operation and the hardware is the
+    same shape: a coolant bend and a compression spring are both a circle carried along a curve.
+    `angle` sweeps a planar arc; `helix_turns` sweeps a helix instead and `angle` is then
+    ignored.
+
+    The frames are the point of a swept part. `start` and `end` sit at the two ends of the path
+    with +Z along it, so the next thing in the line mates to the end of the bend rather than to
+    a bounding box -- which is the whole reason not to approximate a bend with two cylinders.
+    """
+    _require_positive(profile_d=profile_d, bend_radius=bend_radius)
+    if profile_d / 2.0 >= bend_radius:
+        raise ValueError(
+            f"bend_radius {bend_radius} is not larger than the {profile_d / 2.0} profile radius, "
+            f"so the sweep would pass through itself on the inside of the bend")
+
+    if helix_turns:
+        if helix_pitch <= 0.0:
+            raise ValueError(f"a helix needs a positive helix_pitch, got {helix_pitch}")
+        path = Part.makeHelix(helix_pitch, helix_pitch * helix_turns, bend_radius)
+        start_point = V(bend_radius, 0.0, 0.0)
+        end_point = V(bend_radius * math.cos(2.0 * math.pi * helix_turns),
+                      bend_radius * math.sin(2.0 * math.pi * helix_turns),
+                      helix_pitch * helix_turns)
+        start_dir = (0.0, 1.0, 0.0)
+        end_dir = (-math.sin(2.0 * math.pi * helix_turns),
+                   math.cos(2.0 * math.pi * helix_turns), 0.0)
+    else:
+        if not 0.0 < angle <= 360.0:
+            raise ValueError(f"angle must lie in (0, 360], got {angle}")
+        # A bend in the XZ plane: it starts at the origin running along +Z and curves toward +X,
+        # so a straight tube mated to `start` continues the line it was already on.
+        centre = V(bend_radius, 0.0, 0.0)
+        axis = V(0.0, -1.0, 0.0)
+        circle = Part.Circle(centre, axis, bend_radius)
+        rad = math.radians(angle)
+        path = Part.Wire([circle.toShape(0.0, rad)])
+        start_point = V(0.0, 0.0, 0.0)
+        end_point = V(bend_radius * (1.0 - math.cos(rad)), 0.0, bend_radius * math.sin(rad))
+        start_dir = (0.0, 0.0, 1.0)
+        end_dir = (math.sin(rad), 0.0, math.cos(rad))
+
+    # The profile must be perpendicular to the path at its start, or the swept section is an
+    # ellipse rather than the circle that was asked for.
+    section = Part.Wire([Part.Circle(start_point, V(*start_dir), profile_d / 2.0).toShape()])
+    shape = path.makePipeShell([section], True, True)      # make solid, and follow the Frenet
+    if len(shape.Solids) != 1 or not shape.isValid():
+        raise ValueError("the sweep did not produce one valid solid")
+    return shape, {
+        "start": frame((start_point.x, start_point.y, start_point.z),
+                       (-start_dir[0], -start_dir[1], -start_dir[2])),
+        "end": frame((end_point.x, end_point.y, end_point.z), end_dir),
+        "axis": frame((0, 0, 0), (0, 0, 1)),
+    }
+
+
+def revolve(profile: str = "rect", r_inner: float = 10.0, r_outer: float = 20.0,
+            height: float = 15.0, angle: float = 360.0):
+    """A solid of revolution about Z: an annulus, a cone, a cup, a sector of any of them.
+
+    `rect` revolves a rectangle and gives an annulus (or a plain cylinder at `r_inner = 0`);
+    `taper` revolves a right triangle and gives a cone or a truncated cone. `angle` under 360
+    gives a sector, which is what a segmented ring or a cable guide actually is.
+    """
+    kinds = ("rect", "taper")
+    if profile not in kinds:
+        raise ValueError(f"unknown profile {profile!r}; have {', '.join(kinds)}")
+    _require_positive(height=height, r_outer=r_outer)
+    if r_inner < 0.0:
+        raise ValueError(
+            f"r_inner must not be negative, got {r_inner}; a negative inner radius revolves the "
+            f"profile through the axis and back out the other side")
+    if r_inner >= r_outer:
+        raise ValueError(f"r_inner {r_inner} must be smaller than r_outer {r_outer}")
+    if not 0.0 < angle <= 360.0:
+        raise ValueError(f"angle must lie in (0, 360], got {angle}")
+
+    if profile == "rect":
+        pts = [V(r_inner, 0, 0), V(r_outer, 0, 0), V(r_outer, 0, height), V(r_inner, 0, height)]
+    else:
+        # A right triangle: full width at the base, collapsing to r_inner at the top. Revolved,
+        # that is a cone when r_inner is zero and a truncated cone otherwise.
+        pts = [V(r_inner, 0, 0), V(r_outer, 0, 0), V(r_inner, 0, height)]
+    edges = [Part.LineSegment(pts[i], pts[(i + 1) % len(pts)]).toShape()
+             for i in range(len(pts))]
+    face = Part.Face(Part.Wire(edges))
+    shape = face.revolve(V(0, 0, 0), _Z, angle)
+    if len(shape.Solids) != 1 or not shape.isValid():
+        raise ValueError("the revolve did not produce one valid solid")
+    return shape, {
+        "base": frame((0, 0, 0), (0, 0, -1)),
+        "top": frame((0, 0, height), (0, 0, 1)),
+        "axis": frame((0, 0, 0), (0, 0, 1)),
+    }
+
+
 PARTS = {
     "plate": plate,
     "spacer": spacer,
@@ -481,6 +658,10 @@ PARTS = {
     "screw": screw,
     "ball_screw": ball_screw,
     "ball_nut": ball_nut,
+    # freeform: the shapes a prismatic catalogue cannot express
+    "loft": loft,
+    "sweep": sweep,
+    "revolve": revolve,
 }
 
 
