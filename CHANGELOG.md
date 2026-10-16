@@ -2,6 +2,76 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-19 (later still) — the machines themselves: gear-cutter parametric, and two defects it found (closes #6, #7)
+
+Phase 1's precondition, in the `gear-cutter` repository rather than this one, and the
+first work here that changed hardware rather than tooling.
+
+- `[fix]` **`gear-cutter` was not a git repository at all.** No version control, which is
+  precisely *why* `bench.py` → `bench_v2.py` → `bench_v3.py` existed: the forks were
+  standing in for it. Committed as a do-nothing baseline first, so everything after is
+  reversible. That step is now step one of the pattern knee-exo should follow.
+- `[feat]` **One `bench.py` with a variant** (#6), `machine.py` holding the shared stock and
+  drawing primitives once, and the two forks deleted. All three layouts proved **identical**
+  to their forks — volume, area, face/edge/vertex counts, bounding box and centre of mass on
+  all 80 solids of v1 and all 59 each of v2 and v3.
+- `[decision]` **Three functions over one vocabulary, not one function with flags.** These are
+  three different machines — moving portal, fixed bridge with moving work, gantry rotated 90
+  degrees — not three values of a parameter, and a single builder threaded with
+  `if variant ==` would be a worse abstraction than the forks were. What is shared is the
+  stock and the primitives; that is what got shared.
+- `[feat]` **`control_box.py`: one definition per number** (#7, #9), with `derive()` as a
+  **function** rather than module-level assignments — module-level derivation propagates when
+  you edit the file but not when a caller sets a constant, which is how the test checks the
+  property at all. The first version of the refactor reported a 204 mm exterior for a 3 mm
+  wall and the new test caught it.
+- `[feat]` 32 checks across `verify.py` (18) and `verify_bench.py` (14), where there were none,
+  plus the `AGENTS.md` the repository lacked.
+
+### What the forks had already lost
+
+- `[fix]` **`cbeam` existed three times.** V1's copy carries a docstring recording a bug that
+  shipped — *"without the axis argument a vertical beam gets a short window cut in the middle
+  of its face instead of a channel; every upright and Z beam was wrong"* — and v3's copy had
+  been compressed and had dropped that warning. One `cbeam` now, with the warning, and a test
+  that cuts all twelve axis/opening combinations and checks the channel runs the full length.
+- `[note]` **v2 has no Y drive at all** — no motor, no belt, no bearings, where v1 has
+  `NEMA23_Y` at both rails. V3's header already said *"V2 had silently lost both Y motors"*
+  and it was never put back. Reported as a **declared gap** whose reality the test asserts, so
+  the note cannot outlive the defect; left declared rather than inventing hardware positions,
+  but v2's mass and CG comparison against v1 and v3 is short two NEMA 23s, and that comparison
+  is what informed the move to v3.
+
+### Nothing tangent. Overlap it.
+
+- `[fix]` The control box's four corner posts were **exactly tangent** to the walls — radius
+  6.0 at 6.0 from each interior corner. Geometrically a union; in a mesh a disaster, because
+  OpenCASCADE tessellates a tangent line into a **non-manifold** surface. The committed
+  `AxisControlBox_Case.stl` was not watertight: one component, no self-intersections, and **32
+  edges more than a closed triangle mesh can have**, with a computed volume of **333,400 mm3
+  against the solid's real 126,208** — volume integration over an open surface is meaningless.
+  **It was sliced in that state.**
+
+  | post inset | extra edges | non-manifold |
+  |---|---|---|
+  | 0 (tangent) | **4 per post** | yes |
+  | 0.01 mm | 0 | no |
+
+  Four posts gave exactly the 16 the real case had. The lid, tangent to nothing, exported clean
+  all along, which is why only half the part was broken.
+- `[decision]` Fixed by making the posts **wider, not by moving them**: `POST_OD` 12 → 13 with
+  the centres unchanged, so the lid screw positions do not move by a micron and a lid printed
+  before the change still fits a case printed after it. Moving the centres would have cost
+  0.7 mm of diagonal on a 0.4 mm clearance. `POST_CENTRE` and `POST_OD` are separate numbers
+  now; they used to be one, which is what made this delicate.
+- `[feat]` **`export_stl()` refuses to write a mesh that is not watertight** — edge count
+  against the Euler bound for a closed triangle mesh (`3F/2`, arithmetic rather than a
+  heuristic) and volume against the solid's. Both STLs regenerated: 0 extra edges, volume
+  within 0.012%.
+- `[note]` **`Shape.transformShape` mutates in place and returns nothing.** A probe loop that
+  looked correct compounded its transforms, sent the part to infinity and reported zero
+  interference everywhere. Measure through document placements with a recompute.
+
 ## 2026-10-19 (later still) — mobility, the rack, and a travel that had no end (closes #11, #12, #13, #14)
 
 The four missing-mate issues, and the capability their comments said was blocked behind #28 and

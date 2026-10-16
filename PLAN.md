@@ -249,16 +249,29 @@ converged cleanly throughout. See CHANGELOG 2026-10-15.
 
 ### Phase 1 — Parametric source of truth
 The precondition. Per machine, one program; the document becomes a build artifact.
-- gear-cutter is nearly there — `build_machine.py` already wipes and rebuilds. Finish the job:
-  stop forking files (`bench.py` → `bench_v2.py` → `bench_v3.py`, `MachineV2/V3.FCStd`) and make
-  the variant an argument.
-- axis_x's enclosure is small and should be converted first as the pattern reference.
-- knee-exo is the hard call: extend `build_headless.py`'s `CHAIN` from 8 stages back to a
-  `newDocument` root (the roots exist — `02_base`, `51_v3base`, `63_v4base`, `701_mirror_build`),
-  making every stage idempotent. Weeks of grinding for ~60 parts. **Decide explicitly whether
-  this is v9's job or v10's before starting.**
-- A `params.py` per machine and named datum frames, so no dimension is ever measured off geometry
-  again.
+- ✅ **axis_x's enclosure, done first as the pattern reference** (#7). It lives in
+  `gear-cutter/control_box.py`. The pattern, which knee-exo should follow: under version control
+  first with a do-nothing baseline commit; capture a geometry signature and prove the refactor
+  changes nothing (volume, area, face/edge/vertex counts, bbox, centre of mass, per solid); only
+  then change geometry deliberately, with before-and-after numbers; and make it build headless,
+  because a build that needs a window open cannot be checked by a script.
+- ✅ **gear-cutter de-forked** (#6). One `bench.py` with a variant, `machine.py` holding the stock
+  and primitives once, `bench_v2.py`/`bench_v3.py` deleted, all three layouts proved identical to
+  their forks solid by solid.
+- ✅ **Named datums and one definition per value** for both (#9 for those two machines).
+- knee-exo is the hard call that remains: extend `build_headless.py`'s `CHAIN` from 8 stages back
+  to a `newDocument` root (the roots exist — `02_base`, `51_v3base`, `63_v4base`,
+  `701_mirror_build`), making every stage idempotent. Weeks of grinding for ~60 parts. **Decide
+  explicitly whether this is v9's job or v10's before starting** (#8).
+
+**Two defects came out of doing this, and both were invisible without it.** `gear-cutter` had no
+version control at all — which is *why* the forks existed, the forks being what stood in for it —
+and the forks had drifted: `cbeam` existed three times with one copy having lost the docstring
+recording a bug that shipped, and v2 had lost its entire Y drive and never got it back. Separately,
+the control box's corner posts were **exactly tangent** to its walls, which OpenCASCADE tessellates
+into a non-manifold mesh: the committed `AxisControlBox_Case.stl` was not watertight (32 edges more
+than a closed triangle mesh can have, and a computed volume of 333,400 mm³ against the solid's real
+126,208) and **it was sliced in that state**. Nothing tangent; overlap it.
 
 ### Phase 2 — Kernel gaps that block real machines
 - **STEP/IGES import.** Not in any of the nine epics, and it is the thing that lets the kernel
@@ -327,7 +340,7 @@ acceptance criteria.
 | phase | state | issues |
 |---|---|---|
 | 0 — physics core | **done** — `constraint_kit/fea/`, 35 tests verified against ground truth, driver in `drivers/fea_part.py` | [#1](../../issues/1) buckling · [#2](../../issues/2) anisotropy · [#3](../../issues/3) Gmsh/CalculiX cross-check · [#4](../../issues/4) load-case envelope · [#5](../../issues/5) AMG |
-| 1 — parametric source | not started; gear-cutter nearly there. **Blocked on a scope call: [#8](../../issues/8)** | [#6](../../issues/6) gear-cutter variants · [#7](../../issues/7) axis_x pattern · [#8](../../issues/8) knee-exo v9/v10 · [#9](../../issues/9) params + datums |
+| 1 — parametric source | **gear-cutter and the axis_x enclosure done** — one program each, variants as arguments, refactors proved geometry-identical, 32 checks where there were none. knee-exo remains, **behind the scope call [#8](../../issues/8)** | [#6](../../issues/6) ✅ gear-cutter variants · [#7](../../issues/7) ✅ axis_x pattern · [#8](../../issues/8) knee-exo v9/v10 · [#9](../../issues/9) params + datums (2 of 3 machines) |
 | 2 — kernel gaps | **done** — all six closed; the joints live in `workbench/ckwb/motion.py` + `mobility.py` as closed-form placements and a Gruebler count, no solver | [#10](../../issues/10) STEP import · [#11](../../issues/11) prismatic · [#12](../../issues/12) screw · [#13](../../issues/13) belt · [#14](../../issues/14) gear_rack · [#15](../../issues/15) freeform |
 | 3 — closed-loop optimization | not started; needs Phase 1 for a machine to sweep | [#16](../../issues/16) build cache · [#17](../../issues/17) the optimizer |
 | 4 — manufacturing constraints | pieces exist in knee-exo `411_printability.py` | [#18](../../issues/18) |
