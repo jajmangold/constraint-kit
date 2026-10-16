@@ -423,10 +423,11 @@ def sweep(moving: str, target: str, target_frame: str, moving_frame: str,
                          "doc": "number of buckling modes to find, 0 for none. Worth asking "
                                 "for on anything slender: a stress check is BLIND to "
                                 "stability, and a strut sits nowhere near its allowable right "
-                                "up until it folds"}})
+                                "up until it folds"},
+            "rules": {"type": dict, "default": None, "doc": "printability rules as {min_wall_mm, min_channel_mm, max_overhang_deg, max_thin_fraction, build_volume_mm, build_dir} -- any subset; the rest take sensible 0.4 mm nozzle defaults. Reports unsupported_area_mm2, thin_fraction, narrow_fraction, fits_build_volume and a single `printable` flag, all as plain numbers so they can be CONSTRAINED rather than audited"}})
 def analyse(part: str, fix: str, load: str = "", force: list = None,
             cases: list = None, material: str = "petg", pitch: float = 2.0,
-            buckling: int = 0) -> dict:
+            buckling: int = 0, rules: dict = None) -> dict:
     """Is it strong enough? The question the agent surface could not previously ask.
 
     `physics.stiffness` existed and was verified against beam theory, and it was not a registered
@@ -455,7 +456,7 @@ def analyse(part: str, fix: str, load: str = "", force: list = None,
         raise ValueError("a load selector is needed, or a list of cases")
     out = _physics.stiffness(obj, material=material, pitch=float(pitch), fix=fix, load=load,
                              force=tuple(float(v) for v in (force or [0.0, 0.0, -100.0])),
-                             cases=cases, buckling=int(buckling))
+                             cases=cases, buckling=int(buckling), rules=rules)
     return _checks._stamp(obj.Document, out)
 
 
@@ -497,6 +498,7 @@ def analyse(part: str, fix: str, load: str = "", force: list = None,
                                 "{metric: buckling_factor, op: '>=', limit: 2.0} when the part "
                                 "is slender: making something light is exactly what finds a "
                                 "stability failure a stress check cannot see"},
+            "rules": {"type": dict, "default": None, "doc": "printability rules as {min_wall_mm, min_channel_mm, max_overhang_deg, max_thin_fraction, build_volume_mm, build_dir} -- any subset; the rest take sensible 0.4 mm nozzle defaults. Reports unsupported_area_mm2, thin_fraction, narrow_fraction, fits_build_volume and a single `printable` flag, all as plain numbers so they can be CONSTRAINED rather than audited"},
             "max_evaluations": {"type": int, "default": 60,
                                 "doc": "budget. Each evaluation is a mesh and a solve, so this "
                                        "is a wall-clock decision"}})
@@ -504,7 +506,7 @@ def optimise(part: str, parameters: list, fix: str, objective: str = "mass_g",
              constraints: list = None, load: str = "", force: list = None,
              cases: list = None, material: str = "petg", pitch: float = 4.0,
              size: str = "", tol: float = 0.05, buckling: int = 0,
-             max_evaluations: int = 60) -> dict:
+             rules: dict = None, max_evaluations: int = 60) -> dict:
     """Parameters -> geometry -> physics -> better parameters, closed.
 
     Everything this needs already existed and was verified separately: `set_param` rebuilds the
@@ -526,7 +528,13 @@ def optimise(part: str, parameters: list, fix: str, objective: str = "mass_g",
     knowing that stiffness rather than strength stopped you is what tells you to add a rib
     instead of more material.
 
-    One constraint worth adding by default on a flexible part:
+    Two constraints worth adding by default. `rules={...}` turns printability on and
+    `{"metric": "printable", "op": ">=", "limit": 1.0}` then refuses any design the process
+    cannot make -- which is the whole of issue #18: an optimizer asked for the lightest part
+    will return a 0.9 mm wall at an 80 degree overhang unless something in its problem statement
+    says otherwise, and auditing that afterwards is a loop with a human in it.
+
+    And one on a flexible part:
     `{"name": "small deflection", "metric": "linear_valid", "op": ">=", "limit": 1.0}`. The
     physics is linear, so a design that deflects through a tenth of its own span is outside what
     the solver can speak about -- and without that constraint the lightest design in the box is
@@ -589,7 +597,7 @@ def optimise(part: str, parameters: list, fix: str, objective: str = "mass_g",
             _doc.set_param(obj, name, value)
         doc.recompute()
         return _physics_stiffness(obj, material, pitch, fix, load, force, cases,
-                                  int(buckling))
+                                  int(buckling), rules)
 
     try:
         if size:
@@ -654,14 +662,14 @@ def optimise(part: str, parameters: list, fix: str, objective: str = "mass_g",
 
 
 def _physics_stiffness(obj, material, pitch, fix, load, force, cases,
-                       buckling: int = 0) -> dict:
+                       buckling: int = 0, rules=None) -> dict:
     """One evaluation, flattened to the metrics an objective and a constraint can name."""
     from . import physics as _physics
 
     out = _physics.stiffness(
         obj, material=material, pitch=float(pitch), fix=fix, load=load,
         force=tuple(float(v) for v in (force or [0.0, 0.0, -100.0])), cases=cases,
-        buckling=buckling)
+        buckling=buckling, rules=rules)
     # A member that does not buckle at all reports None; for an optimizer that is an unbounded
     # factor, not a missing metric, or a constraint on it would stop resolving exactly where the
     # design got safe.

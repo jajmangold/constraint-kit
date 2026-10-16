@@ -55,6 +55,8 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
     tet.py             #   INDEPENDENT reference: gmsh quadratic tets -> CalculiX (both ship in FreeCAD)
     crosscheck.py      #   voxel vs tet: measures the gap and ATTRIBUTES it (too stiff / too soft / agree)
     #                      tet.buckle() cross-checks buckling against CalculiX *BUCKLE too
+  manufacture.py       # PRINTABILITY as CONSTRAINTS [#18]: overhang (exact, from normals), thin wall
+                       #   and narrow channel (morphological opening, resolution-limited), build volume
   optimise.py          # CLOSED LOOP [#17]: compass search + feasibility filter, monotone bisection,
                        #   nested sized search; evaluation cache [#16]; numpy-free, CAD-free, testable
   massprops.py         # mass properties: exact CG + inertia tensor (OCC GProp, density-weighted) [T4.1]

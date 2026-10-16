@@ -151,7 +151,7 @@ def prepare(obj, pitch: float = 2.0, material: str = "petg") -> dict:
 
 def stiffness(obj, material: str = "petg", pitch: float = 2.0, *,
               fix: str, load: str = "", force=(0.0, 0.0, -100.0), cases=None,
-              buckling: int = 0) -> dict:
+              buckling: int = 0, rules=None) -> dict:
     """Solve one part for deflection and stress. Boundary conditions are arguments, never guessed.
 
     `fix` and `load` are selector expressions over node coordinates in millimetres, in the part's
@@ -164,7 +164,7 @@ def stiffness(obj, material: str = "petg", pitch: float = 2.0, *,
     """
     bundle = prepare(obj, pitch=pitch, material=material)
     return solve_prepared(bundle, fix=fix, load=load, force=force, cases=cases,
-                          buckling=buckling)
+                          buckling=buckling, rules=rules)
 
 
 def _check_cases(cases) -> list:
@@ -203,7 +203,8 @@ def _check_cases(cases) -> list:
 
 
 def solve_prepared(bundle: dict, *, fix: str, load: str = "",
-                   force=(0.0, 0.0, -100.0), cases=None, buckling: int = 0) -> dict:
+                   force=(0.0, 0.0, -100.0), cases=None, buckling: int = 0,
+                   rules=None) -> dict:
     """The numpy half: voxelise the triangles and solve. Safe on any thread.
 
     Either one `load`/`force`, or several named `cases` -- never both. The two are different
@@ -276,6 +277,8 @@ def solve_prepared(bundle: dict, *, fix: str, load: str = "",
     out.update(_linearity(res.max_displacement, grid))
     if buckling:
         out.update(_buckling(model, int(buckling)))
+    if rules is not None:
+        out.update(_printability(bundle["triangles"], grid, rules))
     if key in PRINTED:
         out.update(_interlayer(fea, res, allowable))
     return out
@@ -349,6 +352,35 @@ def _envelope_rows(envelope) -> dict:
             "better than the worst case. More than one name in governs_by_element means no "
             "single case is the design case."),
     }
+
+
+def _printability(triangles, grid, rules) -> dict:
+    """Can the process make it? As numbers, so an optimizer can constrain them.
+
+    The point of issue #18. An optimizer told to minimise mass subject to strength will return a
+    0.9 mm wall at an 80 degree overhang, because nothing in its problem statement said
+    otherwise. These metrics make printability part of the problem statement instead of part of
+    an audit somebody runs afterwards.
+
+    The useful constraints are `{"metric": "printable", "op": ">=", "limit": 1.0}` for all of it
+    at once, or `unsupported_area_mm2 <= 0` for the overhang rule alone -- which is the one that
+    decides print orientation and the only one computed exactly.
+    """
+    from constraint_kit.manufacture import Rules, printability as _check
+
+    spec = rules if isinstance(rules, Rules) else Rules(**dict(rules))
+    out = _check(triangles, grid, spec)
+    payload = dict(out.metrics)
+    payload["printability_violations"] = list(out.violations)
+    payload["printability_notes"] = list(out.notes)
+    payload["printability_rules"] = {
+        "min_wall_mm": spec.min_wall_mm,
+        "min_channel_mm": spec.min_channel_mm,
+        "max_overhang_deg": spec.max_overhang_deg,
+        "max_thin_fraction": spec.max_thin_fraction,
+        "build_volume_mm": list(spec.build_volume_mm),
+    }
+    return payload
 
 
 def _buckling(model, n_modes: int) -> dict:

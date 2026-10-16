@@ -80,6 +80,7 @@ python tests/test_convergence.py           # convergence    (16)
 python tests/test_cases.py                 # load cases     (16)
 python tests/test_optimise.py              # the optimizer  (22)
 python tests/test_buckling.py              # stability      (12)
+python tests/test_manufacture.py           # printability   (17)
 python tests/test_printed.py               # FDM anisotropy (15)
 python tests/test_crosscheck.py            # vs gmsh+ccx    (16, skips if they are absent)
 python workbench/tests/test_core.py        # wb core        (32)
@@ -87,7 +88,7 @@ python workbench/tests/test_core.py        # wb core        (32)
 # freecad tier - needs freecadcmd
 freecadcmd workbench/tests/test_geometry.py # parts, mates   (30)
 freecadcmd workbench/tests/test_document.py # doc, checks    (16)
-freecadcmd workbench/tests/test_commands.py # commands, API  (42)
+freecadcmd workbench/tests/test_commands.py # commands, API  (43)
 freecadcmd workbench/tests/test_planner.py  # plan + repair  (15)
 freecadcmd workbench/tests/test_import.py   # STEP import    (14)
 freecadcmd workbench/tests/test_motion.py   # travel, sweep  (17)
@@ -168,6 +169,20 @@ with a 2s model".
   two of folding. Ask `analyse` for `buckling=1` on anything slender and constrain
   `buckling_factor >= 2` -- two, not one, because linear buckling is an upper bound on a perfect
   member and a printed part has a bowed wall.
+- **FreeCAD's bundled scipy has broken three things now, all the same ABI mismatch.** The
+  direct solver (`argument 3 must be numpy.ndarray, not numpy.ndarray`), ARPACK (a recursive
+  `dtype.__repr__`), and `scipy.ndimage` -- which imports `scipy.special` and raises `All ufuncs
+  must have type numpy.ufunc`. **Assume any compiled scipy path is unavailable in there** and
+  reach for numpy. `fea/buckling` and `manufacture` are both pure numpy for this reason; do not
+  "optimise" either back onto scipy.
+- **An opening flags every convex edge, so a thin-wall verdict is a FRACTION not a count.** A
+  ball cannot cover a 90 degree corner, so by the ball-fitting definition every corner is thin.
+  Measured: a 20x20x8 slab against a 3 mm rule flags 6.7%; the same slab at 1.5 mm flags 100%.
+  `Rules.max_thin_fraction` separates them, and fudging the measure instead would hide a real
+  thin region that sat near an edge.
+- **A build-plate exclusion must test VERTICES, not the face centroid.** A wedge touches the
+  plate along a line, so no face centroid is at the true minimum, and using the lowest centroid
+  as the plate height silently excluded half of the overhang being measured.
 - **ARPACK does not work inside FreeCAD, and the reason is not ours.** FreeCAD 1.0 bundles a
   numpy whose `numpy.core._dtype.__repr__` recurses through `issubdtype`, and scipy's ARPACK
   wrapper formats a dtype on the way in -- so `eigs` dies before its first matvec. `fea/buckling`

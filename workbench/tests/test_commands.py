@@ -753,6 +753,51 @@ def test_optimise_can_require_a_buckling_margin():
 
 
 @test
+def test_analyse_reports_printability_and_the_optimiser_can_constrain_it():
+    """Issue #18: a manufacturing rule is a CONSTRAINT, not an audit run afterwards.
+
+    An optimizer told to minimise mass subject to strength will return a wall too thin to
+    extrude, because nothing in its problem statement said otherwise. Here the same problem is
+    run twice, differing only by `printable >= 1`, and the answers differ accordingly.
+    """
+    doc = new_doc()
+    obj = D.make_part(doc, "plate", None, name="Panel")
+    obj.Width, obj.Depth, obj.Thickness = 60.0, 40.0, 6.0
+    doc.recompute()
+
+    out = registry.call("analyse", part="Panel", material="petg", pitch=1.0,
+                        fix="x<=-28", load="x>=28", force=[0.0, 0.0, -20.0],
+                        rules={"min_wall_mm": 3.0, "max_overhang_deg": 45.0})
+    for key in ("unsupported_area_mm2", "thin_fraction", "fits_build_volume", "printable"):
+        assert key in out, (key, sorted(out))
+    assert out["printable"] == 1.0, (out["printability_violations"], out["printability_notes"])
+    assert out["unsupported_area_mm2"] == 0.0, out
+    assert out["printability_rules"]["min_wall_mm"] == 3.0, out["printability_rules"]
+
+    common = dict(part="Panel", material="petg", pitch=1.0, tol=0.5,
+                  fix="x<=-28", load="x>=28", force=[0.0, 0.0, -20.0],
+                  parameters=[{"name": "thickness", "low": 1.0, "high": 10.0, "step": 1.0}],
+                  objective="mass_g",
+                  rules={"min_wall_mm": 4.0, "max_overhang_deg": 45.0},
+                  max_evaluations=30)
+    loose = registry.call("optimise", constraints=[], **common)
+    strict = registry.call(
+        "optimise",
+        constraints=[{"name": "printable", "metric": "printable", "op": ">=", "limit": 1.0}],
+        **common)
+
+    assert loose["feasible"] and strict["feasible"], (loose, strict)
+    assert loose["best"]["thickness"] <= 2.0, (
+        "unconstrained, lightest walks to the thinnest allowed: %s" % loose["best"])
+    assert strict["best"]["thickness"] > loose["best"]["thickness"], (
+        strict["best"], loose["best"])
+    assert strict["metrics"]["printable"] == 1.0, strict["metrics"]
+    assert strict["blocking_constraints"] == ["printable"], strict["blocking_constraints"]
+    print("        unconstrained %.0f mm, printable-constrained %.0f mm"
+          % (loose["best"]["thickness"], strict["best"]["thickness"]))
+
+
+@test
 def test_optimise_refuses_a_parameter_the_part_does_not_have():
     doc = new_doc()
     D.make_part(doc, "plate", None, name="Bracket")

@@ -2,6 +2,82 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-18 — manufacturing rules as constraints, not an audit (closes #18)
+
+The point of the issue title. An optimizer told to minimise mass subject to strength will return a
+0.9 mm wall at an 80 degree overhang with a 0.6 mm cooling channel, because nothing in its problem
+statement said otherwise. Auditing that afterwards and sending it back is a loop with a human in
+it. **The demonstration, on a real part:** asked for the lightest panel that carries 20 N, the
+optimizer picks **1 mm**; with printability as a constraint against a 4 mm wall rule, **5 mm**.
+
+- `[feat]` **`constraint_kit/manufacture.py`** -- overhang, thin wall, narrow channel and build
+  volume, every one computed from **geometry** rather than from a parameter name. That is what
+  makes it general: a wall is thin because the solid is thin there, not because something called
+  `wall_thickness` is small, and a part with a thin region nobody named is exactly the part an
+  audit misses.
+- `[feat]` **`analyse(..., rules={...})`** reports them as plain numbers, so
+  `{"metric": "printable", "op": ">=", "limit": 1.0}` is a constraint the search respects rather
+  than a verdict somebody reads.
+- `[decision]` **The three rules carry different confidence and that is stated rather than
+  averaged away.** Overhang is EXACT -- a question about surface normals, which the tessellation
+  has. Thin wall and narrow channel are morphological openings on the voxel grid and so are
+  RESOLUTION-LIMITED, and a rule finer than two voxels is **refused** rather than answered,
+  because that is the one place a printability check could most easily reassure somebody about a
+  wall it physically cannot see.
+- `[feat]` The thin-wall test is a morphological **opening**, which is a definition rather than a
+  heuristic: a region can contain a ball of radius r if and only if it survives erosion by r
+  followed by dilation by r, so the solid minus its own opening is *exactly* the set of places
+  thinner than 2r. Narrow channels are the same question asked of the enclosed void -- with the
+  outside air flood-filled away first, because the air around a part is not a channel.
+
+### A geometric fact that had to become a design decision
+
+- `[decision]` **An opening inevitably flags every convex edge, and that is geometry rather than a
+  bug.** A ball of radius r centred inside a solid cannot cover the material right at a 90 degree
+  corner, so by the ball-fitting definition that corner IS thinner than 2r. Measured: a
+  20 x 20 x 8 mm slab against a 3 mm rule flags **6.7%** of its volume, all of it within one ball
+  radius of an edge, while being 8 mm thick everywhere that matters -- and the same slab at 1.5 mm
+  thick flags **100%**. So the verdict is a **fraction** with a threshold, not a count. Fudging
+  the measure to hide the edge effect would also hide a real thin region that happened to sit
+  near an edge.
+
+### Three defects found, one in the code and two in my own fixtures
+
+- `[fix]` **The build-plate exclusion used the lowest face CENTROID, not the lowest VERTEX.** A
+  box's bottom face needs no support because it lies on the plate, so plate faces must be
+  excluded -- but a 45 degree wedge touches the plate along a *line*, so no face centroid sits at
+  the true minimum, and the lowest centroid belongs to a sloped face a third of the way up. Taking
+  that as the plate height excluded half of the very overhang being measured: the wedge reported
+  exactly half its hypotenuse, which is the kind of wrong that looks like a rounding problem and
+  is not. A face is on the plate when ALL THREE vertices are.
+- `[fix]` **My extruded-profile fixtures had inverted side-wall winding**, so the TOP face of an L
+  reported a downward normal and the overhang check "found" 360 mm2 of unsupported roof on a part
+  whose only real overhang was 240 mm2 of arm underside. The symptom reads exactly like a broken
+  overhang check. One `_extrude` helper now DERIVES the orientation from the profile's signed
+  area, and has its own test: a unit cube must have six 1 mm2 faces with an area-weighted normal
+  summing to zero.
+- `[fix]` **And that helper fan-triangulated a CONCAVE profile**, which is invalid -- a fan only
+  works from a vertex that sees the whole shape, and the L has a reflex corner. It emitted a
+  triangle lying partly outside the shape and wound backwards, 300 mm2 of it. Printed upright
+  that was invisible, because cap faces point along Y and are never overhangs in a Z build;
+  printed on its side it appeared as 300 mm2 of phantom unsupported area. **It would also have
+  broken ray-parity voxelisation**, which counts crossings and cannot survive a face pointing the
+  wrong way, so the thin-wall numbers on that fixture were suspect too. Replaced with ear
+  clipping, and the fixture test now checks a concave profile explicitly.
+
+### The third thing FreeCAD's bundled scipy cannot do
+
+- `[fix]` **`scipy.ndimage` does not import inside FreeCAD 1.0.** It pulls in `scipy.special`,
+  which raises `ValueError: All ufuncs must have type numpy.ufunc` from `_multiufuncs` because
+  the bundled scipy and numpy disagree about what a ufunc is. That is the **third** distinct
+  failure the same ABI mismatch has caused here, after the SuperLU direct solver and the
+  recursive `dtype.__repr__` that ruled out ARPACK. So the morphology is implemented in about
+  forty lines of numpy array shifting -- spherical structuring element, 6-neighbour flood fill --
+  and produces numbers identical to the scipy version on every test while working in both
+  interpreters. `manufacture.py` is now numpy-only like the rest of the tier.
+
+**325 tests across 17 suites.**
+
 ## 2026-10-17 (last) — linear buckling, the failure a stress check cannot see (closes #1)
 
 This mattered more the day the optimizer shipped than it did the day before. "The lightest design
