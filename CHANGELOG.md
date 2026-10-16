@@ -2,6 +2,92 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-19 (later still) — mobility, the rack, and a travel that had no end (closes #11, #12, #13, #14)
+
+The four missing-mate issues, and the capability their comments said was blocked behind #28 and
+FreeCAD's undocumented `Reference` path format. It was not blocked, and the reason is the whole
+point: **mobility is a property of the joint GRAPH, not of the geometry.** Gruebler and Kutzbach
+wrote it down in the 1880s and it is arithmetic, so `ckwb/mobility.py` has it in closed form and
+#28 is no longer in the way of the thing it was blocking.
+
+- `[feat]` **`ckwb/mobility.py`** — `M = d(n-1) - sum(constraints)`, planar or spatial, with the
+  **loop count reported beside it** and the report saying the number is a *count rather than a
+  proof* whenever a loop exists. A Bennett linkage counts as zero mobility and moves perfectly
+  well; a mobility quoted without that caveat is the confident wrong answer this project spends
+  most of its effort avoiding.
+- `[feat]` A **floating body is named rather than summed**. Mobility is a sum, so one disconnected
+  part with six free degrees of freedom and a mechanism over-constrained by six cancel exactly —
+  the total looks perfect while the model is wrong.
+- `[feat]` `mobility` registered as a command, defaulting its bodies to the document's parts.
+
+### A coupling is not a lower pair, and getting that wrong turned a belt drive into a structure
+
+- `[fix]` The first version had one `FREEDOMS` table, and so counted a belt as a joint "leaving one
+  freedom" — which removes `(3-1) = 2` in the plane. A two-pulley belt drive then came out at
+  **M = 0, a STRUCTURE**, for a mechanism anybody can turn by hand; the ballscrew axis came out at
+  **M = -1**, over-constrained. The split is now explicit and is the module's main lesson:
+
+  | | what it is | removes |
+  |---|---|---|
+  | `LOWER_PAIRS` | surface contact between two bodies (revolute, prismatic, bolt in a threaded hole) | `d - f` |
+  | `COUPLINGS` | **one scalar equation** between bodies already connected (gear, belt, ballscrew nut) | **exactly 1**, whatever `d` is |
+
+  Belt drive `3(3-1) - (2+2+1) = 1`, ballscrew axis `3(3-1) - (2+2+1) = 1`. Both correct now.
+- `[decision]` **`screw` therefore means two different things and both are sayable.** `screw` is the
+  lower pair — a bolt turning in a threaded hole, the only connection between two bodies.
+  `screw_coupling` (aliases `nut`, `ballscrew`) is a ballscrew nut tying a shaft that already has a
+  revolute to a carriage that already has a prismatic. Conflating them is what made a CNC axis read
+  as over-constrained.
+
+### The rack (#14), which needed a part as well as a mate
+
+- `[feat]` **`parts.gear_rack`** — straight-flank ISO 53 basic rack. A rack is the involute's
+  infinite-radius limit, which is why its flanks are dead straight and why it is **exactly
+  conjugate** to `spur_gear_profile` rather than approximately so. Measured: the mesh overlap at
+  the correct centre height is **1.6e-4 mm³** — numerical noise, i.e. tangential contact with no
+  backlash and no root interference.
+- `[decision]` **Length is exactly `teeth * pi * m`, with both ends halfway along a root land**, so
+  two racks butt into one unbroken tooth pattern. A long axis is several racks in a row and a rack
+  sized to its tooth tips would plant a half-pitch error at every joint.
+- `[feat]` `motion.rack_travel / rack_turns / rack_steps_per_mm / rack_centre_height / rack_length /
+  rack_drive`. The phase is **derived, not tuned**: `gear_rack` starts mid-root-land and
+  `spur_gear_profile` centres a tooth on its own +X, so one fixed quarter turn points that tooth at
+  the rack, and rolling holds the phase everywhere else for free. Verified at awkward fractions
+  (0.03, 0.59 of a turn), not just whole teeth.
+- `[fix]` **A rack's rotation and travel are PERPENDICULAR**, unlike a screw's, which share an axis.
+  Reusing `screw_drive` would spin the pinion about its direction of travel — a drill bit instead
+  of a wheel. The sign is derived too: for the contact point not to slip, `v_centre = -omega x r`.
+- `[note]` **A rack drive is measurably coarser than the hardware already on the bench.** 25.5
+  steps/mm for a 20-tooth module-2 pinion against the 1605 ballscrew's measured **320** — an eighth
+  of the resolution. A rack buys unlimited travel, which is why neither machine here uses one.
+
+### The travel that had no end: a measured false pass, in the dangerous direction
+
+- `[fix]` **`sweep` reported `ok: True` for a carriage driven clean off its rail.** Measured before
+  the fix: a spacer swept 0 → 900 mm along a shaft spanning −100..100 reported **ok, with its worst
+  gap unchanged at 1.0 mm**. Running a carriage 800 mm into thin air read as the *cleanest* part of
+  the travel, because a part that has left its rail interferes with nothing. The sweep now asks two
+  questions — does it hit anything, and *is it still on the thing it is travelling along* — and
+  reports `travel_limits`, `off_support` and a verdict that fails on either.
+- `[feat]` `motion.axis_extent(..., conservative=)` and `motion.travel_limits`. Which measurement is
+  safe depends on which part: **under**-estimating the support and **over**-estimating the moving
+  part both shrink the usable range, which refuses a doubtful travel rather than allowing it. So the
+  support is measured by vertex projection (exact for prismatic stock) and the moving part by its
+  bounding box (never understates).
+- `[decision]` **"Still on the support" is NOT the same question for the two motions.** A carriage
+  must be *wholly* within its rail's extent or it is held up by nothing; a pinion need only keep its
+  **centre** over the rack, because its body overhanging the end is what a pinion at the end of its
+  travel always does. Demanding containment there would refuse the last tip radius of travel at each
+  end for no physical reason. Both criteria are now tested, because they look like one criterion
+  until a pinion meets them.
+- `[feat]` `sweep` gained `motion="slide" | "rack"`, and the rack mode is not dressing: a pinion
+  slid along a rack without turning ploughs its teeth through the rack's, so the same sound
+  mechanism swept as a slide collides at **11 of 13 stations** and would be reported as a design
+  fault. `rack_drive` refuses travel past the end of the rack by arithmetic, naming how many more
+  teeth it would take.
+
+**25 suites, 458 tests.** Motion went 17 → 34; mobility is 22 new.
+
 ## 2026-10-19 (later) — the optional AMG preconditioner, and a measurement that went against it (closes #5)
 
 `voxel.py` has carried a note since it was written: Jacobi is valid, cheap and weak, and "a

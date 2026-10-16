@@ -647,12 +647,86 @@ def revolve(profile: str = "rect", r_inner: float = 10.0, r_outer: float = 20.0,
     }
 
 
+
+def gear_rack(module: float = 2.0, teeth: int = 12, width: float = 20.0,
+              height: float = 20.0, pressure_angle: float = 20.0):
+    """Involute gear rack: length along +X, teeth pointing +Y, pitch line at y = 0.
+
+    A rack is the **limit of an involute gear as its radius goes to infinity**, and that is why
+    its flanks are dead straight at the pressure angle -- the one gear profile that needs no
+    involute at all. It is also the generating profile a hob cuts with, so a straight-flank rack
+    and `spur_gear_profile` are exactly conjugate rather than approximately so.
+
+    Dimensions are the ISO 53 basic rack: circular pitch `pi*m`, tooth thickness `pi*m/2` at the
+    pitch line, addendum `1.0*m` above it and dedendum `1.25*m` below -- matching the pinion's
+    `1.0/1.25` so a standard pinion meshes with no backlash and no root interference.
+
+    **The length is exactly `teeth * pi * m` and the ends fall halfway along a root land**, so
+    two racks butt into one unbroken tooth pattern with a correct full land across the joint.
+    That matters because a long axis is several racks in a row, and a rack sized to its tooth
+    tips instead would plant a half-pitch error at every joint.
+
+    The `pitch` frame is the one to mate to: its origin sits on the pitch line at the rack's
+    start, **+Z along the travel** and **+X along the pinion's rotation axis** -- which is
+    perpendicular to the travel, unlike a screw, where the two share an axis.
+    """
+    m, z = float(module), int(teeth)
+    _require_positive(module=m, width=width, height=height)
+    if z < 1:
+        raise ValueError(f"teeth={z} makes no rack; it needs at least one")
+    alpha = math.radians(float(pressure_angle))
+    if not (0.0 < alpha < math.pi / 3):
+        raise ValueError(f"pressure_angle must lie in (0, 60) degrees, got {pressure_angle}")
+
+    p = math.pi * m
+    add, ded = 1.0 * m, 1.25 * m
+    if height <= add + ded:
+        raise ValueError(
+            f"height={height} is not enough for a module-{m} rack, whose teeth alone are "
+            f"{add + ded:.2f} mm from tip to root; it needs a back as well")
+
+    t = math.tan(alpha)
+    half_pitch, half_tip, half_root = p / 4.0, p / 4.0 - add * t, p / 4.0 + ded * t
+    if half_tip <= 0.0:
+        raise ValueError(
+            f"a {pressure_angle} degree pressure angle brings the teeth to a point at module {m}")
+    if 2.0 * half_root >= p:
+        raise ValueError(
+            f"a {pressure_angle} degree pressure angle closes the root land at module {m}")
+
+    length = z * p
+    pts = [V(0.0, -ded, 0.0)]
+    for i in range(z):
+        c = (i + 0.5) * p
+        pts.append(V(c - half_root, -ded, 0.0))
+        pts.append(V(c - half_tip, add, 0.0))
+        pts.append(V(c + half_tip, add, 0.0))
+        pts.append(V(c + half_root, -ded, 0.0))
+    pts.append(V(length, -ded, 0.0))
+    pts.append(V(length, add - height, 0.0))
+    pts.append(V(0.0, add - height, 0.0))
+
+    wire = Part.makePolygon(pts + [pts[0]])
+    shape = Part.Face(wire).extrude(V(0, 0, float(width)))
+
+    mid_z = width / 2.0
+    return shape, {
+        # +Z is the travel, +X is the pinion's rotation axis, so +Y points from the pitch line up
+        # to the pinion centre. `motion.rack_centre_height` is the distance along that +Y.
+        "pitch": frame((0.0, 0.0, mid_z), (1, 0, 0), (0, 0, -1)),
+        "base": frame((length / 2.0, add - height, mid_z), (0, -1, 0)),
+        "end_a": frame((0.0, 0.0, mid_z), (-1, 0, 0), (0, 0, -1)),
+        "end_b": frame((length, 0.0, mid_z), (1, 0, 0), (0, 0, -1)),
+        "front": frame((length / 2.0, 0.0, width), (0, 0, 1)),
+    }
+
 PARTS = {
     "plate": plate,
     "spacer": spacer,
     "block_with_bore": block_with_bore,
     "shaft": shaft,
     "spur_gear": spur_gear,
+    "gear_rack": gear_rack,
     "extrusion_2020": extrusion_2020,
     "ball_bearing": ball_bearing,
     "screw": screw,

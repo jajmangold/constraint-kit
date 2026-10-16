@@ -328,19 +328,51 @@ def import_step(path: str, name: str = "", split: bool = False) -> dict:
             "start": {"type": float, "required": True, "doc": "mm"},
             "stop": {"type": float, "required": True, "doc": "mm"},
             "stations": {"type": int, "default": 11,
-                         "doc": "positions sampled, both ends included"}})
+                         "doc": "positions sampled, both ends included"},
+            "motion": {"type": str, "default": "slide",
+                       "doc": "slide (a rail) or rack (a pinion that must also turn)"},
+            "teeth": {"type": int, "default": 0, "doc": "pinion teeth, for motion=rack"},
+            "module": {"type": float, "default": 0.0, "doc": "module, for motion=rack"},
+            "rack_teeth": {"type": int, "default": 0,
+                           "doc": "teeth on the rack, for motion=rack"}})
 def sweep(moving: str, target: str, target_frame: str, moving_frame: str,
-          start: float, stop: float, stations: int = 11) -> dict:
+          start: float, stop: float, stations: int = 11, motion: str = "slide",
+          teeth: int = 0, module: float = 0.0, rack_teeth: int = 0) -> dict:
     """Check a mechanism through its travel instead of at one pose.
 
     This is the check a static clash test cannot do. A gantry that clears at both ends of its
     rail can still hit a post halfway along, and nothing about examining either end reveals it.
+
+    It answers two questions, not one. Does the moving part hit anything, and **is it still on
+    the thing it is travelling along**. The second is not a refinement of the first: a carriage
+    driven off the end of its rail touches nothing, so an interference check alone calls the
+    worst position in the travel the best one. Measured, before this check existed: a carriage
+    swept 800 mm past the end of a 200 mm shaft reported `ok` with its worst gap unchanged.
+
+    `start` and `stop` are millimetres of travel whichever motion is used, because that is the
+    number a machine's travel is quoted in. **`motion="rack"` is not optional dressing**: a
+    pinion sliding along a rack without turning ploughs its teeth straight through the rack's,
+    so sweeping a rack drive as a plain slide reports a collision at every station and reports
+    it as a design fault rather than as the wrong kinematics. A ball nut needs no such mode --
+    it translates and does not turn, so a slide is already exactly right for it.
 
     Declared read-only, and it keeps that promise: the moving part is restored to the placement
     it started from, in a `finally`, even if a station raises. A check that quietly leaves the
     model somewhere else would be a side effect wearing a verdict as a disguise.
     """
     from . import motion as _motion
+
+    kind = str(motion or "slide").strip().lower()
+    if kind not in ("slide", "rack"):
+        raise ValueError(f"motion must be 'slide' or 'rack', got {motion!r}")
+    if kind == "rack":
+        missing = [n for n, v in (("teeth", teeth), ("module", module),
+                                  ("rack_teeth", rack_teeth)) if not v]
+        if missing:
+            raise ValueError(
+                "motion='rack' needs %s: a rack drive's travel is set by the pinion's size, and "
+                "the rack's length is what says when the pinion runs off the end"
+                % ", ".join(missing))
 
     tgt, mov = _part(target), _part(moving)
     tf, mf = _frames(tgt), _frames(mov)
@@ -356,12 +388,62 @@ def sweep(moving: str, target: str, target_frame: str, moving_frame: str,
     positions = _motion.sweep_stations(start, stop, stations)
     original = mov.Placement
 
+    # The travel axis, and how far the TARGET reaches along it. Measured once, in world
+    # coordinates, from the same frame the travel itself runs along.
+    axis_world = tgt.Placement.multiply(tf[target_frame])
+    axis_origin = axis_world.Base
+    axis_dir = axis_world.Rotation.multVec(FreeCAD.Vector(0, 0, 1))
+    support = _motion.axis_extent(tgt.Shape, axis_origin, axis_dir)
+
+    # What counts as "still on the support" is NOT the same question for the two motions, and
+    # treating it as one asks a pinion to behave like a carriage.
+    #
+    #   slide: the moving part must be wholly WITHIN the support's extent. A carriage hanging
+    #          over the end of its rail is a carriage held up by nothing.
+    #   rack:  only the pinion's CENTRE need be over the rack, because that is what keeps teeth
+    #          engaged. Its body overhanging the rack's end is what a pinion at the end of its
+    #          travel always does, and demanding containment would refuse the last tip radius
+    #          of travel at each end for no physical reason. `rack_drive` enforces the centre
+    #          limit itself, by arithmetic, and raises -- so there is nothing to collect here.
+    rack_span = _motion.rack_length(rack_teeth, module) if kind == "rack" else None
+
     clash_stations, worst = [], None
     details = []
+    off_support, limits = [], None
+
+    def place(where: float):
+        if kind == "rack":
+            return _motion.rack_drive(tgt.Placement, tf[target_frame], mf[moving_frame],
+                                      turns=_motion.rack_turns(teeth, module, where),
+                                      teeth=teeth, module=module, rack_teeth=rack_teeth)
+        return _motion.slide(tgt.Placement, tf[target_frame], mf[moving_frame], where)
+
     try:
         for where in positions:
-            mov.Placement = _motion.slide(tgt.Placement, tf[target_frame], mf[moving_frame],
-                                          where)
+            mov.Placement = place(where)
+            # Is the moving part still ON the thing it is travelling along? This has to be asked
+            # separately, because a carriage driven off the end of its rail collides with
+            # nothing and so reads as the CLEANEST station in the sweep -- a measured false pass
+            # (a carriage run 800 mm past the end of a 200 mm shaft reported ok with its worst
+            # gap unchanged).
+            if kind == "slide":
+                reach = _motion.axis_extent(mov.Shape, axis_origin, axis_dir,
+                                            conservative=True)
+                # Recomputed at every station and kept at its TIGHTEST, because a moving part
+                # need not present the same length to the axis all the way along.
+                here = _motion.travel_limits(support[0], support[1], reach[0], reach[1],
+                                             at=where)
+                if limits is None:
+                    limits = here
+                else:
+                    limits = {"min_mm": max(limits["min_mm"], here["min_mm"]),
+                              "max_mm": min(limits["max_mm"], here["max_mm"]),
+                              "usable_mm": min(limits["usable_mm"], here["usable_mm"]),
+                              "fits": limits["fits"] and here["fits"]}
+                over = max(support[0] - reach[0], reach[1] - support[1])
+                if over > _motion.SUPPORT_TOL_MM:
+                    off_support.append({"at_mm": round(where, 6),
+                                        "overhang_mm": round(over, 4)})
             hit, gap = [], None
             for other in others:
                 shape = getattr(other, "Shape", None)
@@ -385,15 +467,23 @@ def sweep(moving: str, target: str, target_frame: str, moving_frame: str,
 
     return _checks._stamp(doc, {
         "check": "sweep",
-        "ok": not clash_stations,
+        "ok": not clash_stations and not off_support,
         "moving": mov.Name,
         "along": f"{tgt.Name}.{target_frame}",
+        "motion": kind,
         "start_mm": float(start),
         "stop_mm": float(stop),
         "stations": len(positions),
         "clash_stations": clash_stations,
         "clashes": details,
         "min_gap_mm": round(worst, 6) if worst is not None else None,
+        # Travel limits are part of the verdict, not a footnote: a sweep that leaves the support
+        # is a failure even though every station is clear of everything.
+        "travel_limits": (limits if kind == "slide"
+                          else {"min_mm": 0.0, "max_mm": round(rack_span, 6),
+                                "usable_mm": round(rack_span, 6), "fits": True}),
+        "off_support": off_support,
+        "off_support_stations": [o["at_mm"] for o in off_support],
     })
 
 
@@ -811,6 +901,69 @@ def verify_requirements(part: str, fix: str, load: str = "", force: list = None,
                       force=tuple(float(v) for v in (force or [0.0, 0.0, -100.0])),
                       cases=cases, buckling=int(buckling), rules=rules)
     return _checks._stamp(doc, out)
+
+
+@registry.command(
+    "mobility",
+    "How many degrees of freedom the mechanism has, from the joints you declare, with the "
+    "loop count beside it",
+    params={"joints": {"type": list, "required": True,
+                       "doc": "a list of {kind, a, b}: revolute, prismatic, screw, belt, gear, "
+                              "gear_rack, cylindrical, spherical, planar, fixed (plus aliases "
+                              "like hinge, slider, rack). A screw leaves ONE freedom, not two"},
+            "grounded": {"type": list, "default": None,
+                         "doc": "parts fixed to the world. However many you name they count as "
+                                "one body, which is what grounding means"},
+            "bodies": {"type": list, "default": None,
+                       "doc": "which parts to count; defaults to every part in the document"},
+            "spatial": {"type": bool, "default": False,
+                        "doc": "false for a planar mechanism, which is most of what is on this "
+                               "bench -- a four-bar, a slider-crank and a belt drive are all "
+                               "planar, and the spatial formula gives three times too much"}})
+def mobility(joints: list, grounded: list = None, bodies: list = None,
+             spatial: bool = False) -> dict:
+    """Can the thing you just assembled actually move, and by how many inputs?
+
+    Mobility is a property of the joint GRAPH rather than of the geometry, which is why this
+    needs no solver: Grubler and Kutzbach wrote the arithmetic down in the 1880s. It answers the
+    question #11-#14 were really asking -- DOF analysis and loop closure -- without the
+    undocumented FreeCAD joint format that was thought to be blocking it.
+
+    It is a COUNT and not a proof, and the report says so whenever a loop exists: the formula
+    assumes the joint constraints are independent, and in special geometries they are not.
+    """
+    from . import mobility as _mob
+
+    doc = active_document()
+    present = [o.Name for o in _doc.all_parts(doc)]
+    use = [str(b) for b in bodies] if bodies else present
+    for name in use:
+        if name not in present:
+            raise KeyError(
+                f"no part named {name!r} in {doc.Name}; have {', '.join(present) or 'none'}")
+    for i, joint in enumerate(joints or []):
+        for role in ("a", "b"):
+            who = (joint or {}).get(role)
+            if who not in use:
+                raise KeyError(
+                    f"joint {i} connects {who!r}, which is not a part being counted; "
+                    f"have {', '.join(use) or 'none'}")
+
+    out = _mob.mobility(bodies=use, joints=joints or [], grounded=grounded or [],
+                        spatial=bool(spatial))
+    return _checks._stamp(doc, {
+        "check": "mobility",
+        "mobility": out.mobility,
+        "bodies": out.bodies,
+        "joints": out.joints,
+        "loops": out.loops,
+        "spatial": out.spatial,
+        "grounded": out.grounded,
+        "floating": out.floating,
+        "over_constrained": out.over_constrained,
+        "is_structure": out.is_structure,
+        "report": out.report(),
+    })
 
 
 @registry.command("undo", "Undo the last transaction", writes=False)

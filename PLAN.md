@@ -263,10 +263,15 @@ The precondition. Per machine, one program; the document becomes a build artifac
 ### Phase 2 — Kernel gaps that block real machines
 - **STEP/IGES import.** Not in any of the nine epics, and it is the thing that lets the kernel
   touch existing work and lets Phase 0 see Phase 1's output. Smallest high-value item in the plan.
-- **The missing joints.** `mates.py` implements six: `coincident`, `rigid`, `contact`, `mesh`,
+- **The missing joints.** ~~`mates.py` implements six: `coincident`, `rigid`, `contact`, `mesh`,
   `revolute`, `cylindrical`. The hardware needs **`prismatic`** (linear rails), **`screw`** (the
   1605 ballscrew, 5 mm lead), **`belt`** (HTD-8M knee drive, the A-axis two-stage 9:1 GT2), and
-  `gear_rack`. Without these the machines cannot even be *described*, let alone swept.
+  `gear_rack`.~~ **Done** (#11-#14), in `workbench/ckwb/motion.py` + `mobility.py`, and not the
+  way this entry expected. None of the four needed a constraint solver: a nut at a travel, a
+  carriage at a position, a pulley at an angle and a pinion on a rack are all closed form, and
+  **mobility turned out to be a property of the joint graph rather than of the geometry**, so the
+  DOF analysis that looked blocked behind #28 arrived without it. What the work actually found was
+  that `sweep` reported `ok` for a carriage driven clean off its rail — see the CHANGELOG.
 - **Freeform geometry.** `parts.py` is 429 lines of catalog primitives and `construct.py` caps at
   48 ops with no spline and no loft-through-sections. The conical cuffs, the blended motor pod, the
   31° ramp are not expressible. Zero-to-CAD's op coverage (loft/sweep/shell) is the target set.
@@ -323,7 +328,7 @@ acceptance criteria.
 |---|---|---|
 | 0 — physics core | **done** — `constraint_kit/fea/`, 35 tests verified against ground truth, driver in `drivers/fea_part.py` | [#1](../../issues/1) buckling · [#2](../../issues/2) anisotropy · [#3](../../issues/3) Gmsh/CalculiX cross-check · [#4](../../issues/4) load-case envelope · [#5](../../issues/5) AMG |
 | 1 — parametric source | not started; gear-cutter nearly there. **Blocked on a scope call: [#8](../../issues/8)** | [#6](../../issues/6) gear-cutter variants · [#7](../../issues/7) axis_x pattern · [#8](../../issues/8) knee-exo v9/v10 · [#9](../../issues/9) params + datums |
-| 2 — kernel gaps | not started | [#10](../../issues/10) STEP import · [#11](../../issues/11) prismatic · [#12](../../issues/12) screw · [#13](../../issues/13) belt · [#14](../../issues/14) gear_rack · [#15](../../issues/15) freeform |
+| 2 — kernel gaps | **done** — all six closed; the joints live in `workbench/ckwb/motion.py` + `mobility.py` as closed-form placements and a Gruebler count, no solver | [#10](../../issues/10) STEP import · [#11](../../issues/11) prismatic · [#12](../../issues/12) screw · [#13](../../issues/13) belt · [#14](../../issues/14) gear_rack · [#15](../../issues/15) freeform |
 | 3 — closed-loop optimization | not started; needs Phase 1 for a machine to sweep | [#16](../../issues/16) build cache · [#17](../../issues/17) the optimizer |
 | 4 — manufacturing constraints | pieces exist in knee-exo `411_printability.py` | [#18](../../issues/18) |
 | 5 — topopt oracle | not started; `Grid.density` and SIMP interpolation already in place | [#19](../../issues/19) |

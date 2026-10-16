@@ -61,6 +61,9 @@ PALETTE_ONLY = (
     "release_param",
     "get_requirements",
     "verify_requirements",
+    # Mobility is a read over declared joints, so the palette is its home: there is nothing to
+    # click on in the 3D view that would tell it which joints you mean.
+    "mobility",
 )
 
 #: Dockable panels. `area` is a Qt dock area name resolved in panels.py.

@@ -71,6 +71,7 @@ if [ -x "$FREECADCMD" ]; then
   run "freeform        workbench/tests/test_freeform.py" "$FREECADCMD" workbench/tests/test_freeform.py
   run "motion          workbench/tests/test_motion.py"   "$FREECADCMD" workbench/tests/test_motion.py
   run "requirements    workbench/tests/test_requirements.py" "$FREECADCMD" workbench/tests/test_requirements.py
+  run "mobility        workbench/tests/test_mobility.py" "$FREECADCMD" workbench/tests/test_mobility.py
   run "agent end-to-end workbench/tests/test_agent_end_to_end.py" \
       python workbench/tests/test_agent_end_to_end.py
 else

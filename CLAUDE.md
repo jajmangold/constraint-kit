@@ -470,9 +470,16 @@ angle, then "2 bolts, yes gear" from `three_quarter`); the deterministic tests a
 ## Phases
 
 These are the *kernel* phases, historical. The forward plan — physics, a parametric source of
-truth per machine, the missing joints (`prismatic`/`screw`/`belt`/`gear_rack`), freeform geometry,
-STEP import, closed-loop optimization — is in [`PLAN.md`](PLAN.md), which is where to look for
-what to do next.
+truth per machine, freeform geometry, STEP import, closed-loop optimization — is in
+[`PLAN.md`](PLAN.md), which is where to look for what to do next.
+
+The four missing joints (`prismatic`/`screw`/`belt`/`gear_rack`) are **done**, and not where this
+file would lead you to look: they are closed-form placements in `workbench/ckwb/motion.py`, with
+the DOF count in `workbench/ckwb/mobility.py`. **Mobility is a property of the joint GRAPH, not of
+the geometry**, so none of it needed FreeCAD's Assembly solver. Read `mobility.py`'s docstring
+before counting degrees of freedom anywhere: a coupling (gear, belt, ballscrew nut) is ONE
+equation and removes exactly one freedom, where a lower pair removes `d - f`, and conflating them
+makes a belt drive count as a structure.
 
 - **PLAN Phase 0 — physics tier** ✅ `fea/`, 35 verified tests, `drivers/fea_part.py`. First real
   result, now CONVERGED and cross-validated against Gmsh + CalculiX (#3 closed): the knee-exo

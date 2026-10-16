@@ -96,8 +96,9 @@ freecadcmd workbench/tests/test_planner.py  # plan + repair  (15)
 freecadcmd workbench/tests/test_diagnose.py # cause + fix    (17)
 freecadcmd workbench/tests/test_import.py   # STEP import    (14)
 freecadcmd workbench/tests/test_freeform.py # loft, sweep    (17)
-freecadcmd workbench/tests/test_motion.py   # travel, sweep  (17)
+freecadcmd workbench/tests/test_motion.py   # travel, sweep  (34)
 freecadcmd workbench/tests/test_requirements.py # req chain  (18)
+freecadcmd workbench/tests/test_mobility.py # DOF count    (22)
 python workbench/tests/test_agent_end_to_end.py  # MCP, cross-process (4)
 
 # gui tier - opens a real FreeCAD window for ~30 s
@@ -146,6 +147,23 @@ with a 2s model".
 
 ## GOTCHAS THAT HAVE COST TIME
 
+- **A COUPLING is not a lower pair, and Gruebler punishes the confusion.** A gear mesh, a belt or
+  a ballscrew nut is ONE equation between bodies already connected, so it removes exactly **1**
+  degree of freedom whatever the dimension. Counting a belt as a joint "leaving one freedom"
+  removes two in the plane and a two-pulley belt drive comes out as a STRUCTURE. `mobility.py`
+  keeps `LOWER_PAIRS` and `COUPLINGS` apart for this reason, and `screw` deliberately appears in
+  both tables with different meanings (a bolt in a threaded hole vs a ballscrew nut).
+- **A mobility figure without its loop count is a confident wrong answer.** The formula assumes
+  independent constraints; a Bennett linkage counts as zero and moves anyway. Report the loops and
+  say the number is a count rather than a proof whenever there is one.
+- **A part driven off the end of its travel interferes with NOTHING, so a clearance check calls it
+  the cleanest station in the sweep.** Measured: a carriage swept 800 mm past the end of a 200 mm
+  shaft reported `ok` with its worst gap unchanged. Any new travel needs a support check beside
+  the interference check, and the two criteria are not the same — a carriage must be wholly on its
+  rail, a pinion need only keep its centre over the rack.
+- **A rack's rotation and travel are perpendicular; a screw's share an axis.** Reusing a screw
+  placement for a rack spins the pinion about its direction of travel. Derive the rolling sign
+  from `v_centre = -omega x r` rather than picking it.
 - **Smoothed-aggregation AMG needs the elasticity near-nullspace or it is not multigrid.**
   Told nothing, pyamg assumes the constant vector and coarsens as though every DOF were an
   independent scalar: 300 iterations against 99 with the three translations passed as `B`. The
