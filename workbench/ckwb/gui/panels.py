@@ -385,6 +385,173 @@ class ProvenancePanel(QtGui.QWidget):
 
 # -------------------------------------------------------------------------------- settings
 
+class RequirementsPanel(QtGui.QWidget):
+    """What the design has to achieve, what follows from it, and whether the geometry agrees.
+
+    The Requirements button used to open a dialog saying "not implemented yet", which is the one
+    kind of interface element worth less than nothing. What it has to show is the **chain**: a
+    requirement, the values derived from it, the parameters it drives, and the targets it will be
+    judged against.
+
+    **Staleness is the state that matters in use.** An edited requirement that has not been
+    propagated leaves the design in two states at once -- the number says one thing and the
+    geometry another -- and a panel showing a green tick for that would be actively misleading.
+    So the summary says stale, the divergent rows say what they are against what they should be,
+    and Apply is right there.
+
+    Nothing here reads the document directly. Every row comes from `get_requirements`, the same
+    command an agent calls, because a panel that reached past the registry would drift from the
+    API the moment either changed.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QtGui.QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+
+        bar = QtGui.QHBoxLayout()
+        self.summary = QtGui.QLabel("No requirements have been set on this document yet.")
+        self.summary.setWordWrap(True)
+        bar.addWidget(self.summary, 1)
+        self.apply_btn = QtGui.QPushButton("Apply")
+        self.apply_btn.setToolTip("Push every requirement through to the geometry it drives")
+        self.apply_btn.clicked.connect(self.apply)
+        bar.addWidget(self.apply_btn)
+        refresh = QtGui.QPushButton("Refresh")
+        refresh.clicked.connect(self.refresh)
+        bar.addWidget(refresh)
+        layout.addLayout(bar)
+
+        self.tree = QtGui.QTreeWidget()
+        self.tree.setHeaderLabels(["Name", "Value", "Where it comes from, or goes"])
+        self.tree.setRootIsDecorated(True)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.header().setStretchLastSection(True)
+        layout.addWidget(self.tree, 1)
+
+        hint = QtGui.QLabel(
+            "A requirement is a value with a reason. A derived value follows from it by a "
+            "relation. A driven parameter follows from that into the geometry, and is tagged "
+            "Derived in the property editor rather than pretending you typed it.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+    # ---- actions -------------------------------------------------------------------------
+
+    def apply(self) -> None:
+        from .. import requirements as _req
+
+        doc = FreeCAD.ActiveDocument
+        if doc is None:
+            return
+        try:
+            _req.apply_chain(doc)
+        except Exception as exc:  # noqa: BLE001
+            FreeCAD.Console.PrintError("[ConstraintKit] requirements: %s\n" % exc)
+            self.summary.setText(str(exc))
+            return
+        self.refresh()
+
+    def refresh(self) -> None:
+        self.tree.clear()
+        doc = FreeCAD.ActiveDocument
+        if doc is None:
+            self.summary.setText("No document is open, so there is nothing to require.")
+            self.apply_btn.setEnabled(False)
+            return
+        try:
+            out = registry.call("get_requirements")
+        except Exception as exc:  # noqa: BLE001
+            self.summary.setText(str(exc))
+            self.apply_btn.setEnabled(False)
+            return
+
+        stated = {n: e for n, e in out["requirements"].items() if e.get("kind") == "stated"}
+        derived = {n: e for n, e in out["requirements"].items() if e.get("kind") == "derived"}
+        values = out.get("values") or {}
+
+        if stated:
+            group = self._group("Requirements", "what this design has to achieve")
+            for name in sorted(stated):
+                entry = stated[name]
+                self._row(group, name, self._fmt(entry.get("value"), entry.get("unit")),
+                          entry.get("note") or "stated")
+
+        if derived:
+            group = self._group("Derived", "computed from the requirements above")
+            for name in sorted(derived):
+                entry = derived[name]
+                where = entry.get("expression", "")
+                if entry.get("note"):
+                    where += "   -- " + entry["note"]
+                self._row(group, name, self._fmt(values.get(name), entry.get("unit")), where)
+
+        if out.get("driven"):
+            group = self._group("Drives geometry", "parameters that follow the requirements")
+            for binding in out["driven"]:
+                label = "%s.%s" % (binding["part"], binding["param"])
+                self._row(group, label, "= " + binding["expression"],
+                          "tagged Derived in the property editor")
+
+        if out.get("targets"):
+            group = self._group("Targets", "checked against the physics by verify_requirements")
+            for spec in out["targets"]:
+                self._row(group, spec["name"],
+                          "%s %s %g" % (spec["metric"], spec["op"], spec["limit"]),
+                          spec.get("note") or "")
+
+        if out.get("stale_params"):
+            group = self._group("Out of date", "the geometry has not caught up")
+            for text in out["stale_params"]:
+                self._row(group, "", "", text)
+
+        self.tree.expandAll()
+        self._summarise(out, stated, derived)
+
+    # ---- helpers -------------------------------------------------------------------------
+
+    def _group(self, title: str, detail: str):
+        item = QtGui.QTreeWidgetItem(self.tree, [title, "", detail])
+        font = item.font(0)
+        font.setBold(True)
+        item.setFont(0, font)
+        return item
+
+    @staticmethod
+    def _row(group, name: str, value: str, detail: str):
+        return QtGui.QTreeWidgetItem(group, [name, value, detail])
+
+    @staticmethod
+    def _fmt(value, unit) -> str:
+        if value is None:
+            return "unresolved"
+        text = "%g" % float(value)
+        return text + (" " + unit if unit else "")
+
+    def _summarise(self, out: dict, stated: dict, derived: dict) -> None:
+        if out.get("error"):
+            self.summary.setText("The requirements do not resolve: " + out["error"])
+            self.apply_btn.setEnabled(False)
+            return
+        if not stated and not derived:
+            self.summary.setText(
+                "No requirements have been set on this document yet. A requirement is a value "
+                "with a reason, and it is what makes a parameter traceable to something other "
+                "than somebody's memory.")
+            self.apply_btn.setEnabled(False)
+            return
+        self.apply_btn.setEnabled(True)
+        count = "%d requirement%s, %d derived, %d driven parameter%s" % (
+            len(stated), "" if len(stated) == 1 else "s", len(derived),
+            len(out.get("driven") or []), "" if len(out.get("driven") or []) == 1 else "s")
+        if out.get("stale"):
+            self.summary.setText(
+                count + " -- STALE. A requirement has changed and the geometry has not caught "
+                        "up, so the design is in two states at once. Press Apply.")
+        else:
+            self.summary.setText(count + " -- up to date.")
+
+
 class AnalyseDialog(QtGui.QDialog):
     """Boundary conditions, proposed from the part's own geometry and editable before they run.
 
@@ -566,7 +733,8 @@ class SettingsDialog(QtGui.QDialog):
 # ------------------------------------------------------------------------------ dock plumbing
 
 _WIDGETS = {"CK_ChecksPanel": ChecksPanel, "CK_DescribePanel": DescribePanel,
-            "CK_ProvenancePanel": ProvenancePanel}
+            "CK_ProvenancePanel": ProvenancePanel,
+            "CK_RequirementsPanel": RequirementsPanel}
 
 
 def show_panel(panel_id: str) -> QtGui.QDockWidget:

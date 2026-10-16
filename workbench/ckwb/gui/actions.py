@@ -313,13 +313,12 @@ class RequirementsCommand(_Base):
     tip = "Show what this design has to achieve, and whether it does"
     pixmap = "ck-requirements"
 
+    def IsActive(self):
+        return True          # a requirement can be stated before any geometry exists
+
     def Activated(self):
-        _report("Requirements",
-                "Requirements are not implemented yet.\n\n"
-                "They are the next piece: a requirement is a checkable claim about the design "
-                "(max deflection, mass ceiling, a fit class) that drives parameters rather than "
-                "being compared against them afterwards.\n\n"
-                "Until then, Check runs the geometric verdicts and Analyse covers stiffness.")
+        from .panels import show_panel
+        show_panel("CK_RequirementsPanel").widget().refresh()
 
 
 class SettingsCommand(_Base):

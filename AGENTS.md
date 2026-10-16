@@ -92,10 +92,11 @@ freecadcmd workbench/tests/test_commands.py # commands, API  (43)
 freecadcmd workbench/tests/test_planner.py  # plan + repair  (15)
 freecadcmd workbench/tests/test_import.py   # STEP import    (14)
 freecadcmd workbench/tests/test_motion.py   # travel, sweep  (17)
+freecadcmd workbench/tests/test_requirements.py # req chain  (18)
 python workbench/tests/test_agent_end_to_end.py  # MCP, cross-process (4)
 
 # gui tier - opens a real FreeCAD window for ~30 s
-python workbench/tests/run_gui_tests.py    # qt layer       (17)
+python workbench/tests/run_gui_tests.py    # qt layer       (19)
 
 # live tier - calls the configured endpoint, costs money
 CK_LIVE=1 freecadcmd workbench/tests/test_planner_live.py   # NL -> built  (4)

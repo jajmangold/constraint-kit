@@ -65,6 +65,7 @@ if [ -x "$FREECADCMD" ]; then
   run "planner         workbench/tests/test_planner.py"  "$FREECADCMD" workbench/tests/test_planner.py
   run "step import     workbench/tests/test_import.py"   "$FREECADCMD" workbench/tests/test_import.py
   run "motion          workbench/tests/test_motion.py"   "$FREECADCMD" workbench/tests/test_motion.py
+  run "requirements    workbench/tests/test_requirements.py" "$FREECADCMD" workbench/tests/test_requirements.py
   run "agent end-to-end workbench/tests/test_agent_end_to_end.py" \
       python workbench/tests/test_agent_end_to_end.py
 else

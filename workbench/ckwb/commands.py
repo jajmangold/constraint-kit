@@ -25,6 +25,7 @@ from . import checks as _checks
 from . import document as _doc
 from . import mates as _mates
 from . import parts as _parts
+from . import requirements as _req
 from .params import params_path_for
 from .registry import registry
 
@@ -693,6 +694,123 @@ def _physics_stiffness(obj, material, pitch, fix, load, force, cases,
     if out.get("safety_factor") is None:
         flat["safety_factor"] = float("inf")
     return flat
+
+
+# ------------------------------------------------------------------------------ requirements
+
+@registry.command(
+    "set_requirement",
+    "State a requirement: a named value with a unit and a reason. Driven parameters follow it",
+    writes=True,
+    params={"name": {"type": str, "required": True,
+                     "doc": "a plain identifier, because expressions read it"},
+            "value": {"type": float, "required": True},
+            "unit": {"type": str, "default": "", "doc": "mm, N, Nm, deg -- whatever it is"},
+            "note": {"type": str, "default": "",
+                     "doc": "WHY. A number whose reason lives in somebody head is the thing "
+                            "requirements exist to replace"}})
+def set_requirement(name: str, value: float, unit: str = "", note: str = "") -> dict:
+    """A requirement is the top of the chain: everything derived or driven follows from here."""
+    doc = active_document()
+    out = _req.set_requirement(doc, name, value, unit=unit, note=note)
+    return _checks._stamp(doc, {"requirement": name, **out})
+
+
+@registry.command(
+    "derive_requirement",
+    "Define a value computed from other requirements by an explicit relation",
+    writes=True,
+    params={"name": {"type": str, "required": True},
+            "expression": {"type": str, "required": True,
+                           "doc": "arithmetic over other requirement names, e.g. "
+                                  "'load * span / 1000'. Evaluated by a strict AST whitelist, "
+                                  "never Python eval"},
+            "unit": {"type": str, "default": ""},
+            "note": {"type": str, "default": ""}})
+def derive_requirement(name: str, expression: str, unit: str = "", note: str = "") -> dict:
+    doc = active_document()
+    out = _req.derive(doc, name, expression, unit=unit, note=note)
+    return _checks._stamp(doc, {"requirement": name, **out})
+
+
+@registry.command(
+    "drive_param",
+    "Bind a part's parameter to an expression over requirements, so geometry follows intent",
+    writes=True,
+    params={"part": {"type": str, "required": True},
+            "param": {"type": str, "required": True},
+            "expression": {"type": str, "required": True,
+                           "doc": "e.g. 'deck_span' or 'span + 2 * margin'"}})
+def drive_param(part: str, param: str, expression: str) -> dict:
+    """This is the one that makes the dependency real rather than remembered.
+
+    The bound parameter is tagged `derived`, never `stated`, so the property editor shows a
+    computed value as computed and names the expression it came from.
+    """
+    doc = active_document()
+    out = _req.drive(doc, part, param, expression)
+    return _checks._stamp(doc, out)
+
+
+@registry.command("release_param", "Stop a parameter following a requirement", writes=True,
+                  params={"part": {"type": str, "required": True},
+                          "param": {"type": str, "required": True}})
+def release_param(part: str, param: str) -> dict:
+    doc = active_document()
+    out = _req.release(doc, part, param)
+    return _checks._stamp(doc, out)
+
+
+@registry.command("get_requirements",
+                  "Every requirement, what it derives, what it drives, and whether the "
+                  "geometry has caught up")
+def get_requirements() -> dict:
+    doc = active_document()
+    is_stale, reasons = _req.stale(doc)
+    try:
+        values = _req.solve(doc)
+        error = None
+    except _req.RequirementError as exc:
+        values, error = {}, str(exc)
+    return _checks._stamp(doc, {
+        "requirements": _req.requirements(doc),
+        "values": values,
+        "driven": _req.driven(doc),
+        "targets": _req.targets(doc),
+        "stale": is_stale,
+        "stale_params": reasons,
+        "error": error,
+    })
+
+
+@registry.command(
+    "verify_requirements",
+    "Check every recorded target against a real analysis. Met or unmet, with the number",
+    params={"part": {"type": str, "required": True},
+            "fix": {"type": str, "required": True, "doc": "where the part is HELD"},
+            "load": {"type": str, "default": "", "doc": "where the force is applied"},
+            "force": {"type": list, "default": [0.0, 0.0, -100.0], "doc": "newtons"},
+            "cases": {"type": list, "default": None, "doc": "named load cases instead"},
+            "material": {"type": str, "default": "petg"},
+            "pitch": {"type": float, "default": 2.0},
+            "buckling": {"type": int, "default": 0},
+            "rules": {"type": dict, "default": None,
+                      "doc": "printability rules, if a target names one of their metrics"}})
+def verify_requirements(part: str, fix: str, load: str = "", force: list = None,
+                        cases: list = None, material: str = "petg", pitch: float = 2.0,
+                        buckling: int = 0, rules: dict = None) -> dict:
+    """A requirement nobody checks is a comment. This is what turns one into a verdict.
+
+    The load case is an argument for the same reason it is everywhere else here: choosing where
+    a part is held and pushed IS the engineering, and a tool that guesses produces something
+    that looks like verification.
+    """
+    doc = active_document()
+    out = _req.verify(doc, part=part, material=material, pitch=float(pitch), fix=fix,
+                      load=load,
+                      force=tuple(float(v) for v in (force or [0.0, 0.0, -100.0])),
+                      cases=cases, buckling=int(buckling), rules=rules)
+    return _checks._stamp(doc, out)
 
 
 @registry.command("undo", "Undo the last transaction", writes=False)

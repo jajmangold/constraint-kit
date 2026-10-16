@@ -2,6 +2,55 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-18 (later) — requirements drive parameters, and the design says whether it meets them (closes #29)
+
+The workbench had a Requirements button that opened a dialog saying *"Requirements are not
+implemented yet"*, which is the one kind of interface element worth less than nothing. More
+importantly it had the dependency running the wrong way: a parameter was a number somebody typed,
+and the reason for the number lived in their head. Change the belt tension and nothing moves;
+change a plate and nothing notices the belt tension it was sized for.
+
+- `[feat]` **`ckwb/requirements.py`** -- four things, in the order that matters:
+  - a **requirement** is a named value with a unit and a reason: `belt_tension = 764 N, measured
+    on the bench`
+  - a **derived** value is an expression over requirements: `moment = load * span / 1000`
+  - a parameter can be **driven** by an expression, which makes the dependency real -- edit the
+    requirement and the geometry follows, with the chain in the document rather than in memory
+  - a **target** on a measured quantity is checked against the physics and comes back met or
+    unmet, because a requirement nobody checks is a comment
+- `[feat]` **Provenance survives the whole way down.** A driven parameter is tagged `derived`,
+  never `stated`, and its note names the expression it came from -- so FreeCAD's own property
+  editor shows a computed value as computed. A design where a computed value and a chosen one
+  cannot be told apart is a design nobody can review, and `set_param` would have tagged it
+  `stated`, which is a lie the tool would be telling about its own work.
+- `[feat]` **The verdict is real, and the test proves it comes from the geometry**: the same
+  target against the same load on a 4 mm deck and a 16 mm one -- 15.4 mm missed, 2.39 mm met. If
+  the verdict were merely restating the requirement, both would agree.
+- `[feat]` **Six registered commands** (`set_requirement`, `derive_requirement`, `drive_param`,
+  `release_param`, `get_requirements`, `verify_requirements`), so an agent drives the same surface
+  the panel does. **And a RequirementsPanel** that shows the chain: requirements, what they
+  derive, what they drive, the targets, and what is out of date.
+- `[decision]` **Staleness is the state that matters in use**, and it gets its own row group and
+  its own summary line. An edited requirement that has not propagated leaves the design in two
+  states at once -- the number says one thing and the geometry another -- and a panel showing a
+  green tick for that would be actively misleading. `stale()` reports rather than quietly
+  correcting on read, because a getter with a side effect on the geometry is a trap.
+- `[feat]` **The expression evaluator is reused, not rewritten.** `constraint_kit.parameters.safe_eval`
+  is a strict AST whitelist that never calls Python `eval`, it is pure stdlib so it runs inside
+  FreeCAD unchanged, and it is already what the kernel trusts with an expression that came from a
+  language model. **Two independent guards** turn out to cover it: the free-name check rejects
+  `__import__` and `range` before anything is evaluated at all, and the whitelist rejects an
+  attribute access or a comprehension if one ever got past it. The test asserts the refusal and
+  deliberately not which guard fired.
+- `[fix]` A circular derivation is **named** rather than iterated to a limit: a pass that resolves
+  nothing new while work remains is a cycle, and the message lists the values involved. An
+  expression over an unknown name says which name, and lists the ones that do exist.
+- `[note]` A derived value whose inputs do not exist yet is a normal intermediate state -- somebody
+  is building the set up -- so `derive()` tolerates it and `solve()` is where it fails loudly.
+  Recording an intention and asking for an answer are different operations.
+
+**18 suites, 346 tests.**
+
 ## 2026-10-18 — manufacturing rules as constraints, not an audit (closes #18)
 
 The point of the issue title. An optimizer told to minimise mass subject to strength will return a

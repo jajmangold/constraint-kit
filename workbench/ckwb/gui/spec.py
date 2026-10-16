@@ -52,6 +52,15 @@ PALETTE_ONLY = (
     # Optimise from the palette for the same reason as analyse, doubled: it needs requirements,
     # and a requirement nobody typed is a requirement nobody chose.
     "optimise",
+    # The requirement set: the Requirements PANEL is the place to read it, and these are how an
+    # agent writes it. `set_requirement` and `drive_param` write, so they are not toolbar
+    # material -- a button that silently re-sizes three parts is not a button.
+    "set_requirement",
+    "derive_requirement",
+    "drive_param",
+    "release_param",
+    "get_requirements",
+    "verify_requirements",
 )
 
 #: Dockable panels. `area` is a Qt dock area name resolved in panels.py.
@@ -59,6 +68,7 @@ PANELS = (
     ("CK_DescribePanel", "Describe", "right"),
     ("CK_ChecksPanel", "Checks", "bottom"),
     ("CK_ProvenancePanel", "Provenance", "left"),
+    ("CK_RequirementsPanel", "Requirements", "left"),
 )
 
 MENU = "Constraint Kit"

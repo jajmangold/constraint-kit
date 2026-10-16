@@ -417,6 +417,72 @@ def test_the_settings_dialog_builds_without_touching_the_real_config():
     pump()
 
 
+# -------------------------------------------------------------------------- requirements
+
+@test
+def test_the_requirements_panel_shows_the_chain_and_flags_a_stale_one():
+    """The button used to say "not implemented yet", which is worth less than nothing.
+
+    What it has to show is the CHAIN: a requirement, what it derives, what it drives, and
+    whether the geometry has caught up. The last of those is the one that matters in use -- an
+    edited requirement that has not propagated leaves the design in two states at once, and a
+    panel that showed a green tick for that would be actively misleading.
+    """
+    from ckwb import document as D
+    from ckwb import requirements as R
+    from ckwb.gui import panels
+
+    doc = new_doc()
+    obj = D.make_part(doc, "plate", None, name="Deck")
+    doc.recompute()
+    R.set_requirement(doc, "deck_span", 150.0, unit="mm", note="the frame pitch")
+    R.derive(doc, "half_span", "deck_span / 2", unit="mm")
+    R.drive(doc, "Deck", "width", "deck_span")
+
+    panel = panels.show_panel("CK_RequirementsPanel").widget()
+    panel.refresh()
+    pump()
+
+    rows = {}
+    for i in range(panel.tree.topLevelItemCount()):
+        group = panel.tree.topLevelItem(i)
+        for j in range(group.childCount()):
+            child = group.child(j)
+            rows[child.text(0)] = (group.text(0), child.text(1), child.text(2))
+    assert "deck_span" in rows, sorted(rows)
+    assert "150" in rows["deck_span"][1], rows["deck_span"]
+    assert "half_span" in rows, sorted(rows)
+    assert "75" in rows["half_span"][1], rows["half_span"]
+    assert any("Deck" in k or "Deck" in v[2] for k, v in rows.items()), rows
+    assert "up to date" in panel.summary.text().lower(), panel.summary.text()
+
+    # now diverge the chain without applying it, and the panel must say so
+    R.set_requirement(doc, "deck_span", 300.0, apply=False)
+    panel.refresh()
+    pump()
+    assert "stale" in panel.summary.text().lower(), panel.summary.text()
+
+    # and the panel can put it right
+    panel.apply()
+    pump()
+    assert abs(obj.Width - 300.0) < 1e-9, obj.Width
+    assert "up to date" in panel.summary.text().lower(), panel.summary.text()
+
+
+@test
+def test_the_requirements_panel_is_calm_about_an_empty_document():
+    """The first thing anybody sees. It must explain itself rather than look broken."""
+    from ckwb.gui import panels
+
+    new_doc()
+    panel = panels.show_panel("CK_RequirementsPanel").widget()
+    panel.refresh()
+    pump()
+    assert panel.tree.topLevelItemCount() >= 0
+    text = panel.summary.text().lower()
+    assert "no requirement" in text or "nothing" in text, panel.summary.text()
+
+
 # ------------------------------------------------------------------------------- analyse
 
 @test
