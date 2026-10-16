@@ -83,6 +83,7 @@ constraint_kit/        # the package (bind-mounted into cadkit -> edit + restart
     sample.py          #   triangle soup -> occupancy by ray parity; dependency-free STL reader; OCC path
     convergence.py     #   Richardson extrapolation; refuses a non-monotone or non-geometric ladder
     printed.py         #   FDM anisotropy: traction on the LAYER PLANE (peel/shear), orientation ranking
+    topology.py        #   SIMP [#19]: an ORACLE (a density field), never a generator. No .shape()
     buckling.py        #   LINEAR BUCKLING [#1]: geometric stiffness + pure-numpy subspace iteration;
                        #   load FACTORS, mode localisation, honest 'does not buckle'
     tet.py             #   INDEPENDENT reference: gmsh quadratic tets -> CalculiX (both ship in FreeCAD)

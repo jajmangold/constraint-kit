@@ -45,6 +45,7 @@ CORE = (
     "constraint_kit/fea/convergence.py",
     "constraint_kit/fea/buckling.py",
     "constraint_kit/fea/printed.py",
+    "constraint_kit/fea/topology.py",
     "constraint_kit/fea/crosscheck.py",
     "constraint_kit/fea/tet.py",
     "constraint_kit/fea/__init__.py",

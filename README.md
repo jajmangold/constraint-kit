@@ -305,11 +305,11 @@ CK_GUI=1  tools/ci.sh              # ...plus a real FreeCAD window (~30 s)
 CK_LIVE=1 tools/ci.sh              # ...plus the configured model endpoint (costs money)
 ```
 
-**393 tests in six tiers, each gated on a different dependency**, plus 113 more in the container:
+**406 tests in six tiers, each gated on a different dependency**, plus 113 more in the container:
 
 | tier | needs | covers | gating |
 |---|---|---|---|
-| host | numpy + scipy | physics (24), convergence (16), load cases (16), optimiser (22), buckling (12), manufacturing (17), packaging (9), printed parts (15), workbench core (32) | always |
+| host | numpy + scipy | physics (24), convergence (16), load cases (16), optimiser (22), buckling (12), topology (13), manufacturing (17), packaging (9), printed parts (15), workbench core (32) | always |
 | cross-check | + `gmsh` and `ccx` | the voxel tier against an independent solver, statics and buckling (16) | if found |
 | freecad | `freecadcmd` | geometry (30), document (16), commands (43), planner (15), diagnosis (17), STEP import (14), freeform (17), motion (17), requirements (18), agent end-to-end (4) | if found |
 | gui | a real FreeCAD window | toolbar, four panels, the worker threads (19) | `CK_GUI=1` |

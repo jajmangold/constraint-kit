@@ -2,6 +2,70 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-19 — SIMP topology optimisation, an oracle and never a generator (closes #19)
+
+The issue title is the design. What comes out is a **density field**, and a density field is not a
+manufacturable design: it is a statement about where material earns its keep, which a human then
+redraws as parametric geometry. Everything else in this project runs the other way -- parameters
+in, verified geometry out, provenance on every number -- so `Topology` has no `.shape()` and no
+`.step()`, deliberately, and `suggestion()` returns prose.
+
+It is also why this is **separate from `constraint_kit.optimise`**, and that separation was argued
+in #17's closing before either existed. The parametric optimizer searches a parameter vector and
+answers with "thickness 17.2, depth 12, stiffness binds" -- something you can put on a drawing.
+This searches a density field and answers with a picture.
+
+- `[feat]` **`constraint_kit/fea/topology.py`** -- SIMP with sensitivity filtering and the
+  optimality-criterion update, 13 tests.
+- `[note]` **Nothing in `voxel.py` changed to support it.** `Model` has accepted `density_floor`
+  and `penal` since the day it was written, with the comment that they exist "so a topology
+  optimizer can reuse this assembly unchanged". They did.
+
+### What is verifiable, and it is more than it looks
+
+There is no closed form for the optimal topology of an arbitrary problem, so the tests assert
+properties of the **method** rather than a shape -- and every one of them is a real prediction:
+
+| property | measured |
+|---|---|
+| the optimised design beats the uniform one at the same volume | compliance **916.2 -> 108.7**, so **743% stiffer at the same mass** |
+| the volume constraint holds exactly, every iteration | to 1e-6, by bisecting the Lagrange multiplier |
+| a symmetric problem gives a symmetric answer | worst deviation **1.18e-12** |
+| a cantilever hollows its middle and keeps its flanges | flange density **0.679** against mid-depth **0.242** |
+| checkerboarding appears without the filter and is suppressed with it | **0.133 -> 0.066** |
+
+The flange result is the one worth pausing on. Bending stress goes as distance from the neutral
+axis, so material in the middle of the depth earns almost nothing -- and the optimiser rediscovers
+the I-section from the physics alone, having been told nothing about beams.
+
+### A measure that could not tell a defect from the thing you wanted
+
+- `[fix]` **The first `checkerboard_score` was wrong, and it cost a test.** It took the mean
+  difference between each element and its six neighbours -- large for a checkerboard, and *also*
+  large for a legitimately sharp solid/void boundary, which is exactly what a well-resolved
+  topology is made of. It scored a cleanly filtered field at 0.144 and an unfiltered one at
+  0.251, so the filter looked only mildly effective. The real measure multiplies the field by the
+  checkerboard parity `(-1)^(i+j+k)` and averages over 2x2x2 blocks: alternation survives the
+  parity and anything else cancels. A smooth ramp now scores under 0.1 however much it varies
+  overall, and a true checkerboard scores 1.0. **A measure that cannot distinguish a defect from
+  the thing you were trying to achieve is not a measure of the defect.**
+
+### Honesty, structurally rather than by convention
+
+- `[decision]` A test asserts `Topology` has **no `shape` and no `step` attribute**. If either
+  ever appears the doctrine has been inverted, and a grey blob emitted as geometry would be a
+  part nobody chose. `as_grid()` exists -- the one legitimate mechanical use, re-analysing the
+  suggestion so it can be measured rather than admired -- and `report()` names the
+  **intermediate** fraction explicitly, because intermediate density is not a material and that
+  fraction is the part a human still has to decide.
+- `[feat]` A final solve is run on the field being **returned**, so `compliance` is the compliance
+  of that field rather than of the one before the last update. Otherwise `as_grid()` and
+  `compliance` would disagree and a reader could not check one against the other.
+- `[fix]` `penal < 1` is refused: below 1 the interpolation *rewards* intermediate density instead
+  of punishing it, so the field never resolves and the method does the opposite of its job.
+
+**23 suites, 406 tests.**
+
 ## 2026-10-18 (finally) — cause attribution and ranked, re-verified repairs (closes #20)
 
 The validator already returned structure. What it did not return was a **cause** and a **fix**. A

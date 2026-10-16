@@ -80,6 +80,7 @@ python tests/test_convergence.py           # convergence    (16)
 python tests/test_cases.py                 # load cases     (16)
 python tests/test_optimise.py              # the optimizer  (22)
 python tests/test_buckling.py              # stability      (12)
+python tests/test_topology.py              # SIMP oracle    (13)
 python tests/test_manufacture.py           # printability   (17)
 python tests/test_packaging.py             # dep claims     (9)
 python tests/test_printed.py               # FDM anisotropy (15)
@@ -168,6 +169,14 @@ with a 2s model".
   a 120 mm part, with the composure of a 5 mm answer. `physics` now reports `linear_valid`. The
   criterion is deflection over SPAN, not over thickness — thickness was tried first and flagged a
   valid 4.5%-of-span answer, which is how a warning gets trained out of a reader.
+- **Topology optimisation is an ORACLE, not a generator.** `fea/topology` returns a density
+  field and a density field is not a design. There is a test asserting `Topology` has no `shape`
+  and no `step`; if either appears, the doctrine has been inverted. Redraw the field as
+  parametric geometry -- that is the whole point of having a parametric source of truth.
+- **A measure must distinguish the defect from the thing you wanted.** `checkerboard_score`
+  first used neighbour differences, which are large for a checkerboard AND for a legitimately
+  sharp solid/void boundary, so the filter looked ineffective. Multiplying by the parity
+  `(-1)^(i+j+k)` separates them.
 - **A repair is offered only after it RE-VERIFIES, and some causes have no repair.** An
   unknown generator is never substituted: `turbine_blade` is not a misspelling of `plate`, and a
   tool that made it one would build the wrong object and report success. The nearest-match

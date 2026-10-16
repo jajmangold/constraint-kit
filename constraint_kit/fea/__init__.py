@@ -23,6 +23,7 @@ from .convergence import Convergence, ConvergenceError, richardson
 from .hex8 import elasticity_matrix, hex8_b_centre, hex8_stiffness
 from .printed import InterlayerCheck, best_orientation, traction_on_plane
 from .sample import load_stl, occupancy_from_shape, occupancy_from_triangles
+from .topology import Topology, checkerboard_score, topology
 from .voxel import Grid, Model, Result, SolveFailure
 
 # `tet` and `crosscheck` are NOT imported here on purpose. They shell out to gmsh and CalculiX,
@@ -33,6 +34,7 @@ __all__ = [
     "Convergence",
     "ConvergenceError",
     "InterlayerCheck",
+    "Topology",
     "Grid",
     "Model",
     "Result",
@@ -45,5 +47,7 @@ __all__ = [
     "occupancy_from_shape",
     "richardson",
     "best_orientation",
+    "checkerboard_score",
+    "topology",
     "traction_on_plane",
 ]
