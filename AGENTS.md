@@ -147,6 +147,16 @@ with a 2s model".
 
 ## GOTCHAS THAT HAVE COST TIME
 
+- **A `Part::FeaturePython` needs `ViewObject.Proxy = 0` or it never draws.** With a data proxy
+  and no view proxy its DisplayMode enumeration is EMPTY, so it sits in the tree with a valid
+  shape and `Visibility = True` and renders nothing. `Visibility` is not the property to check --
+  it was True the whole time the viewport was empty; `isVisible()` asks the view provider what it
+  is actually showing, and `getEnumerationsOfProperty("DisplayMode")` shows why. It hides because
+  saving and reopening fixes it: FreeCAD attaches the view provider on restore, so geometry is
+  only invisible in the session that created it.
+- **Assert that geometry is DRAWN, not merely created.** The GUI suite built parts through the
+  panel and checked the document contained them for weeks without noticing none of them were
+  visible. "It exists" and "you can see it" are different claims.
 - **A deadline must be longer than the work, and it cannot do a progress indicator's job.**
   This number has been wrong in both directions. At 180 s a silent wait looked like a hung
   application, so it was cut to 60 s -- and then real completions, measured at 80 to 130 s on

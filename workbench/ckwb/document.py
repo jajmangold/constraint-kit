@@ -143,6 +143,27 @@ def make_part(doc, generator: str, params: ParamSet | None = None, name: str | N
                 entry[extra] = got
         meta[key] = entry
     _write_meta(obj, meta)
+
+    # MAKE IT ACTUALLY DRAW. A `Part::FeaturePython` that has a data proxy and no view proxy
+    # gets an EMPTY DisplayMode enumeration, so it sits in the tree with a perfectly good shape,
+    # `Visibility = True`, and nothing at all in the 3D view. Measured in a real GUI session:
+    #
+    #   native Part::Feature          mode='Flat Lines'  enum=4 modes  isVisible=True
+    #   Part::FeaturePython, as here  mode=None          enum=[]       isVisible=False
+    #   ...with ViewObject.Proxy = 0  mode='Flat Lines'  enum=4 modes  isVisible=True
+    #
+    # `Proxy = 0` is FreeCAD's sentinel for "attach the default C++ view provider"; a Python
+    # view-provider class works too but adds a class to maintain, and returning the four modes
+    # from `getDisplayModes` duplicates the enumeration to eight entries in the property editor.
+    #
+    # This hid for a long time because SAVING AND REOPENING the document fixes it -- on restore
+    # FreeCAD attaches the view provider properly -- so the geometry was only ever invisible in
+    # the session that created it, which is exactly the session where somebody is looking.
+    #
+    # `ViewObject` is None under freecadcmd, so this is a no-op headless.
+    view = getattr(obj, "ViewObject", None)
+    if view is not None:
+        view.Proxy = 0
     return obj
 
 

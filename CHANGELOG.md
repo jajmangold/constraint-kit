@@ -2,6 +2,50 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-16 (later still) — "everything is hidden": every part this workbench made was invisible in the session that made it
+
+Reported as three words, and it was exactly right. Six parts sat in the tree with valid shapes
+and `Visibility = True`, and the 3D view was empty.
+
+### The cause, measured in a real GUI session
+
+A `Part::FeaturePython` with a data proxy and **no view proxy** gets an **empty DisplayMode
+enumeration**. There is then no render mode selected, so nothing is drawn — while every property
+a person would think to check says the object is fine:
+
+| | DisplayMode | enumeration | `isVisible()` |
+|---|---|---|---|
+| native `Part::Feature` | `'Flat Lines'` | 4 modes | **True** |
+| `Part::FeaturePython`, as `make_part` built it | `None` | **empty** | **False** |
+| ...with `ViewObject.Proxy = 0` | `'Flat Lines'` | 4 modes | **True** |
+
+- `[fix]` **`make_part` now sets `ViewObject.Proxy = 0`**, FreeCAD's sentinel for "attach the
+  default C++ view provider". A Python view-provider class also works, but returning the four
+  modes from `getDisplayModes` **duplicates the enumeration to eight entries** in the property
+  editor, which is a wart for no gain. `ViewObject` is None under freecadcmd, so this is a no-op
+  headless.
+- `[note]` **`Visibility` is not the thing to check.** It was `True` the whole time the viewport
+  was empty, which is why this was confusing to look at: the property that sounds authoritative
+  is not the one that decides. `isVisible()` asks the view provider what it is really showing,
+  and `getEnumerationsOfProperty("DisplayMode")` shows the cause.
+
+### Why it survived this long
+
+- `[note]` **Saving and reopening the document fixes it.** On restore FreeCAD attaches the view
+  provider properly, so geometry was only ever invisible in the session that created it — which
+  is, of course, the session somebody is sitting in front of. Verified: an object built with no
+  view proxy reads `isVisible=False`, is saved, reopened, and reads `isVisible=True`.
+- `[test]` Two GUI tests, **mutation-checked**: with the fix disabled they fail with "the
+  DisplayMode enumeration is empty, so nothing will draw" and "built by the planner and not
+  drawn"; with it they pass. One covers `make_part` directly across four generators, the other
+  the path a person actually takes — describe, Build, look.
+
+  The existing GUI suite already built parts through the panel and asserted the document
+  contained them. It never asserted that any of it was **drawn**, which is precisely the gap
+  three words found.
+
+**25 suites, 498 tests.**
+
 ## 2026-10-16 (later) — the 60-second timeout was shorter than the work, and the error blamed the wrong thing
 
 A planner request died with *"accepted the connection but sent no response within 60s ... the

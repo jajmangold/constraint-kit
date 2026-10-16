@@ -535,6 +535,64 @@ def test_a_SUCCESSFUL_request_does_not_put_the_words_back():
 
 
 @test
+def test_a_built_part_is_ACTUALLY_DRAWN_and_not_merely_in_the_tree():
+    """The defect this test exists for: "everything is hidden".
+
+    A `Part::FeaturePython` with a data proxy and no view proxy gets an EMPTY DisplayMode
+    enumeration. It then sits in the tree with a valid shape and `Visibility = True`, and draws
+    nothing whatsoever. Measured in a real session, which is the only place it is visible at all:
+
+        native Part::Feature          mode='Flat Lines'  enum=4  isVisible=True
+        Part::FeaturePython, as was   mode=None          enum=[] isVisible=False
+
+    `Visibility` is therefore NOT the thing to assert -- it was True the whole time the viewport
+    was empty. `isVisible()` is what asks the view provider whether it is really showing
+    anything, and `getEnumerationsOfProperty` is what catches the cause.
+
+    It hid for a long time because saving and reopening the document fixes it: FreeCAD attaches
+    the view provider on restore, so geometry was only ever invisible in the session that made
+    it, which is the session somebody is sitting in front of.
+    """
+    doc = new_doc()
+    from ckwb import document as D
+
+    for generator in ("plate", "c_beam", "profile_rail", "ball_screw"):
+        obj = D.make_part(doc, generator, None, name=generator)
+    doc.recompute()
+
+    for obj in doc.Objects:
+        vo = obj.ViewObject
+        assert vo is not None, obj.Name
+        assert not obj.Shape.isNull(), (obj.Name, "no shape")
+        modes = vo.getEnumerationsOfProperty("DisplayMode")
+        assert modes, (obj.Name, "the DisplayMode enumeration is empty, so nothing will draw")
+        assert vo.DisplayMode in modes, (obj.Name, vo.DisplayMode, modes)
+        assert vo.Visibility is True, (obj.Name, "visibility")
+        assert vo.isVisible() is True, (
+            obj.Name, "in the tree with a shape and Visibility=True, and still not drawn")
+
+
+@test
+def test_a_part_built_through_the_PLANNER_is_drawn_too():
+    """The path a user actually takes, since that is where it was noticed."""
+    doc = new_doc()
+    panel = describe_panel(chat=FakeChat(GOOD_PLAN))
+    panel._prior = None
+    panel.transcript.clear()
+    panel.entry.setText("a 500 mm ball screw with a nut")
+    panel.submit()
+    wait_for(lambda: panel.build_btn.isEnabled(), 30.0, "the program")
+    panel.build()
+    wait_for(lambda: bool(doc.Objects), 30.0, "the build")
+
+    assert len(doc.Objects) >= 2, [o.Name for o in doc.Objects]
+    for obj in doc.Objects:
+        vo = obj.ViewObject
+        assert vo.isVisible() is True, (obj.Name, "built by the planner and not drawn")
+        assert vo.getEnumerationsOfProperty("DisplayMode"), (obj.Name, "empty enumeration")
+
+
+@test
 def test_the_settings_dialog_builds_without_touching_the_real_config():
     from ckwb.gui import panels
 
