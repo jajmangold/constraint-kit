@@ -399,6 +399,79 @@ def test_describe_reports_a_client_failure_as_a_sentence():
     assert panel.build_btn.isEnabled() is False
 
 
+@test
+def test_the_panel_ACCEPTS_the_offer_it_just_made():
+    """The exchange this panel was failing at, end to end through the real Qt widgets.
+
+    Recorded from a real session: the panel declined a linear-rail request, offered a nearest
+    thing it could build, the user typed "do it build that" -- and it declined again with *"the
+    request contains no part or assembly"*, because every submit built a fresh planner session
+    with no memory of the turn before. An offer you cannot accept is not an offer.
+
+    So: decline with an offer, then say yes, and check that what gets planned is the OFFER and
+    that the panel says so rather than substituting it silently.
+    """
+    doc = new_doc()
+    fake = FakeChat(
+        '{"unsupported": "there is no profile rail with a recirculating carriage",'
+        ' "nearest": "a 16 mm shaft 200 mm long in a bearing block"}',
+        '{"parts": [{"name": "Rod", "generator": "shaft",'
+        ' "params": {"diameter": {"value": 16.0, "from_request": true},'
+        '            "length": {"value": 200.0, "from_request": true}}}],'
+        ' "mates": [], "notes": "the offer, built"}')
+    panel = describe_panel(chat=fake)
+
+    panel.entry.setText("a 200mm linear rail on a c beam")
+    panel.submit()
+    wait_for(lambda: "will not build" in panel.transcript.toPlainText().lower(),
+             30.0, "the decline")
+    said = panel.transcript.toPlainText()
+    assert "bearing block" in said, said[-400:]
+    assert "do it" in said.lower(), ("the offer must say how to accept it", said[-400:])
+    assert not doc.Objects, [o.Name for o in doc.Objects]
+
+    panel.entry.setText("do it build that")
+    panel.submit()
+    wait_for(lambda: "taking that as yes" in panel.transcript.toPlainText().lower(),
+             30.0, "the acceptance")
+    wait_for(lambda: panel.build_btn.isEnabled(), 30.0, "the program")
+
+    said = panel.transcript.toPlainText()
+    # It must name what it is planning, because swapping the typed request for an earlier
+    # offer is exactly the kind of helpfulness that must never happen invisibly.
+    assert "16 mm shaft 200 mm long in a bearing block" in said, said[-500:]
+    assert "shaft" in panel.program.toPlainText(), panel.program.toPlainText()
+
+    panel.build()
+    wait_for(lambda: bool(doc.Objects), 30.0, "the build")
+    assert [o.Name for o in doc.Objects] == ["Rod"], [o.Name for o in doc.Objects]
+
+
+@test
+def test_a_bare_yes_with_nothing_offered_costs_no_model_call():
+    """It used to spend a request and come back confusing. Now it answers at once."""
+    new_doc()
+    calls = []
+
+    def counting(messages, **kw):
+        calls.append(messages)
+        return '{"unsupported": "nothing", "nearest": ""}'
+
+    panel = describe_panel(chat=counting)
+    # `show_panel` hands back the SAME panel every time, which is right for the application --
+    # one panel per session is what makes it a conversation -- and means a test that needs a
+    # fresh conversation has to say so. Without this the previous test's offer is still standing
+    # and "do it" correctly accepts it.
+    panel._prior = None
+    panel.transcript.clear()
+
+    panel.entry.setText("do it")
+    panel.submit()
+    text = panel.transcript.toPlainText().lower()
+    assert "nothing to agree to" in text, text[-400:]
+    assert calls == [], "a yes with no offer behind it must not reach the model"
+
+
 # ------------------------------------------------------------------------------- settings
 
 @test

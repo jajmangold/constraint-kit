@@ -147,6 +147,28 @@ with a 2s model".
 
 ## GOTCHAS THAT HAVE COST TIME
 
+- **An offer you cannot accept is not an offer.** The chat panel declined a request, offered a
+  nearest thing, and then answered "do it build that" with *"the request contains no part"* --
+  because every submit built a fresh planner session. A panel that looks like a conversation has
+  to be one: `planner.Prior` carries a turn forward, and a bare yes is matched against a closed
+  vocabulary rather than sent to the model, because accepting a one-word answer must not depend
+  on a network call. Substituting the offer for what they typed is then said out loud.
+- **"It placed them" is not "they fit".** A structurally perfect program -- every generator real,
+  every frame real, every mate in order -- drove two rods through a C-beam wall at 20,106 mm3
+  each, and nothing caught it, because validation checked the FORM of the program and never its
+  geometry. Solve the assembly and check overlapping VOLUME (not distance: a seated face and a
+  gear mesh both touch legally).
+- **A frame name must mean the same thing on every part.** `axis` is the centreline on `shaft`,
+  `ball_screw` and `c_beam`; `profile_rail` briefly had it at the base, and a live planner seated
+  the round parts correctly and floated the rail by applying the same reasoning. Consistency of
+  the vocabulary is what makes it usable by something that cannot see the geometry.
+- **A dimension that is not a parameter is one nothing downstream can reason about.** The
+  C-beam's channel size was hard-coded, and the planner said so and refused to put anything in
+  the channel rather than guess. The catalogue a planner sees is built from generator signatures;
+  publish the number instead of asking for a better guess.
+- **Envelope-grade parts are fine; envelopes passing as real parts are not.** `ball_bearing`,
+  `profile_rail` and `rail_carriage` all say in their first line what they do not model. That is
+  what makes composing a missing part from primitives honest rather than a plausible wrong part.
 - **A COUPLING is not a lower pair, and Gruebler punishes the confusion.** A gear mesh, a belt or
   a ballscrew nut is ONE equation between bodies already connected, so it removes exactly **1**
   degree of freedom whatever the dimension. Counting a belt as a joint "leaving one freedom"

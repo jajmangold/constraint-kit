@@ -2,6 +2,100 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-16 — a declined request, and the four things that made it impossible
+
+A real exchange in the workbench panel drove all of this. Asked for *"a 200mm linear rail with
+1605 ball screw and 16mm stainless linear rods, on a c beam aluminum extrusion"* the planner
+declined — correctly, and for three separate reasons — offered a nearest thing it could build,
+and then, told **"do it build that"**, declined again saying the request contained no part.
+
+Every one of those is now fixed, and the original request plans and builds on the first attempt
+against the live model with nothing interfering.
+
+### An offer you cannot accept is not an offer
+
+- `[fix]` **The chat panel looked like a conversation and was not one.** Every submit built a
+  fresh `PlanSession` with no memory, so the offer was made and forgotten in the same breath.
+  `planner.Prior` carries one turn forward, the panel keeps it, and `is_affirmative` recognises a
+  bare yes from a **closed vocabulary rather than a model call** — accepting a one-word answer
+  must not depend on a network round trip.
+- `[decision]` **A bare yes and a yes with instructions are different.** "do it" builds the
+  offer; "do it but make it 300 mm" goes to the model with the offer as context, because
+  substituting the offer there would throw away the only new information in it.
+- `[decision]` **The substitution is never silent.** The panel says *"Taking that as yes.
+  Planning what I offered: ..."*, because swapping the typed request for an earlier offer is
+  exactly the kind of helpfulness that must be visible.
+- `[fix]` A yes with nothing offered is answered **immediately and without a model call**; it
+  used to cost a round trip and come back as a confusing decline.
+- `[note]` The command and agent surfaces stay stateless, which is right: an agent has its own
+  context and can restate. A person typing into a panel cannot.
+
+### Nothing could be placed beside anything
+
+- `[feat]` **`mates.offset`** — align two frames, then displace by `(dx, dy, dz)` **in the target
+  frame's own axes**. `seat` and `align` both land the moving frame exactly ON the target, so the
+  screw and both rods came out collinear and the decline was right. Two parallel rods 60 mm apart
+  are two offset mates. The displacement is in the target's axes so a rail lying along world X
+  still offsets "30 mm to the side" with no trigonometry at the call site.
+- `[feat]` `solve()` takes an optional sixth options dict per mate, and refuses an option the
+  mate does not take rather than ignoring it. An `offset` mate with no offset, or an all-zero
+  one, is **refused as a mislabelled `align`** — that typo would silently stack the parts on one
+  axis, which is the exact failure the mate was added to fix.
+
+### There was no C-beam, and no profile rail
+
+- `[feat]` **`parts.c_beam`** — 80 × 40 with a 40 × 20 channel, the same stock numbers
+  `gear-cutter/machine.py` builds from, so a beam modelled in either place is the same beam.
+- `[feat]` **`parts.profile_rail` and `parts.rail_carriage`** — the thing a plain shaft is not.
+  Envelope-grade and declared as such, the same honesty `ball_bearing` already carries about
+  balls and races: the raceways and ball tracks cannot be expressed here, but the envelope, the
+  hole pitch, the carriage height and a real running `clearance` are what a layout and a clash
+  check consume. The carriage rides the full 160 mm of a 200 mm rail at its stated 0.3 mm
+  clearance, swept at 17 stations.
+- `[decision]` **`axis` means the CENTRELINE on every long part**, and that consistency is not
+  cosmetic. `profile_rail` first had `axis` at its base; a live planner seated the 16 mm rods
+  correctly at `dy = 20 + 8` and then applied the same reasoning to the rail, which floated. A
+  frame name that means one thing on four parts and another on the fifth is a trap.
+- `[fix]` **The channel's width and depth are parameters, not constants buried in the
+  generator.** Measured consequence of their being hidden: the planner said *"the catalogue does
+  not publish the channel's internal width/depth, so I did NOT put anything inside the
+  C-channel - guessing there would risk a failed interference check."* It was right to refuse,
+  and the fix was to publish the numbers rather than ask it to guess better. The catalogue is
+  built from these signatures, so a dimension that is not a parameter is one nothing downstream
+  can reason about.
+
+### "It placed them" is not "they fit"
+
+- `[fix]` **The planner emitted an assembly whose parts overlapped, and nothing caught it.**
+  Measured on the live model: a structurally perfect program — every generator real, every frame
+  real, every mate in order — that drove both 16 mm rods through the C-beam's channel wall,
+  **20,106 mm³ each**. Validation checked the FORM of the program and never its fit, so the first
+  anyone knew was looking at the result. `_validate` now SOLVES the assembly and reports
+  overlapping parts by name and volume, and the repair loop fixes it: the model moved the rods
+  clear on its second try and explained why.
+- `[decision]` **Volume, not distance.** A seated face touches and a gear pair at its exact
+  centre distance touches; both must stay legal. Material in the same place is what is illegal.
+- `[feat]` `Plan.problems` carries what the earlier attempts got wrong, because "repaired once"
+  without the reason tells a reviewer nothing.
+
+### A real hardware fact, found by the geometry
+
+- `[note]` **An SFU1605 flanged nut does not fit inside a C-beam channel.** The flange is 48 mm
+  across and the channel is 40 mm wide, so a screw running down the channel cannot carry its own
+  nut in there — 7,092 mm³ of it buried in the beam with the screw on the channel centreline,
+  where the screw belongs. It does not come right by shuffling the screw about inside the
+  channel.
+
+  The clearance limit is closed form, and the binding constraint is the **channel corner** rather
+  than the flange's full radius: the flange clears once its circle passes outside
+  `(±channel_w/2, -depth/2)`, so the axis must drop `sqrt(flange_r² - (channel_w/2)²)` below the
+  mouth — **13.27 mm**, not the 24 mm a whole-radius argument gives. Measured against the solids:
+  31.4 mm³ of overlap at −31, 10.2 at −32, 0.47 at −33, and **0.0000 at −33.27**, against a
+  prediction of −33.2665. The live model reached the same conclusion unprompted on its next run
+  ("its 48 mm flange would clash"), which is the nicest kind of agreement.
+
+**25 suites, 492 tests.** Geometry 30 → 42, motion 34 → 36, planner 15 → 33, Qt 19 → 21.
+
 ## 2026-10-19 (later still) — the machines themselves: gear-cutter parametric, and two defects it found (closes #6, #7)
 
 Phase 1's precondition, in the `gear-cutter` repository rather than this one, and the

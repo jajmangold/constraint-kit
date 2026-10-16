@@ -226,11 +226,18 @@ class DescribePanel(QtGui.QWidget):
         from .. import planner as _planner
 
         try:
-            self._session = _planner.PlanSession(text)
+            self._session = _planner.PlanSession(text, prior=getattr(self, "_prior", None))
         except Exception as exc:  # noqa: BLE001
             self._say("Constraint Kit", str(exc))
             return
         self._cfg = cfg
+        if self._session.accepted_offer:
+            # The exchange this exists for: a decline that offers a nearest thing, answered
+            # with a bare "do it". Say out loud what is being planned, because substituting a
+            # different request for the one they typed must never be invisible.
+            self._say("Constraint Kit",
+                      "Taking that as yes. Planning what I offered: <i>"
+                      + self._session.request + "</i>")
         self._say("Constraint Kit", f"Asking {cfg['planner_model']}...")
         self._ask()
 
@@ -282,11 +289,19 @@ class DescribePanel(QtGui.QWidget):
             self._say("Constraint Kit", f"I could not get a usable program: {payload}")
             return
 
+        from .. import planner as _planner
+
         plan = payload
+        # Remember this turn, so the next one can refer to it. Without this the panel looks
+        # like a conversation and is not one: an offer was made and forgotten in the same
+        # breath, and "do it" came back as "the request contains no part or assembly".
+        self._prior = _planner.prior_of(plan)
+
         if plan.declined:
             msg = f"<b>I will not build that.</b> {plan.reason}"
             if plan.nearest:
-                msg += f"<br><br>Nearest thing I can build: {plan.nearest}"
+                msg += (f"<br><br>Nearest thing I can build: {plan.nearest}"
+                        "<br><br><i>Say \u201cdo it\u201d and I will build that instead.</i>")
             self._say("Constraint Kit", msg)
             self.discard()
             return

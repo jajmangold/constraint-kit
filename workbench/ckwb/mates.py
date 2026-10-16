@@ -81,7 +81,35 @@ def align(target_placement: FreeCAD.Placement, target_frame: FreeCAD.Placement,
     return world.multiply(moving_frame.inverse())
 
 
-KINDS = {"seat": seat, "align": align}
+def offset(target_placement: FreeCAD.Placement, target_frame: FreeCAD.Placement,
+           moving_frame: FreeCAD.Placement, dx: float = 0.0, dy: float = 0.0,
+           dz: float = 0.0) -> FreeCAD.Placement:
+    """Align the two frames, then displace by (dx, dy, dz) **in the target frame's own axes**.
+
+    The mate for putting something BESIDE something else, which `seat` and `align` cannot do:
+    both land the moving frame exactly on the target frame, so a request like "a ball screw on
+    the centreline with a linear rod either side" had no representation at all and the planner
+    correctly refused it. Two parallel rods 60 mm apart are two offset mates.
+
+    The displacement is in the TARGET FRAME's coordinates, not the world's, which is the whole
+    point: a rail lying along world X has an `axis` frame whose +Z runs along it, so offsetting a
+    rod "30 mm to the side" is `dx=30` regardless of how the rail is turned. The caller does no
+    trigonometry, and a part offset from a rotated target stays where it was meant to be.
+
+    `align` is exactly this mate with a zero displacement, and is kept separate because naming
+    the intent matters: an `align` says two things share an axis, and an `offset` of zero says
+    somebody meant to type a number.
+    """
+    world = target_placement.multiply(target_frame)
+    shift = FreeCAD.Placement(FreeCAD.Vector(float(dx), float(dy), float(dz)),
+                              FreeCAD.Rotation())
+    return world.multiply(shift).multiply(moving_frame.inverse())
+
+
+KINDS = {"seat": seat, "align": align, "offset": offset}
+
+#: Mate kinds that need more than the three placements, and the options each accepts.
+KIND_OPTIONS = {"offset": ("dx", "dy", "dz")}
 
 
 def mesh_center_distance(module: float, teeth_a: int, teeth_b: int) -> float:
@@ -113,11 +141,20 @@ def solve(parts: dict, ground: str, mates: list) -> dict:
     placements = {ground: FreeCAD.Placement()}
 
     for i, spec in enumerate(mates):
-        if len(spec) != 5:
+        if len(spec) not in (5, 6):
             raise MateError(
-                f"mate {i} must be (kind, target_part, target_frame, moving_part, moving_frame), "
-                f"got {spec!r}")
-        kind, tgt, tgt_f, mov, mov_f = spec
+                f"mate {i} must be (kind, target_part, target_frame, moving_part, moving_frame) "
+                f"with an optional sixth options dict, got {spec!r}")
+        kind, tgt, tgt_f, mov, mov_f = spec[:5]
+        opts = spec[5] if len(spec) == 6 else {}
+        if not isinstance(opts, dict):
+            raise MateError(f"mate {i}: the options must be a dict, got {opts!r}")
+        allowed = KIND_OPTIONS.get(kind, ())
+        extra = sorted(set(opts) - set(allowed))
+        if extra:
+            raise MateError(
+                f"mate {i}: {kind!r} takes no option {', '.join(extra)}"
+                + (f"; it takes {', '.join(allowed)}" if allowed else ""))
         if kind not in KINDS:
             raise MateError(f"mate {i}: unknown kind {kind!r}; have {sorted(KINDS)}")
         for part in (tgt, mov):
@@ -140,7 +177,8 @@ def solve(parts: dict, ground: str, mates: list) -> dict:
             raise MateError(
                 f"mate {i}: {mov!r} has no frame {mov_f!r}; it has {sorted(frames_m)}")
 
-        placements[mov] = KINDS[kind](placements[tgt], frames_t[tgt_f], frames_m[mov_f])
+        placements[mov] = KINDS[kind](placements[tgt], frames_t[tgt_f], frames_m[mov_f],
+                                      **opts)
 
     unplaced = set(parts) - set(placements)
     if unplaced:

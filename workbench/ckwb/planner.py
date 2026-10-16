@@ -45,8 +45,9 @@ Reply with JSON only, in one of two shapes.
 To build something:
 {"parts": [{"name": "<CamelCase document name>", "generator": "<from the catalogue>",
             "params": {"<param>": {"value": <number or string>, "from_request": <bool>}}}],
- "mates": [{"kind": "seat|align", "target": "<part name>", "target_frame": "<frame>",
-            "moving": "<part name>", "moving_frame": "<frame>"}],
+ "mates": [{"kind": "seat|align|offset", "target": "<part name>", "target_frame": "<frame>",
+            "moving": "<part name>", "moving_frame": "<frame>",
+            "offset": {"dx": <mm>, "dy": <mm>, "dz": <mm>}}],
  "notes": "<anything the user should know, especially what you approximated>"}
 
 To decline, which is a perfectly good answer:
@@ -59,9 +60,20 @@ Rules that matter:
   correctly recorded as a guess.
 - Set "from_request": true ONLY when the user's words actually gave you that value. This is how
   the interface shows which numbers are theirs and which are yours. Do not claim their authority.
-- "seat" puts two faces in contact. "align" makes two frames share an axis. Mates are applied in
-  order and each one moves its "moving" part, so a part must already be placed before it can be
-  a "target". The first part listed is the grounded one.
+- "seat" puts two faces in contact. "align" makes two frames share an axis. "offset" aligns
+  them and then displaces by (dx, dy, dz) **in the target frame's own axes**, which is the only
+  way to put something BESIDE something else -- two parallel rods 60 mm apart are two offset
+  mates with dx of +30 and -30. Include the "offset" key for an offset mate and leave it out
+  otherwise; an offset of all zeros is an "align" and should be written as one.
+- An axis frame's +Z runs ALONG the part, so for a rod parallel to a beam, offset in dx/dy and
+  leave dz alone. Mating a long part to a FACE frame instead (whose +Z points out of the face)
+  lays it across the target rather than along it.
+- Mates are applied in order and each one moves its "moving" part, so a part must already be
+  placed before it can be a "target". The first part listed is the grounded one.
+- The assembly is SOLVED and checked for interference before you are believed. Two parts
+  occupying the same space is an error you will be asked to fix, so think about the sizes: a rod
+  offset to the edge of a 40 mm channel still has its own radius, and half of it ends up inside
+  the wall.
 - If the request needs something the catalogue cannot express, DECLINE and say precisely what is
   missing. A plausible wrong part is worse than no part. Do not substitute silently; if you
   approximate, say so in "notes".
@@ -85,6 +97,10 @@ class Plan:
     nearest: str = ""
     raw: str = ""
     attempts: int = 1
+    #: What was wrong with the earlier tries, when there were any. Carried on the plan rather
+    #: than left on the session because a plan that needed repairing should be able to say what
+    #: it got wrong -- "repaired once" without the reason tells a reviewer nothing.
+    problems: list = field(default_factory=list)
 
     def paramset(self, part_name: str) -> ParamSet:
         """The full ParamSet for one part: the model's values over the generator's defaults.
@@ -135,8 +151,15 @@ class Plan:
                 mark = "stated " if value.provenance == STATED else "guessed"
                 lines.append(f"      {mark}  {key} = {value.value}")
         for mate in self.mates:
-            lines.append(f"{mate['kind']}  {mate['target']}.{mate['target_frame']}"
-                         f"  <-  {mate['moving']}.{mate['moving_frame']}")
+            line = (f"{mate['kind']}  {mate['target']}.{mate['target_frame']}"
+                    f"  <-  {mate['moving']}.{mate['moving_frame']}")
+            shift = mate.get("offset") or {}
+            if shift:
+                # Shown in the program because a displacement is a decision, and a reviewer
+                # who cannot see it cannot review it.
+                line += "  by " + ", ".join(
+                    f"{k} {float(v):g}" for k, v in sorted(shift.items()))
+            lines.append(line)
         if self.notes:
             lines.append("")
             lines.append(self.notes)
@@ -175,8 +198,71 @@ def catalogue() -> dict:
     return out
 
 
-def _prompt(request: str, catalogue_json: str) -> list:
-    return [
+#: Bare agreement, and nothing else. This exists because of a real exchange: the planner
+#: declined a request, offered a nearest thing it *could* build, the user answered **"do it
+#: build that"** -- and the planner had no memory of its own offer, so it declined again with
+#: *"the request contains no part or assembly"*. An offer you cannot accept is not an offer.
+#:
+#: Deliberately a closed vocabulary rather than a model call: accepting a one-word yes must not
+#: depend on a network round trip or on the model's mood, and there is nothing to interpret.
+AFFIRMATIVES = {
+    "do it", "do that", "build it", "build that", "yes", "yes please", "yep", "yeah",
+    "ok", "okay", "ok do it", "okay do it", "go", "go ahead", "go on", "please",
+    "please do", "please do it", "sure", "sounds good", "that one", "the nearest",
+    "nearest", "do the nearest", "build the nearest", "accepted", "accept", "y",
+    "do it build that", "yes do it", "yes build it", "build", "make it", "make that",
+}
+
+#: Filler that does not change the meaning of a bare yes.
+_FILLER = ("please", "then", "thanks", "thank you", "ok", "okay", "just", "now")
+
+
+def is_affirmative(text: str) -> bool:
+    """True for a BARE yes, and false for a yes with new instructions in it.
+
+    The distinction is the whole value. "do it" means *build the thing you offered*; "do it but
+    make it 300 mm" is a different request and must go to the model with the offer as context,
+    not be silently replaced by the offer. So anything left over after stripping punctuation and
+    filler disqualifies it.
+    """
+    cleaned = " ".join(str(text or "").lower().replace("!", " ").replace(".", " ")
+                       .replace(",", " ").replace("?", " ").split())
+    if not cleaned:
+        return False
+    if cleaned in AFFIRMATIVES:
+        return True
+    words = cleaned.split()
+    while words and words[-1] in _FILLER:
+        words.pop()
+    while words and words[0] in _FILLER:
+        words.pop(0)
+    return " ".join(words) in AFFIRMATIVES
+
+
+@dataclass(frozen=True)
+class Prior:
+    """What happened on the previous turn, so this turn can refer to it.
+
+    The planner is otherwise stateless, and for the command and agent surfaces that is right --
+    an agent has its own context and can simply restate the whole request. A person typing into
+    a chat panel cannot be expected to, which is why the panel keeps one of these and passes it
+    along.
+    """
+
+    request: str = ""
+    declined: bool = False
+    reason: str = ""
+    nearest: str = ""
+    program: str = ""
+
+    @property
+    def has_offer(self) -> bool:
+        return bool(self.declined and self.nearest.strip())
+
+
+def _prompt(request: str, catalogue_json: str, prior: "Prior | None" = None,
+            accepted: bool = False) -> list:
+    messages = [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content":
             f"CATALOGUE (the only generators, parameters and frames that exist):\n"
@@ -184,6 +270,28 @@ def _prompt(request: str, catalogue_json: str) -> list:
             f"MATE KINDS: {sorted(_mates.KINDS)}\n\n"
             f"REQUEST: {request}"},
     ]
+    if prior is not None and (prior.request or prior.program or prior.reason):
+        lines = ["EARLIER IN THIS CONVERSATION, so that a follow-up makes sense."]
+        if prior.request:
+            lines.append(f"They asked: {prior.request}")
+        if prior.declined:
+            lines.append(f"You declined, because: {prior.reason}")
+            if prior.nearest:
+                lines.append(f"You offered instead: {prior.nearest}")
+        elif prior.program:
+            lines.append("You produced this program:")
+            lines.append(prior.program)
+        if accepted:
+            lines.append(
+                "THE REQUEST ABOVE IS THEM ACCEPTING THAT OFFER. Build the thing you offered. "
+                "Do not decline it again -- you have already said you can build it.")
+        else:
+            lines.append(
+                "The REQUEST above may be a change to that, or a new thing entirely. If it "
+                "plainly refers back ('make it longer', 'without the nut'), apply it to the "
+                "above. If it stands alone, ignore the above.")
+        messages.insert(1, {"role": "user", "content": "\n".join(lines)})
+    return messages
 
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.S)
@@ -206,6 +314,40 @@ def _parse(text: str) -> dict:
         except json.JSONDecodeError as exc:
             raise PlanError(f"the reply was not valid JSON: {exc}") from exc
     raise PlanError("the reply contained no JSON object")
+
+
+def _offset_errors(i: int, kind: str, raw) -> list:
+    """Check a mate's displacement. An offset mate without one is the mistake worth catching.
+
+    A missing offset silently becomes an `align`, so the program would claim to put two parts
+    side by side and then stack them on one axis -- which is exactly the failure this mate was
+    added to fix, reappearing as a typo.
+    """
+    allowed = _mates.KIND_OPTIONS.get(kind, ())
+    if not allowed:
+        if raw:
+            return [f"mate {i}: {kind!r} takes no offset; use kind \"offset\" to displace one"]
+        return []
+    if raw is None:
+        return [f"mate {i}: an \"offset\" mate needs an \"offset\" of "
+                f"{{{', '.join(allowed)}}}; without one it is an \"align\""]
+    if not isinstance(raw, dict):
+        return [f"mate {i}: \"offset\" must be an object of {{{', '.join(allowed)}}}, "
+                f"got {raw!r}"]
+    out = []
+    unknown = sorted(set(raw) - set(allowed))
+    if unknown:
+        out.append(f"mate {i}: offset has no {', '.join(unknown)}; it takes "
+                   f"{', '.join(allowed)}")
+    for key in sorted(set(raw) & set(allowed)):
+        try:
+            float(raw[key])
+        except (TypeError, ValueError):
+            out.append(f"mate {i}: offset {key} = {raw[key]!r} is not a distance")
+    if not out and not any(abs(float(raw.get(k, 0.0))) > 1e-12 for k in allowed):
+        out.append(f"mate {i}: this offset is all zeros, which is an \"align\" — say so, or "
+                   "give it a real displacement")
+    return out
 
 
 def _validate(raw: dict) -> list:
@@ -270,6 +412,8 @@ def _validate(raw: dict) -> list:
         kind = mate.get("kind")
         if kind not in _mates.KINDS:
             errors.append(f"mate {i}: no mate kind {kind!r}; have {sorted(_mates.KINDS)}")
+        else:
+            errors.extend(_offset_errors(i, kind, mate.get("offset")))
         for role in ("target", "moving"):
             if mate.get(role) not in built:
                 errors.append(
@@ -291,7 +435,83 @@ def _validate(raw: dict) -> list:
                     f"mate {i}: {mate['moving']!r} is already placed; a second mate on it is an "
                     "over-constraint")
             placed.add(mate.get("moving"))
+
+    # Only worth solving if the program is structurally sound; otherwise the solver would
+    # raise for a reason already in `errors` and say it worse.
+    if not errors:
+        errors.extend(_fit_errors(parts, raw.get("mates") or []))
     return errors
+
+
+#: Overlapping volume below this is contact rather than interference. Not zero, because a gear
+#: pair at its exact centre distance touches, a seated face touches, and OCCT puts a few cubic
+#: microns on both.
+FIT_TOL_MM3 = 1.0
+
+
+def _fit_errors(parts: list, mates: list) -> list:
+    """Solve the assembly and report parts that overlap. "It placed them" is not "they fit".
+
+    This exists because of a measured failure. Asked for a rail with a ball screw and two 16 mm
+    rods in a C-beam channel, the model produced a structurally perfect program -- every
+    generator real, every frame real, every mate in order -- that drove both rods straight
+    through the channel wall, 20,106 mm3 each. Nothing caught it, because validation checked
+    the FORM of the program and never its fit, so the first anyone knew was looking at it.
+
+    Volume rather than distance, deliberately: a seated face and a gear pair at its exact centre
+    distance both TOUCH, and must stay legal. Material in the same place is what is illegal.
+    """
+    import FreeCAD
+
+    specs, shapes = {}, {}
+    for entry in parts:
+        if not isinstance(entry, dict):
+            return []
+        name, generator = entry.get("name"), entry.get("generator")
+        values = {}
+        try:
+            for key, default in _parts.defaults_for(generator).items():
+                given = (entry.get("params") or {}).get(key)
+                values[key] = _coerce(given["value"], default) if given else default
+            shape, frames = _parts.build(generator, **values)
+        except Exception:  # noqa: BLE001 - already reported by the caller's own checks
+            return []
+        specs[name] = (shape, frames)
+        shapes[name] = shape
+
+    tuples = []
+    for mate in mates:
+        spec = [mate.get("kind"), mate.get("target"), mate.get("target_frame"),
+                mate.get("moving"), mate.get("moving_frame")]
+        shift = {k: float(v) for k, v in (mate.get("offset") or {}).items()
+                 if k in _mates.KIND_OPTIONS.get(mate.get("kind"), ())}
+        tuples.append(tuple(spec) + ((shift,) if shift else ()))
+
+    ground = parts[0].get("name") if parts else None
+    try:
+        places = _mates.solve(specs, ground, tuples)
+    except Exception as exc:  # noqa: BLE001
+        return [f"the mates do not solve: {exc}"]
+
+    placed = {}
+    for name, shape in shapes.items():
+        copy = shape.copy()
+        copy.Placement = places.get(name, FreeCAD.Placement())
+        placed[name] = copy
+
+    out = []
+    names = sorted(placed)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            try:
+                volume = placed[a].common(placed[b]).Volume
+            except Exception:  # noqa: BLE001 - a boolean that will not run is not a fit error
+                continue
+            if volume > FIT_TOL_MM3:
+                out.append(
+                    f"{a} and {b} occupy the same space: {volume:.1f} mm3 of overlap. Move one "
+                    "of them, or reconsider which frame it is mated to")
+    return out
 
 
 class PlanSession:
@@ -308,7 +528,7 @@ class PlanSession:
     One implementation, so the interactive path and the scripted path cannot diverge.
 
     Usage:
-        session = PlanSession(request)
+        session = PlanSession(request, prior=prior)
         while True:
             reply = chat(session.messages)        # slow; anywhere you like
             kind, payload = session.offer(reply)  # fast; must be the geometry thread
@@ -317,11 +537,33 @@ class PlanSession:
             # kind == "retry": loop, session.messages has been updated
     """
 
-    def __init__(self, request: str):
+    def __init__(self, request: str, prior: "Prior | None" = None):
         if not request or not request.strip():
             raise PlanError("nothing was asked")
+        self.asked = request
+        self.prior = prior
+        self.accepted_offer = False
+
+        #: A bare yes after an offer becomes a request for the offer itself. Resolved HERE,
+        #: before any network call, so accepting an offer cannot fail for a reason the user
+        #: has no way to understand.
+        if is_affirmative(request):
+            if prior is not None and prior.has_offer:
+                request = prior.nearest
+                self.accepted_offer = True
+            elif prior is not None and not prior.declined and prior.program:
+                raise PlanError(
+                    "that is already built, or waiting on the Build button -- there is no "
+                    "offer to accept. Say what to change, or describe something new.")
+            else:
+                raise PlanError(
+                    "there is nothing to agree to yet. I have not offered anything I could "
+                    "build, so say what you want and I will either plan it or tell you "
+                    "precisely what is missing.")
+
         self.request = request
-        self.messages = _prompt(request, json.dumps(catalogue(), sort_keys=True))
+        self.messages = _prompt(request, json.dumps(catalogue(), sort_keys=True),
+                                prior=prior, accepted=self.accepted_offer)
         self.attempt = 0
         self.problems: list[str] = []
 
@@ -356,7 +598,7 @@ class PlanSession:
             return "plan", Plan(request=self.request, parts=raw["parts"],
                                 mates=raw.get("mates") or [],
                                 notes=str(raw.get("notes") or ""), raw=reply,
-                                attempts=self.attempt)
+                                attempts=self.attempt, problems=list(self.problems))
 
         # A DETERMINISTIC REPAIR FIRST, and only then the model (issue #20).
         #
@@ -386,7 +628,8 @@ class PlanSession:
                 "re-validated before being offered." % fixed_note)
             return "plan", Plan(request=self.request, parts=mended.fixed["parts"],
                                 mates=mended.fixed.get("mates") or [],
-                                notes=notes, raw=reply, attempts=self.attempt)
+                                notes=notes, raw=reply, attempts=self.attempt,
+                                problems=list(self.problems))
 
         self.problems.extend(errors)
         if last:
@@ -400,12 +643,17 @@ class PlanSession:
         return "retry", None
 
 
-def plan(request: str, *, chat=None, base_url: str = "", api_key: str = "",
+def plan(request: str, *, prior=None, chat=None, base_url: str = "", api_key: str = "",
          model: str = "") -> Plan:
     """Ask the model for a program, validate it, and repair once if needed.
 
     `chat` is injectable so the whole path above the network is testable; left unset, the real
     OpenAI-compatible client is used.
+
+    `prior` is the previous turn (a `Prior`), which makes a follow-up mean something: a bare
+    "do it" after a declined offer builds the offer, and "make it longer" refers to the last
+    program. Left unset the planner is stateless, which is right for the command and agent
+    surfaces -- an agent has its own context and can restate.
     """
     if chat is None:
         from .llm import chat as real_chat
@@ -413,7 +661,7 @@ def plan(request: str, *, chat=None, base_url: str = "", api_key: str = "",
         def chat(messages, **kw):  # noqa: A001 - deliberately shadows the parameter
             return real_chat(messages, base_url=base_url, api_key=api_key, model=model, **kw)
 
-    session = PlanSession(request)
+    session = PlanSession(request, prior=prior)
     for _ in range(MAX_ATTEMPTS):
         kind, payload = session.offer(chat(session.messages))
         if kind == "plan":
@@ -421,6 +669,14 @@ def plan(request: str, *, chat=None, base_url: str = "", api_key: str = "",
         if kind == "error":
             raise PlanError(payload)
     raise PlanError("unreachable")  # pragma: no cover
+
+
+def prior_of(a_plan: Plan) -> Prior:
+    """The `Prior` a finished plan leaves behind, for the next turn to refer to."""
+    if a_plan.declined:
+        return Prior(request=a_plan.request, declined=True, reason=a_plan.reason,
+                     nearest=a_plan.nearest)
+    return Prior(request=a_plan.request, declined=False, program=a_plan.render())
 
 
 def build(a_plan: Plan, doc=None) -> list:
@@ -456,7 +712,9 @@ def build(a_plan: Plan, doc=None) -> list:
                              **_doc.paramset_of(target).values())
         _, mf = _parts.build(getattr(moving, _doc.GENERATOR_PROP),
                              **_doc.paramset_of(moving).values())
+        opts = {k: float(v) for k, v in (mate.get("offset") or {}).items()
+                if k in _mates.KIND_OPTIONS.get(mate["kind"], ())}
         moving.Placement = _mates.KINDS[mate["kind"]](
-            target.Placement, tf[mate["target_frame"]], mf[mate["moving_frame"]])
+            target.Placement, tf[mate["target_frame"]], mf[mate["moving_frame"]], **opts)
     doc.recompute()
     return made

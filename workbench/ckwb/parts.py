@@ -720,6 +720,182 @@ def gear_rack(module: float = 2.0, teeth: int = 12, width: float = 20.0,
         "front": frame((length / 2.0, 0.0, width), (0, 0, 1)),
     }
 
+
+def c_beam(length: float = 200.0, width: float = 80.0, depth: float = 40.0,
+           channel_w: float = 40.0, channel_d: float = 20.0):
+    """OpenBuilds-style C-beam: 80 x 40 section running along +Z from z=0, channel facing -Y.
+
+    The section `extrusion_2020` could not express, and the reason a linear-rail request had to
+    be declined: a C-beam is 80 wide and 40 deep with a 40 x 20 channel down one long face, and
+    the whole point of it is that the channel carries a screw or a rail while the flat opposite
+    face takes the load. A 20 x 20 V-slot has neither.
+
+    The defaults are Josh's actual stock, and the same numbers `gear-cutter`'s `machine.py`
+    builds its frames from (CB_W 80, CB_D 40, CH_W 40, CH_D 20), so a part modelled here and a
+    beam modelled there are the same beam.
+
+    **The channel's own width and depth are PARAMETERS, not constants buried in here**, and that
+    is because of a measured consequence of their being hidden: asked to put a ball screw down
+    the channel, the planner answered *"the catalogue does not publish the channel's internal
+    width/depth, so I did NOT put anything inside the C-channel - guessing there would risk a
+    failed interference check"*. It was right to refuse, and the fix was to publish the numbers
+    rather than to ask it to guess better. The catalogue a planner sees is built from these
+    signatures, so a dimension that is not a parameter is a dimension nothing downstream can
+    reason about.
+
+    Credible rather than vendor-exact: the V-slots themselves are not cut, so the cross-section
+    comes out heavier than real stock. Use a vendor STEP file when slot geometry matters.
+
+    Frames, and which to mate to:
+      `axis`     centreline of the whole section at z=0, +Z along the length. For a part that
+                 runs the full length of the beam.
+      `channel`  the channel FLOOR, centred, +Z still along the length so an `offset` mate
+                 displaces across the channel rather than along it. This is where a ball screw
+                 or a rail goes.
+      `top`      the flat outer face opposite the channel, normal outward. For seating a plate.
+      `side_x+` / `side_x-`  the two 40 mm faces.
+      `end` / `end_near`     the cut ends, for butting beams.
+    """
+    _require_positive(length=length, width=width, depth=depth,
+                      channel_w=channel_w, channel_d=channel_d)
+    if channel_w >= width:
+        raise ValueError(
+            f"a {channel_w} mm channel in a {width} mm section leaves no side walls")
+    if channel_d >= depth:
+        raise ValueError(
+            f"a {channel_d} mm deep channel cuts straight through a {depth} mm section")
+    w, d, ch_w, ch_d = width, depth, channel_w, channel_d
+    shape = Part.makeBox(w, d, length, V(-w / 2.0, -d / 2.0, 0.0))
+    # The channel runs the FULL length, and it opens on -Y. Cutting a window instead of a
+    # channel is a bug that shipped in gear-cutter's first beam model: every upright was wrong.
+    shape = shape.cut(Part.makeBox(ch_w, ch_d, length + 2.0,
+                                   V(-ch_w / 2.0, -d / 2.0, -1.0)))
+    half_w, half_d = w / 2.0, d / 2.0
+    return shape, {
+        "axis": frame((0, 0, 0), (0, 0, 1)),
+        # +Z along the length, so `offset` moves across the channel in dx/dy and along the beam
+        # in dz -- the same convention as every other axis frame here.
+        "channel": frame((0, -half_d + ch_d, 0), (0, 0, 1)),
+        "top": frame((0, half_d, length / 2.0), (0, 1, 0)),
+        "side_x+": frame((half_w, 0, length / 2.0), (1, 0, 0)),
+        "side_x-": frame((-half_w, 0, length / 2.0), (-1, 0, 0)),
+        "end": frame((0, 0, length), (0, 0, 1)),
+        "end_near": frame((0, 0, 0), (0, 0, -1)),
+    }
+
+
+def profile_rail(width: float = 15.0, height: float = 15.0, length: float = 200.0,
+                 hole_d: float = 4.5, hole_pitch: float = 60.0):
+    """Profiled linear rail as an ENVELOPE, running along +Z. The thing a plain shaft is not.
+
+    **The raceways are not modelled, and that is the whole declaration.** A real profile rail's
+    function lives in two precision-ground gothic-arch grooves down its flanks, and nothing in
+    this catalogue can express them. What IS modelled is the envelope, the counterbored mounting
+    holes and the mass -- which is what a layout, a carriage height, a clearance and an
+    interference check actually consume.
+
+    So this is the same grade of part as `ball_bearing`, which says the same thing about balls
+    and races, and it must never be mistaken for the real profile: it will not tell you a preload
+    class, a rated load, or whether a carriage fits. Use a vendor STEP file for any of that.
+
+    Dimensions are a credible generic rather than a specific vendor's: 15 x 15 is close to MGN15
+    / HGR15 territory, and the defaults are parameters precisely so a measured rail replaces
+    them. Mounting holes are a single row on the centreline at `hole_pitch`, which is how these
+    are actually supplied.
+
+    Frames:
+      `axis`   the rail's own CENTRELINE, +Z along the length. Mate a carriage to this.
+      `top`    the carriage-side face, normal outward, for measuring a stack-up from.
+      `base`   the mounting face, normal outward -- what bolts to the beam.
+      `end` / `end_near`   the cut ends.
+
+    `axis` is the centreline and not the base, which looks like a detail and is not: every other
+    long part here -- `shaft`, `ball_screw`, `c_beam` -- puts `axis` on its centreline, and a
+    frame name that means one thing on four parts and something else on the fifth is a trap. It
+    caught a live planner immediately: told to seat the rail on a face at y=20 it offset by 28,
+    reasoning "radius 8 on a face at 20" exactly as it had for the 16 mm rods, and the rail
+    floated. Use `base` to seat the rail on something.
+    """
+    _require_positive(width=width, height=height, length=length)
+    if hole_d >= width:
+        raise ValueError(f"hole_d={hole_d} will not fit across a {width} mm rail")
+    # Length on +Z, like every other long part here, and centred across its width and height
+    # so the `axis` frame is the rail's own centreline.
+    shape = Part.makeBox(width, height, length, V(-width / 2.0, -height / 2.0, 0.0))
+    if hole_d > 0.0 and hole_pitch > 0.0:
+        n = max(int(length // hole_pitch), 1)
+        first = (length - (n - 1) * hole_pitch) / 2.0
+        for i in range(n):
+            z = first + i * hole_pitch
+            shape = shape.cut(Part.makeCylinder(hole_d / 2.0, height + 2.0,
+                                                V(0, -height / 2.0 - 1.0, z),
+                                                FreeCAD.Vector(0, 1, 0)))
+    half_h = height / 2.0
+    return shape, {
+        "axis": frame((0, 0, 0), (0, 0, 1)),
+        "top": frame((0, half_h, length / 2.0), (0, 1, 0)),
+        "base": frame((0, -half_h, length / 2.0), (0, -1, 0)),
+        "end": frame((0, 0, length), (0, 0, 1)),
+        "end_near": frame((0, 0, 0), (0, 0, -1)),
+    }
+
+
+def rail_carriage(rail_width: float = 15.0, rail_height: float = 15.0, length: float = 40.0,
+                  width: float = 34.0, height: float = 24.0, clearance: float = 0.3,
+                  bolt_d: float = 4.5, bolt_dx: float = 26.0, bolt_dz: float = 26.0):
+    """The block that rides a `profile_rail`: an ENVELOPE that straddles it, running along +Z.
+
+    Composed from exactly what this catalogue has -- a box with a channel cut in it -- which is
+    the honest answer to "surely it is made of parts you already have". The recirculating ball
+    tracks and end caps are not modelled and cannot be; what is modelled is the block that
+    occupies space above the rail, its mounting holes, and a channel with real `clearance` so
+    that a clash check between carriage and rail MEANS something. Mate it with `align` from the
+    rail's `axis` to this part's `rail` frame, then drive it with `motion.slide`.
+
+    `height` is measured from the rail's own mounting face, so the `top` frame is the real
+    carriage height a gantry plate would sit at -- the number a stack-up needs and the one that
+    is easiest to get wrong by a rail height.
+    """
+    _require_positive(rail_width=rail_width, rail_height=rail_height, length=length,
+                      width=width, height=height)
+    if width <= rail_width:
+        raise ValueError(
+            f"a carriage {width} wide cannot straddle a {rail_width} rail; it has to wrap it")
+    if height <= rail_height:
+        raise ValueError(
+            f"a carriage {height} tall cannot clear a {rail_height} rail it has to sit over")
+    if clearance < 0.0:
+        raise ValueError(f"clearance must not be negative, got {clearance}")
+
+    # The block sits over the rail: its underside is the rail's mounting face.
+    body = Part.makeBox(width, height, length, V(-width / 2.0, -rail_height / 2.0, 0.0))
+    slot_w = rail_width + 2.0 * clearance
+    slot_h = rail_height + clearance
+    body = body.cut(Part.makeBox(slot_w, slot_h, length + 2.0,
+                                 V(-slot_w / 2.0, -rail_height / 2.0, -1.0)))
+    if bolt_d > 0.0:
+        top_y = -rail_height / 2.0 + height
+        for sx in (-1.0, 1.0):
+            for sz in (-1.0, 1.0):
+                body = body.cut(Part.makeCylinder(
+                    bolt_d / 2.0, height,
+                    V(sx * bolt_dx / 2.0, top_y + 1.0, length / 2.0 + sz * bolt_dz / 2.0),
+                    FreeCAD.Vector(0, -1, 0)))
+    if len(body.Solids) != 1:
+        raise ValueError(
+            f"this carriage came out as {len(body.Solids)} solids; the bolt holes or the rail "
+            "channel have cut it in two")
+    top_y = -rail_height / 2.0 + height
+    return body, {
+        # The frame that goes onto the rail's `axis`: the rail's own centreline as seen from
+        # this block, so an `align` drops the carriage's channel over the rail.
+        "rail": frame((0, 0, 0), (0, 0, 1)),
+        "top": frame((0, top_y, length / 2.0), (0, 1, 0)),
+        "centre": frame((0, top_y, length / 2.0), (0, 0, 1)),
+        "end": frame((0, 0, length), (0, 0, 1)),
+        "end_near": frame((0, 0, 0), (0, 0, -1)),
+    }
+
 PARTS = {
     "plate": plate,
     "spacer": spacer,
@@ -728,6 +904,9 @@ PARTS = {
     "spur_gear": spur_gear,
     "gear_rack": gear_rack,
     "extrusion_2020": extrusion_2020,
+    "c_beam": c_beam,
+    "profile_rail": profile_rail,
+    "rail_carriage": rail_carriage,
     "ball_bearing": ball_bearing,
     "screw": screw,
     "ball_screw": ball_screw,

@@ -695,6 +695,48 @@ def test_a_rack_sweep_without_the_pinion_size_is_refused_by_name():
     raise AssertionError("a rack sweep needs the pinion and rack sizes")
 
 
+@test
+def test_a_CARRIAGE_RIDES_THE_FULL_LENGTH_of_its_rail_without_touching_it():
+    """What makes a linear rail a linear rail rather than a block sitting on a bar.
+
+    Swept, not checked at the ends, because a static check at either end of a travel passes a
+    mechanism that binds in the middle -- and the travel limit is checked too, because a
+    carriage driven off the end of its rail touches nothing at all and so reads as the cleanest
+    station in the sweep.
+    """
+    doc = new_doc()
+    rail = D.make_part(doc, "profile_rail", None, name="Rail")
+    rail.Length = 200.0
+    car = D.make_part(doc, "rail_carriage", None, name="Carriage")
+    doc.recompute()
+
+    res = registry.call("sweep", moving="Carriage", target="Rail", target_frame="axis",
+                        moving_frame="rail", start=0.0, stop=160.0, stations=17)
+    assert res["ok"] is True, res
+    assert res["clash_stations"] == [], res["clashes"][:2]
+    assert res["off_support"] == [], res["off_support"]
+    # the stated running clearance, held at every station of the travel
+    assert abs(res["min_gap_mm"] - 0.3) < 1e-3, res["min_gap_mm"]
+    # a 200 mm rail and a 40 mm carriage is 160 mm of travel, and the limits say so
+    assert abs(res["travel_limits"]["max_mm"] - 160.0) < 1e-6, res["travel_limits"]
+    assert abs(res["travel_limits"]["usable_mm"] - 160.0) < 1e-6, res["travel_limits"]
+
+
+@test
+def test_driving_the_carriage_PAST_the_end_of_the_rail_fails_the_sweep():
+    doc = new_doc()
+    rail = D.make_part(doc, "profile_rail", None, name="Rail")
+    rail.Length = 200.0
+    D.make_part(doc, "rail_carriage", None, name="Carriage")
+    doc.recompute()
+    res = registry.call("sweep", moving="Carriage", target="Rail", target_frame="axis",
+                        moving_frame="rail", start=0.0, stop=260.0, stations=14)
+    assert res["ok"] is False, res
+    assert res["clash_stations"] == [], ("it hits nothing out there; that is the point", res)
+    assert res["off_support_stations"], res
+    assert min(res["off_support_stations"]) > 160.0, res["off_support_stations"]
+
+
 def main():
     passed, failed = 0, []
     for fn in TESTS:
