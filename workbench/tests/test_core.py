@@ -436,15 +436,37 @@ def test_an_answer_lost_to_reasoning_is_diagnosed_rather_than_returned_empty():
 
 
 @test
-def test_the_socket_timeout_is_short_enough_to_notice():
-    """urllib's timeout is per read, not a total deadline, so it must not be a UI-freezing value.
+def test_the_deadline_fits_the_WORK_and_the_wait_is_made_legible_instead():
+    """This number has now been wrong in both directions, so here is the whole argument.
 
-    A real endpoint answered /models in 0.5 s and then never answered a completion at all; with
-    the original 180 s this looked exactly like a hung application.
+    It began at 180 s. A real endpoint answered /models in 0.5 s and then never answered a
+    completion, and with no sign of life the panel "looked exactly like a hung application" --
+    so the deadline was cut to 60 s. Then real completions, measured at 80 to 130 s on this
+    project's own prompt, started failing: a 60 s deadline shorter than the work turns success
+    into failure.
+
+    Both observations were correct and the conclusion was wrong. A deadline cannot do a
+    progress indicator's job. So the deadline fits the work, and `DescribePanel` counts the
+    seconds out loud with a Stop waiting button beside them -- which is what actually
+    distinguishes a slow model from a hung application.
     """
     from ckwb import llm
 
-    assert llm.DEFAULT_TIMEOUT <= 90.0, llm.DEFAULT_TIMEOUT
+    assert llm.DEFAULT_TIMEOUT >= 150.0, (
+        "shorter than the measured work turns a success into a failure", llm.DEFAULT_TIMEOUT)
+    assert llm.DEFAULT_TIMEOUT <= 300.0, (
+        "and it still has to end", llm.DEFAULT_TIMEOUT)
+    # And it bounds SILENCE, not elapsed time: urllib's timeout is per socket read. Measured --
+    # a plan taking 263 s end to end completed under a 180 s timeout because the stream never
+    # went quiet that long. Worth knowing before anyone "fixes" the number again.
+    assert "per socket read" in open(
+        os.path.join(_WB, "ckwb", "llm.py"), encoding="utf-8").read(), (
+        "record what the timeout actually measures")
+
+    # The other half of the argument, asserted rather than promised: the panel reports the wait.
+    source = open(os.path.join(_WB, "ckwb", "gui", "panels.py")).read()
+    assert "waiting_label" in source and "_ticker" in source, (
+        "a long deadline needs a visible wait beside it")
 
 
 # ------------------------------------------------------------------- the FreeCAD entry points
@@ -532,6 +554,190 @@ def test_the_toolbar_spec_has_no_qt_import():
         body = fh.read()
     for forbidden in ("import FreeCADGui", "from PySide", "import PySide"):
         assert forbidden not in body, f"spec.py must not {forbidden}; it is the testable layer"
+
+
+def _fake_reply(text="ok"):
+    class Reply:
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    return Reply()
+
+
+@test
+def test_the_deadline_is_long_enough_for_a_completion_that_actually_takes_two_minutes():
+    """The measurement that matters, recorded so the number is not quietly tightened again.
+
+    Measured 2026-10-16 against deepseek-flash on this project's planner prompt: 79.8 s and
+    94.2 s plain, 129.9 s in json_object mode, all three SUCCEEDING. The 60 s this used to allow
+    was simply shorter than the work.
+    """
+    from ckwb import llm
+
+    assert llm.DEFAULT_TIMEOUT >= 150.0, (
+        "a measured 130 s completion needs real headroom", llm.DEFAULT_TIMEOUT)
+    assert not hasattr(llm, "FIRST_TIMEOUT"), (
+        "a short first attempt was tried here and measured as harmful: a request that would "
+        "have finished at ~85 s failed at 81 s, having never had a long enough deadline")
+
+
+@test
+def test_a_TIMEOUT_is_not_retried_and_says_the_model_is_slow_rather_than_broken():
+    """Reaching the deadline means slower than the deadline, not "cannot serve completions".
+
+    The old message blamed the account. The account was serving completions perfectly well --
+    a max_tokens=16 probe to the same endpoint answered in 1.1 s throughout -- just not inside
+    60 s. Retrying would make somebody wait twice as long for the same answer.
+    """
+    import urllib.request
+
+    from ckwb import llm
+
+    real = urllib.request.urlopen
+    tries = []
+
+    def too_slow(req, timeout=None):
+        tries.append(timeout)
+        raise TimeoutError("read timed out")
+
+    urllib.request.urlopen = too_slow
+    try:
+        llm.chat([{"role": "user", "content": "hi"}], base_url="http://fake", model="slowmodel")
+    except llm.LLMError as exc:
+        text = str(exc)
+        assert len(tries) == 1, ("a timeout must not be retried", tries)
+        assert tries[0] == llm.DEFAULT_TIMEOUT, tries
+        assert "sent nothing at all" in text, text
+        assert "silence rather than slowness" in text, (
+            "the deadline is per read, so it bounds silence; say so", text)
+        assert "one to two minutes" in text, ("say what normal looks like", text)
+        assert "slowmodel" in text, ("name the model", text)
+        assert "cannot" not in text.split("If it never answers")[0], (
+            "do not blame the account for a slow model", text)
+    else:
+        raise AssertionError("a timeout must raise")
+    finally:
+        urllib.request.urlopen = real
+
+
+@test
+def test_a_DROPPED_reply_is_retried_once_because_that_one_really_is_transient():
+    """Observed: `IncompleteRead(1 bytes read)` after 60 s, having started to answer.
+
+    A partial reply proves the endpoint and key work, so it is the transport that failed and the
+    second attempt usually lands. It was also uncaught until it was seen happening, so it
+    reached the user as a bare exception rather than as a sentence.
+    """
+    import http.client
+    import urllib.request
+
+    from ckwb import llm
+
+    real = urllib.request.urlopen
+    tries = []
+
+    def drop_then_answer(req, timeout=None):
+        tries.append(timeout)
+        if len(tries) == 1:
+            raise http.client.IncompleteRead(b"x")
+        return _fake_reply("recovered")
+
+    urllib.request.urlopen = drop_then_answer
+    try:
+        got = llm.chat([{"role": "user", "content": "hi"}], base_url="http://fake", model="m")
+    finally:
+        urllib.request.urlopen = real
+    assert got == "recovered", got
+    assert len(tries) == 2, tries
+
+
+@test
+def test_a_reply_that_drops_TWICE_is_reported_as_the_transport_and_not_the_key():
+    import http.client
+    import urllib.request
+
+    from ckwb import llm
+
+    real = urllib.request.urlopen
+    tries = []
+
+    def always_drop(req, timeout=None):
+        tries.append(timeout)
+        raise http.client.IncompleteRead(b"x")
+
+    urllib.request.urlopen = always_drop
+    try:
+        llm.chat([{"role": "user", "content": "hi"}], base_url="http://fake", model="m")
+    except llm.LLMError as exc:
+        assert len(tries) == 2, tries
+        text = str(exc)
+        assert "dropped the connection" in text, text
+        assert "a partial reply proves that" in text, ("rule out the key explicitly", text)
+    else:
+        raise AssertionError("two dropped replies must raise")
+    finally:
+        urllib.request.urlopen = real
+
+
+@test
+def test_an_HTTP_ERROR_is_never_retried():
+    """A 401 will be 401 again, and retrying a 429 makes the rate limit worse."""
+    import urllib.error
+    import urllib.request
+
+    from ckwb import llm
+
+    real = urllib.request.urlopen
+    for code, phrase in ((401, "key is missing or rejected"), (429, "rate limited")):
+        tries = []
+
+        def refuse(req, timeout=None, _code=code):
+            tries.append(timeout)
+            raise urllib.error.HTTPError("http://fake", _code, "no", {}, None)
+
+        urllib.request.urlopen = refuse
+        try:
+            llm.chat([{"role": "user", "content": "hi"}], base_url="http://fake", model="m")
+        except llm.LLMError as exc:
+            assert len(tries) == 1, (code, "must not be retried", tries)
+            assert phrase in str(exc), (code, str(exc))
+        else:
+            raise AssertionError("HTTP %d must raise" % code)
+        finally:
+            urllib.request.urlopen = real
+
+
+@test
+def test_an_UNREACHABLE_endpoint_is_not_treated_as_a_slow_one():
+    """A refused connection is not a slow model, and must not be retried as a dropped reply."""
+    import urllib.error
+    import urllib.request
+
+    from ckwb import llm
+
+    real = urllib.request.urlopen
+    tries = []
+
+    def refuse(req, timeout=None):
+        tries.append(timeout)
+        raise urllib.error.URLError(ConnectionRefusedError("refused"))
+
+    urllib.request.urlopen = refuse
+    try:
+        llm.chat([{"role": "user", "content": "hi"}], base_url="http://fake", model="m")
+    except llm.LLMError as exc:
+        assert len(tries) == 1, tries
+        assert "cannot reach" in str(exc), str(exc)
+    else:
+        raise AssertionError("an unreachable endpoint must raise")
+    finally:
+        urllib.request.urlopen = real
 
 
 def main():

@@ -19,7 +19,39 @@ import urllib.request
 # the connection and then sends nothing will stall for this long per read, so keep it short
 # enough that a human waiting on it does not conclude the application has died. Measured against
 # a real endpoint that answered /models in 0.5 s and then never answered a chat completion.
-DEFAULT_TIMEOUT = 60.0
+#: MEASURED, 2026-10-16, against DeepSeek `deepseek-flash` on this project's own planner prompt
+#: (~7,000 characters in, ~2,800 characters of JSON and notes out):
+#:
+#:     plain prompt        79.8 s, 94.2 s      both succeeded
+#:     json_object mode   129.9 s              succeeded
+#:     three full plans    81 s, 121 s, 320 s  (the last repaired once, so two calls)
+#:
+#: So a completion here takes **one to two minutes**, and the 60 s this used to allow was simply
+#: too short. It is the GENERATION that is slow, not the queue: a `max_tokens: 16` probe to the
+#: same endpoint answers in 1.1 s, which is why a quick probe looks healthy while real requests
+#: time out -- and why the old message blamed the account for not being able to "serve
+#: completions" when it was serving them perfectly well, just not inside the deadline.
+DEFAULT_TIMEOUT = 180.0
+
+#: And note WHAT that bounds. `urllib`'s timeout is per socket read, not a total deadline, so it
+#: limits SILENCE rather than elapsed time: a reply that keeps trickling bytes never trips it.
+#: Measured here -- a plan that took 263 s end to end completed happily under a 180 s timeout,
+#: because the stream never went quiet for that long. So this number is "how long the endpoint
+#: may say nothing at all", which is the thing worth bounding, and the reason a slow model is
+#: not punished for being slow.
+
+#: There is deliberately NO short first attempt. One was added here and it was a mistake,
+#: measured: on a 20 s-then-60 s pair, a request that would have finished at about 85 s failed
+#: at 81 s having never been given a long enough deadline. The short attempt was reasoned from
+#: the 1.1 s probe above, which measured time to FIRST token rather than time to finish. A
+#: deadline is only useful if it is longer than the work.
+#:
+#: A timeout is therefore NOT retried: reaching 180 s means the model is genuinely slower than
+#: that, and asking again just makes somebody wait six minutes for the same answer. What IS
+#: retried is a connection that drops part way through a reply -- observed once as
+#: `IncompleteRead(1 bytes read)` after 60 s -- because that is a transport failure rather than
+#: a slow model, and the second attempt usually lands.
+RETRY_ON_DROP = 1
 
 
 class LLMError(RuntimeError):
@@ -75,9 +107,53 @@ def chat(messages: list, *, base_url: str, api_key: str = "", model: str,
         headers["Authorization"] = f"Bearer {api_key}"
 
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+
+    for attempt in range(1 + max(RETRY_ON_DROP, 0)):
+        try:
+            return _answer(_post(req, timeout), url, model)
+        except _Dropped as exc:
+            if attempt == max(RETRY_ON_DROP, 0):
+                raise LLMError(
+                    f"{url} began a reply and then dropped the connection, twice ({exc}). The "
+                    "endpoint and key are working -- a partial reply proves that -- so this is "
+                    "the provider or the network between you and it. Try again, or point "
+                    "Settings at a local server.") from exc.cause
+        except _TooSlow as exc:
+            raise LLMError(
+                f"{url} accepted the connection and then sent nothing at all for "
+                f"{timeout:.0f}s. That is silence rather than slowness -- the deadline is per "
+                "read, so a reply that merely trickles would have been fine. The endpoint and "
+                f"key are working, so check the provider's status and balance. For scale, {model} "
+                "takes one to two minutes to write a full plan here, and a 263 s one has "
+                "completed without tripping this.") from exc.cause
+    raise LLMError(  # pragma: no cover - the loop returns or raises
+        f"{url} produced neither a reply nor an error, which should not be possible")
+
+
+class _Retryable(Exception):
+    """A transport failure that carries the cause it came from."""
+
+    def __init__(self, cause):
+        super().__init__(str(cause))
+        self.cause = cause
+
+
+class _TooSlow(_Retryable):
+    """The deadline passed. Not retried -- see RETRY_ON_DROP for why."""
+
+
+class _Dropped(_Retryable):
+    """A reply started and then stopped. Worth one more try."""
+
+
+def _post(req, timeout: float) -> dict:
+    """One attempt. Raises `_TooSlow` / `_Dropped` for transport, `LLMError` for anything final."""
+    import http.client
+
+    url = req.full_url
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = json.loads(resp.read().decode("utf-8"))
+            return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = ""
         try:
@@ -90,24 +166,26 @@ def chat(messages: list, *, base_url: str, api_key: str = "", model: str,
                 429: " — rate limited"}.get(exc.code, "")
         raise LLMError(f"{url} returned HTTP {exc.code}{hint}. {detail}") from exc
     except TimeoutError as exc:
-        raise LLMError(
-            f"{url} accepted the connection but sent no response within {timeout:.0f}s. The "
-            "endpoint is reachable, so this is not a URL or key problem — the model is queued, "
-            "overloaded, or the account cannot currently serve completions. Check the provider's "
-            "status and balance, or point Settings at a local server.") from exc
+        raise _TooSlow(exc) from exc
+    except http.client.IncompleteRead as exc:
+        # The server began a reply and stopped. Uncaught until it was observed happening, which
+        # meant it reached the user as a bare exception rather than as a sentence.
+        raise _Dropped(exc) from exc
     except urllib.error.URLError as exc:
         reason = getattr(exc, "reason", exc)
         if isinstance(reason, TimeoutError):
-            raise LLMError(
-                f"{url} sent no response within {timeout:.0f}s. The endpoint is reachable, so "
-                "this is not a URL or key problem — check the provider's status and "
-                "balance.") from exc
+            raise _TooSlow(exc) from exc
+        if isinstance(reason, http.client.IncompleteRead):
+            raise _Dropped(exc) from exc
         raise LLMError(
             f"cannot reach {url}: {reason}. If this is a local server, check it is running; "
             "if it is hosted, check the URL and your network.") from exc
     except json.JSONDecodeError as exc:
         raise LLMError(f"{url} did not return JSON: {exc}") from exc
 
+
+def _answer(raw: dict, url: str, model: str) -> str:
+    """Pull the text out of a reply, naming the cause when there is no text."""
     try:
         choice = raw["choices"][0]
         message = choice["message"]

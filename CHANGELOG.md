@@ -2,6 +2,71 @@
 
 Newest first. Tags: `[feat]` `[fix]` `[test]` `[docs]` `[decision]` `[broke]` `[perf]`.
 
+## 2026-10-16 (later) — the 60-second timeout was shorter than the work, and the error blamed the wrong thing
+
+A planner request died with *"accepted the connection but sent no response within 60s ... the
+account cannot currently serve completions"*. The account was serving completions perfectly
+well. **This entry is mostly a correction of two earlier judgements, one of them made an hour
+before it.**
+
+### What was actually happening, measured
+
+`deepseek-flash`, this project's own planner prompt (~7,000 characters in, ~2,800 out):
+
+| | elapsed | outcome |
+|---|---|---|
+| `max_tokens: 16` probe | **1.1 s** | ok |
+| plain completion | 79.8 s, 94.2 s | **both ok** |
+| `json_object` mode | 129.9 s | ok |
+| three full plans | 121 s, 140 s, 264 s | ok (one repaired, so two calls) |
+
+- `[fix]` **`DEFAULT_TIMEOUT` 60 s → 180 s.** The deadline was shorter than the work, so it
+  turned successes into failures. Nothing was overloaded: `/models` answered in 0.4 s and a short
+  completion in 1.1 s throughout, which is exactly why a quick probe looks healthy while real
+  requests fail.
+- `[fix]` **The message blamed the account.** A timeout now says what it measures and gives the
+  scale: one to two minutes is normal here.
+- `[note]` **And it bounds SILENCE, not elapsed time** — `urllib`'s timeout is per socket read.
+  A plan that took **263 s end to end completed happily under a 180 s timeout**, because the
+  stream never went quiet that long. Worth knowing before the number is "fixed" again.
+
+### A retry I added an hour earlier, measured and removed
+
+- `[fix]` I had just added a short first deadline (20 s, then 60 s) reasoned from that 1.1 s
+  probe. **The probe measured time to FIRST token, not time to finish**, and the result was
+  actively harmful: a request that would have completed at about 85 s **failed at 81 s**, having
+  never been given a long enough deadline. Removed, and the reasoning is recorded in `llm.py` so
+  it is not reinvented. A deadline is only useful if it is longer than the work.
+- `[decision]` **A timeout is no longer retried at all.** Reaching 180 s of silence is not
+  transient-looking, and asking again makes somebody wait six minutes for the same answer.
+- `[fix]` **A DROPPED reply is retried once**, and that one really is transient: observed as
+  `IncompleteRead(1 bytes read)` after 60 s, having already started to answer. It was also
+  **uncaught** until it was seen happening, so it reached the user as a bare exception instead of
+  a sentence. A partial reply proves the endpoint and key work, which is what the new message
+  says.
+
+### The timeout had been wrong in BOTH directions, so the argument is now written down
+
+- `[decision]` It started at 180 s, was cut to 60 s because a silent wait "looked exactly like a
+  hung application", and is now back at 180 s. Both observations were right and the conclusion
+  was wrong: **a deadline cannot do a progress indicator's job.** So the deadline fits the work
+  and `DescribePanel` now **counts the wait out loud** — "waiting 47s... (a full plan usually
+  takes one to two minutes on a hosted model)" — beside the Stop waiting button that was already
+  there. The test asserts both halves, and that the counter actually advances, because a frozen
+  number is no better than silence.
+- `[fix]` **A failed request leaves your words in the box.** A stall costs a minute of waiting,
+  the failure is not the user's, and making them retype a sentence they already typed was adding
+  insult to it.
+
+### Measured, not assumed
+
+- `[note]` I suspected the new interference check was the cost in that 264 s run and measured it
+  before touching it: **`_validate` takes 0.14 s** on a six-part assembly, `_fit_errors` 0.09 s
+  of that. It is not the bottleneck and needed no bbox prefilter. The 264 s was one slow
+  completion.
+
+**25 suites, 499 tests.** Core 32 → 38, Qt 21 → 23.
+
 ## 2026-10-16 — a declined request, and the four things that made it impossible
 
 A real exchange in the workbench panel drove all of this. Asked for *"a 200mm linear rail with

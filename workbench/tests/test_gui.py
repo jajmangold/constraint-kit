@@ -332,6 +332,20 @@ def test_describe_stays_responsive_while_the_model_is_slow():
     assert panel.cancel_btn.isVisible(), "a Stop waiting button should be offered while waiting"
     assert panel.entry.isEnabled() is False, "input should be disabled while waiting"
 
+    # And the wait COUNTS. This is the other half of allowing a 180 s deadline: the number was
+    # once cut to 60 s because a silent wait "looked exactly like a hung application", and that
+    # broke real completions measured at 80 to 130 s. A deadline cannot do a progress
+    # indicator's job, so the progress indicator has to exist.
+    assert panel.waiting_label.isVisible(), "the wait must be visible, not silent"
+    assert "waiting" in panel.waiting_label.text().lower(), panel.waiting_label.text()
+    first = panel.waiting_label.text()
+    deadline_t = time.time() + 2.5
+    while time.time() < deadline_t and panel.waiting_label.text() == first:
+        QtWidgets.QApplication.instance().processEvents()
+        time.sleep(0.05)
+    assert panel.waiting_label.text() != first, (
+        "the counter must advance; a frozen number is no better than silence", first)
+
     # And the loop really is alive while the model is slow.
     spins = 0
     deadline = time.time() + delay / 2.0
@@ -473,6 +487,52 @@ def test_a_bare_yes_with_nothing_offered_costs_no_model_call():
 
 
 # ------------------------------------------------------------------------------- settings
+
+@test
+def test_a_failed_request_LEAVES_YOUR_WORDS_IN_THE_BOX():
+    """A hosted model that stalls costs a minute of waiting, and the failure is not the user's.
+
+    Making them retype a sentence they already typed is adding insult to it. Recorded from a
+    real session: a 60 s stall against DeepSeek wiped a long request out of the entry, and the
+    endpoint answered normally seconds later.
+    """
+    from ckwb.llm import LLMError
+
+    new_doc()
+    asked = ("a 200mm linear rail with 1605 ball screw and 16mm stainless linear rods, "
+             "on a c beam aluminum extrusion")
+
+    def stall(messages, **kw):
+        raise LLMError("accepted the connection but sent no response -- tried twice")
+
+    panel = describe_panel(chat=stall)
+    panel._prior = None
+    panel.transcript.clear()
+    panel.entry.setText(asked)
+    panel.submit()
+    wait_for(lambda: "did not work" in panel.transcript.toPlainText().lower(),
+             30.0, "the failure message")
+
+    assert panel.waiting_label.isVisible() is False, "the counter stops when the wait ends"
+    assert panel.entry.text() == asked, (
+        "the request must still be in the box, ready to send again", panel.entry.text())
+    assert "tried twice" in panel.transcript.toPlainText(), panel.transcript.toPlainText()[-200:]
+    assert panel.entry.isEnabled(), "and the box must be usable"
+    assert panel.build_btn.isEnabled() is False
+
+
+@test
+def test_a_SUCCESSFUL_request_does_not_put_the_words_back():
+    """Only a failure restores it; a success must leave the box clear for the next thing."""
+    new_doc()
+    panel = describe_panel(chat=FakeChat(GOOD_PLAN))
+    panel._prior = None
+    panel.transcript.clear()
+    panel.entry.setText("a 500 mm ball screw with a nut")
+    panel.submit()
+    wait_for(lambda: panel.build_btn.isEnabled(), 30.0, "the program")
+    assert panel.entry.text() == "", ("a success clears the box", panel.entry.text())
+
 
 @test
 def test_the_settings_dialog_builds_without_touching_the_real_config():

@@ -138,6 +138,10 @@ class DescribePanel(QtGui.QWidget):
         self._session = None
         self._worker = None
         self._cfg = {}
+        self._waited = 0
+        self._ticker = QtCore.QTimer(self)
+        self._ticker.setInterval(1000)
+        self._ticker.timeout.connect(self._tick)
         layout = QtGui.QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
 
@@ -160,6 +164,14 @@ class DescribePanel(QtGui.QWidget):
         self.cancel_btn = QtGui.QPushButton("Stop waiting")
         self.cancel_btn.clicked.connect(self.cancel)
         self.cancel_btn.setVisible(False)
+        # A visible, counting wait. This is the fix for a problem that was previously fixed by
+        # shortening the deadline instead: at 180 s with no sign of life the panel "looked
+        # exactly like a hung application", so the timeout was cut to 60 s -- and then real
+        # completions, measured at 80 to 130 s, started failing. The deadline has to fit the
+        # work; it is the WAIT that has to be legible.
+        self.waiting_label = QtGui.QLabel()
+        self.waiting_label.setVisible(False)
+        row.addWidget(self.waiting_label)
         row.addWidget(self.build_btn, 1)
         row.addWidget(self.discard_btn)
         row.addWidget(self.cancel_btn)
@@ -255,6 +267,22 @@ class DescribePanel(QtGui.QWidget):
         self.entry.setEnabled(not busy)
         self.cancel_btn.setVisible(busy)
         self.build_btn.setEnabled(not busy and self._plan is not None)
+        self.waiting_label.setVisible(busy)
+        if busy:
+            self._waited = 0
+            self._tick()
+            self._ticker.start()
+        else:
+            self._ticker.stop()
+
+    def _tick(self) -> None:
+        """One second of waiting, said out loud. A silent wait is indistinguishable from a hang."""
+        self._waited += 1
+        note = ""
+        if self._waited > 20:
+            # Said once it has gone past quick, because that is when somebody starts wondering.
+            note = "  (a full plan usually takes one to two minutes on a hosted model)"
+        self.waiting_label.setText("waiting %ds...%s" % (self._waited, note))
 
     def cancel(self) -> None:
         if self._worker is not None and self._worker.isRunning():
@@ -268,6 +296,12 @@ class DescribePanel(QtGui.QWidget):
         self._set_busy(False)
         FreeCAD.Console.PrintError("[ConstraintKit] planner: " + message + chr(10))
         self._say("Constraint Kit", f"That did not work: {message}")
+        # Put their words back. A hosted model that stalls costs a minute of waiting and the
+        # failure is not theirs, so making them retype a sentence they already typed is adding
+        # insult to it. The entry is empty by now because `submit` cleared it.
+        if not self.entry.text().strip():
+            self.entry.setText(getattr(self._session, "asked", "") or "")
+            self.entry.selectAll()
 
     def _on_reply(self, reply: str) -> None:
         """Back on the GUI thread, where it is safe to build geometry for validation."""

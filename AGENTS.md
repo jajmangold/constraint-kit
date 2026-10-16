@@ -147,6 +147,23 @@ with a 2s model".
 
 ## GOTCHAS THAT HAVE COST TIME
 
+- **A deadline must be longer than the work, and it cannot do a progress indicator's job.**
+  This number has been wrong in both directions. At 180 s a silent wait looked like a hung
+  application, so it was cut to 60 s -- and then real completions, measured at 80 to 130 s on
+  this project's own prompt, began failing. It is back at 180 s with the wait counted out loud
+  in the panel. Also: `urllib`'s timeout is **per socket read**, so it bounds SILENCE rather
+  than elapsed time -- a 263 s plan completed under a 180 s timeout because the stream never
+  went quiet.
+- **Measure time to FINISH, not time to first token.** A `max_tokens: 16` probe answers in 1.1 s
+  against an endpoint whose real completions take two minutes, so a quick probe looks healthy
+  while every real request fails. A short-first-deadline retry reasoned from that probe turned a
+  request that would have succeeded at ~85 s into a failure at 81 s.
+- **Retry a dropped reply, never a timeout.** A partial reply (`IncompleteRead`) proves the
+  endpoint and key work and the second attempt usually lands; a timeout means it is genuinely
+  slower than the deadline, and retrying just doubles the wait for the same answer. Never retry
+  an HTTP status -- a 401 will be 401 again and retrying a 429 makes the rate limit worse.
+- **Give the words back.** When a request fails for a reason that is not the user's, leave what
+  they typed in the box.
 - **An offer you cannot accept is not an offer.** The chat panel declined a request, offered a
   nearest thing, and then answered "do it build that" with *"the request contains no part"* --
   because every submit built a fresh planner session. A panel that looks like a conversation has
